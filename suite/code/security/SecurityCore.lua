@@ -121,21 +121,37 @@ end
 
 function SecurityCore:ProtectPlayerKick()
     local hasHooks = self.Caps and self.Caps.Capabilities and self.Caps.Capabilities.HasMetatableHooks
-    if not hasHooks then
+    local hookfn = (self.Caps and self.Caps.APIs and self.Caps.APIs.hookfunction) or (type(hookfunction) == "function" and hookfunction)
+    local checkcaller = (self.Caps and self.Caps.APIs and self.Caps.APIs.checkcaller) or (type(checkcaller) == "function" and checkcaller) or function() return false end
+    
+    if not hookfn or not self.LocalPlayer then
         if self.Logger then
-            self.Logger:Warn("SECURITY", "Anti-Kick completo requiere hooks de Nivel 6+. Operando con mitigación pasiva.")
+            self.Logger:Warn("SECURITY", "Anti-Kick completo requiere hookfunction (Nivel 6+). Operando con mitigación pasiva.")
         end
         return false
     end
     
-    local getrawmt = (self.Caps and self.Caps.APIs and self.Caps.APIs.getrawmetatable) or (type(getrawmetatable) == "function" and getrawmetatable)
-    local rawMT = getrawmt and getrawmt(game)
-    if not rawMT then return false end
+    local oldKick
+    local s, _ = pcall(function()
+        oldKick = hookfn(self.LocalPlayer.Kick, function(inst, message, ...)
+            if checkcaller() then
+                return oldKick(inst, message, ...)
+            end
+            if self.Logger then
+                self.Logger:Vuln("SECURITY", string.format("Intento de LocalPlayer:Kick bloqueado! Razón: %s", tostring(message)))
+            end
+            return nil
+        end)
+    end)
     
-    if self.Logger then
-        self.Logger:Info("SECURITY", "Protección contra LocalPlayer:Kick activada.")
+    if s then
+        if self.Logger then
+            self.Logger:Info("SECURITY", "Protección activa contra LocalPlayer:Kick instalada.")
+        end
+        return true
     end
-    return true
+    
+    return false
 end
 
 function SecurityCore:Destroy()

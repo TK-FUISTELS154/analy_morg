@@ -167,43 +167,59 @@ function DumperView:Render()
         
         if not dumper or not exporter then return end
         
-        local package = nil
-        if self.CurrentMode == "HEURISTIC_FINDINGS" then
-            local audit = heuristic and heuristic:RunFullAudit()
-            package = dumper:DumpHeuristicFindings(audit)
-        elseif self.CurrentMode == "DEPENDENCY_CHAIN" then
-            package = dumper:DumpDependencyChain(actionRecorder and actionRecorder.RecentAction)
-        elseif self.CurrentMode == "FULL_ENVIRONMENT" then
-            package = dumper:DumpFullEnvironment()
-        else
-            local defaultRoots = { game:GetService("ReplicatedStorage"), game:GetService("StarterPlayer") }
-            package = dumper:DumpManualNodes(defaultRoots)
-        end
+        infoLabel.Text = "⏳ Procesando extracción en modo " .. self.CurrentMode .. "..."
+        dumpBtn.Text = "⏳ VOLCANDO..."
+        diskBtn.Text = "⏳ VOLCANDO..."
         
-        local jsonStr = exporter:ToJSON(package)
-        local function setSafeText(targetBox, text)
-            local maxLimit = 75000
-            local str = tostring(text or "")
-            if #str > maxLimit then
-                targetBox.Text = string.sub(str, 1, maxLimit) .. string.format("\n\n-- [⚠️ AVISO: Vista previa truncada a %d caracteres por límite de interfaz de Roblox]\n-- [Total: %d caracteres. El proyecto completo e intacto se ha guardado en disco / archivo JSON]", maxLimit, #str)
-            else
-                targetBox.Text = str
+        task.spawn(function()
+            local startTime = tick()
+            local package = nil
+            
+            local function onProgress(curr, total, name)
+                infoLabel.Text = string.format("⏳ Extrayendo [%d/%d]: %s", curr, total, tostring(name or ""):sub(1, 30))
             end
-        end
-        setSafeText(previewBox, jsonStr)
-        
-        if exportToDisk then
-            local rootNode = (package.Services and package.Services[1]) or (package.Nodes and package.Nodes[1]) or { Name = "Dump_" .. self.CurrentMode, Children = {} }
-            local s, res = exporter:ExportProjectTreeToDisk("Dump_" .. self.CurrentMode .. "_" .. tick(), rootNode)
-            if s then
-                infoLabel.Text = "Árbol reconstruido en disco exitosamente:\n" .. tostring(res)
+            
+            if self.CurrentMode == "HEURISTIC_FINDINGS" then
+                local audit = heuristic and heuristic:RunFullAudit(nil, onProgress)
+                package = dumper:DumpHeuristicFindings(audit, onProgress)
+            elseif self.CurrentMode == "DEPENDENCY_CHAIN" then
+                package = dumper:DumpDependencyChain(actionRecorder and actionRecorder.RecentAction, onProgress)
+            elseif self.CurrentMode == "FULL_ENVIRONMENT" then
+                package = dumper:DumpFullEnvironment(onProgress)
             else
-                infoLabel.Text = "Resultado: " .. tostring(res)
+                local defaultRoots = { game:GetService("ReplicatedStorage"), game:GetService("StarterPlayer") }
+                package = dumper:DumpManualNodes(defaultRoots, onProgress)
             end
-        else
-            exporter:SaveToFile("dump_" .. self.CurrentMode .. "_" .. tick() .. ".json", jsonStr)
-            infoLabel.Text = "Extracción completada en formato JSON."
-        end
+            
+            local duration = tick() - startTime
+            local jsonStr = exporter:ToJSON(package)
+            
+            local function setSafeText(targetBox, text)
+                local maxLimit = 75000
+                local str = tostring(text or "")
+                if #str > maxLimit then
+                    targetBox.Text = string.sub(str, 1, maxLimit) .. string.format("\n\n-- [⚠️ AVISO: Vista previa truncada a %d caracteres por límite de interfaz de Roblox]\n-- [Total: %d caracteres. El proyecto completo e intacto se ha guardado en disco / archivo JSON]", maxLimit, #str)
+                else
+                    targetBox.Text = str
+                end
+            end
+            setSafeText(previewBox, jsonStr)
+            
+            if exportToDisk then
+                local s, res = exporter:ExportProjectTreeToDisk("Dump_" .. self.CurrentMode .. "_" .. tick(), package)
+                if s then
+                    infoLabel.Text = string.format("✅ Árbol reconstruido en disco en %.2fs:\n%s", duration, tostring(res))
+                else
+                    infoLabel.Text = "Resultado: " .. tostring(res)
+                end
+            else
+                local s, path = exporter:SaveToFile("dump_" .. self.CurrentMode .. "_" .. tick() .. ".json", jsonStr)
+                infoLabel.Text = string.format("✅ Extracción completada en %.2fs (%s)", duration, tostring(path))
+            end
+            
+            dumpBtn.Text = "📂 EXTRAER JSON"
+            diskBtn.Text = "💾 PROYECTO A DISCO (.LUA)"
+        end)
     end
     
     dumpBtn.MouseButton1Click:Connect(function() executeDump(false) end)

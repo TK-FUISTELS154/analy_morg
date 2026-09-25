@@ -1,12 +1,13 @@
 --[[
     =============================================================================
-    APEX SUITE - ADVANCED MULTI-MODE SELECTIVE DUMPER & DEPENDENCY EXTRACTOR
+    APEX SUITE - ADVANCED MULTI-MODE SELECTIVE DUMPER & PROJECT EXTRACTOR
     =============================================================================
-    Motor de extracción profesional por modos:
-    1. HEURISTIC_FINDINGS: Extrae todas las carpetas y scripts donde se detectaron firmas.
+    Motor de volcado profesional de scripts y jerarquías con:
+    1. HEURISTIC_FINDINGS: Extrae carpetas y scripts donde se detectaron vulnerabilidades.
     2. DEPENDENCY_CHAIN: Extrae el script emisor, módulos intermedios y remotes relacionados.
     3. MANUAL_TREE: Extracción selectiva de nodos marcados por el usuario.
-    4. FULL_ENVIRONMENT: Volcado total de scripts y módulos de todos los servicios cliente.
+    4. FULL_ENVIRONMENT: Volcado total de scripts y módulos con poda de 100,000+ assets visuales
+       y time-slicing cooperativo de 12ms para cero congelamientos.
 --]]
 
 local SelectiveDumper = {}
@@ -24,12 +25,77 @@ function SelectiveDumper.new(capabilityManager, logger)
     local self = setmetatable({}, SelectiveDumper)
     self.Caps = capabilityManager
     self.Logger = logger
+    self.DecompCache = {}
     return self
 end
 
-function SelectiveDumper:DumpInstance(instance, includeChildren, depthLimit, currentDepth)
+function SelectiveDumper:IsPrunedBranch(instance)
+    if instance:IsA("BasePart") or instance:IsA("MeshPart") or instance:IsA("Decal") or instance:IsA("Texture")
+       or instance:IsA("Sound") or instance:IsA("ParticleEmitter") or instance:IsA("Beam") or instance:IsA("Trail")
+       or instance:IsA("Highlight") or instance:IsA("Light") or instance:IsA("SurfaceAppearance")
+       or instance:IsA("SpecialMesh") or instance:IsA("BlockMesh") or instance:IsA("CylinderMesh")
+       or instance:IsA("UIComponent") or instance:IsA("UILayout") or instance:IsA("UIConstraint")
+       or instance:IsA("UICorner") or instance:IsA("UIStroke") or instance:IsA("UIGradient") or instance:IsA("UIPadding")
+       or instance:IsA("UIListLayout") or instance:IsA("UIGridLayout") or instance:IsA("UITableLayout")
+       or instance:IsA("UIPageLayout") or instance:IsA("UIAspectRatioConstraint") or instance:IsA("UISizeConstraint")
+       or instance:IsA("UIScale") or instance:IsA("JointInstance") or instance:IsA("WeldConstraint")
+       or instance:IsA("Attachment") or instance:IsA("Constraint") or instance:IsA("Animation")
+       or instance:IsA("Keyframe") or instance:IsA("KeyframeSequence") or instance:IsA("Pose") or instance:IsA("Bone")
+       or instance:IsA("Clothing") or instance:IsA("BodyColors") or instance:IsA("CharacterMesh")
+       or instance:IsA("Accessory") or instance:IsA("Accoutrement") or instance:IsA("PackageLink")
+       or instance:IsA("HumanoidDescription") or instance:IsA("LocalizationTable") or instance:IsA("Terrain")
+       or instance:IsA("Smoke") or instance:IsA("Fire") or instance:IsA("Sparkles") then
+        return true
+    end
+    
+    local name = instance.Name:lower()
+    local visualAssets = {
+        assets = true, models = true, sounds = true, audio = true,
+        animations = true, anim = true, anims = true, textures = true,
+        meshes = true, mesh = true, fx = true, worldfx = true, map = true,
+        vfx = true, lighting = true, decals = true, particles = true,
+        npcs = true, terrain = true, camera = true, props = true,
+        effects = true, visual = true, materials = true, clothing = true,
+        accessories = true, rigs = true, characters = true, prefabs = true,
+    }
+    
+    if visualAssets[name] then
+        if not (name:find("script") or name:find("module") or name:find("controller") or name:find("network") or name:find("client") or name:find("service") or name:find("handler")) then
+            return true
+        end
+    end
+    
+    return false
+end
+
+function SelectiveDumper:SafeDecompile(instance)
+    if not instance or not instance:IsA("LuaSourceContainer") then return nil end
+    
+    local fullName = instance:GetFullName()
+    if self.DecompCache[fullName] ~= nil then
+        return self.DecompCache[fullName]
+    end
+    
+    local src = nil
+    if self.Caps then
+        src = self.Caps:SafeDecompile(instance)
+    else
+        local s, direct = pcall(function() return instance.Source end)
+        if s and direct then src = direct end
+    end
+    
+    self.DecompCache[fullName] = src or "-- [Código no disponible]"
+    return self.DecompCache[fullName]
+end
+
+function SelectiveDumper:DumpInstance(instance, scriptsOnly, depthLimit, currentDepth)
     currentDepth = currentDepth or 0
     if depthLimit and currentDepth > depthLimit then return nil end
+    if self:IsPrunedBranch(instance) then return nil end
+    
+    local isScript = instance:IsA("LuaSourceContainer")
+    local isRemote = instance:IsA("RemoteEvent") or instance:IsA("RemoteFunction") or instance:IsA("UnreliableRemoteEvent")
+    local isValue = instance:IsA("ValueBase") or instance:IsA("Configuration")
     
     local dump = {
         Name = instance.Name,
@@ -42,33 +108,35 @@ function SelectiveDumper:DumpInstance(instance, includeChildren, depthLimit, cur
         BytecodeSize = 0,
     }
     
-    -- 1. Extracción de Atributos
+    -- 1. Atributos
     local sAttr, attrs = pcall(function() return instance:GetAttributes() end)
-    if sAttr and attrs then dump.Attributes = attrs end
+    if sAttr and attrs and next(attrs) then dump.Attributes = attrs end
     
-    -- 2. Extracción de Código Fuente o Bytecode
-    if instance:IsA("LuaSourceContainer") then
-        local src = self.Caps:SafeDecompile(instance)
+    -- 2. Código Fuente de Scripts
+    if isScript then
+        local src = self:SafeDecompile(instance)
         dump.Source = src
         if src then dump.BytecodeSize = #src end
     end
     
-    -- 3. Propiedades Relevantes Seguras
-    local commonProps = {"Archivable", "Name", "Parent"}
-    if instance:IsA("ValueBase") then table.insert(commonProps, "Value") end
-    
-    for _, prop in ipairs(commonProps) do
-        local s, v = pcall(function() return instance[prop] end)
-        if s then dump.Properties[prop] = tostring(v) end
+    -- 3. Valores
+    if isValue and instance:IsA("ValueBase") then
+        local sVal, v = pcall(function() return instance.Value end)
+        if sVal then dump.Properties["Value"] = tostring(v) end
     end
     
-    -- 4. Extracción de Hijos Recursiva
-    if includeChildren then
-        local s, children = pcall(function() return instance:GetChildren() end)
-        if s and children then
-            for _, child in ipairs(children) do
-                local childDump = self:DumpInstance(child, true, depthLimit, currentDepth + 1)
-                if childDump then table.insert(dump.Children, childDump) end
+    -- 4. Hijos recursivos con poda
+    local s, children = pcall(function() return instance:GetChildren() end)
+    if s and children then
+        for _, child in ipairs(children) do
+            if not self:IsPrunedBranch(child) then
+                local childDump = self:DumpInstance(child, scriptsOnly, depthLimit, currentDepth + 1)
+                if childDump then
+                    -- Si filtramos solo scripts, incluir ramas que contengan scripts o sean scripts/remotes
+                    if not scriptsOnly or childDump.Source or isRemote or isValue or #childDump.Children > 0 then
+                        table.insert(dump.Children, childDump)
+                    end
+                end
             end
         end
     end
@@ -81,12 +149,13 @@ end
 -- =========================================================================
 
 -- MODO 1: Extracción de hallazgos heurísticos con sus carpetas contenedoras
-function SelectiveDumper:DumpHeuristicFindings(auditResults)
+function SelectiveDumper:DumpHeuristicFindings(auditResults, onProgress)
     local extractedMap = {}
     local dumpPackage = {
         Mode = SelectiveDumper.DumpModes.HEURISTIC_FINDINGS,
         Timestamp = tick(),
         TotalExtracted = 0,
+        TotalScripts = 0,
         Containers = {},
     }
     
@@ -98,13 +167,15 @@ function SelectiveDumper:DumpHeuristicFindings(auditResults)
         if not extractedMap[parentFolder] then
             extractedMap[parentFolder] = true
             local containerDump = self:DumpInstance(parentFolder, true, 4)
-            table.insert(dumpPackage.Containers, {
-                FindingCategory = finding.Tags or {"Detected"},
-                Score = finding.Score or 0,
-                Path = parentFolder:GetFullName(),
-                Data = containerDump,
-            })
-            dumpPackage.TotalExtracted = dumpPackage.TotalExtracted + 1
+            if containerDump then
+                table.insert(dumpPackage.Containers, {
+                    FindingCategory = finding.Tags or {"Detected"},
+                    Score = finding.Score or 0,
+                    Path = parentFolder:GetFullName(),
+                    Data = containerDump,
+                })
+                dumpPackage.TotalExtracted = dumpPackage.TotalExtracted + 1
+            end
         end
     end
     
@@ -118,6 +189,9 @@ function SelectiveDumper:DumpHeuristicFindings(auditResults)
         if auditResults.Combat then
             for _, item in ipairs(auditResults.Combat) do collectFinding(item) end
         end
+        if auditResults.AdminTools then
+            for _, item in ipairs(auditResults.AdminTools) do collectFinding(item) end
+        end
     end
     
     if self.Logger then
@@ -127,8 +201,8 @@ function SelectiveDumper:DumpHeuristicFindings(auditResults)
     return dumpPackage
 end
 
--- MODO 2: Extracción de cadena de ejecución (Código intermedio entre Action y Remote)
-function SelectiveDumper:DumpDependencyChain(actionEntry)
+-- MODO 2: Extracción de cadena de ejecución y dependencias
+function SelectiveDumper:DumpDependencyChain(actionEntry, onProgress)
     local dumpPackage = {
         Mode = SelectiveDumper.DumpModes.DEPENDENCY_CHAIN,
         Timestamp = tick(),
@@ -139,11 +213,9 @@ function SelectiveDumper:DumpDependencyChain(actionEntry)
     }
     
     if actionEntry then
-        -- Extraer instancia iniciadora (e.g. Botón GUI o Tool o Prompt)
         if actionEntry.Instance then
-            dumpPackage.InitiatorInstance = self:DumpInstance(actionEntry.Instance, true, 3)
+            dumpPackage.InitiatorInstance = self:DumpInstance(actionEntry.Instance, false, 3)
             
-            -- Buscar scripts hermanos o padres directos (código intermedio)
             local searchScope = actionEntry.Instance.Parent or actionEntry.Instance
             local s, desc = pcall(function() return searchScope:GetDescendants() end)
             if s and desc then
@@ -152,14 +224,13 @@ function SelectiveDumper:DumpDependencyChain(actionEntry)
                         table.insert(dumpPackage.IntermediateScripts, {
                             Path = obj:GetFullName(),
                             ClassName = obj.ClassName,
-                            Code = self.Caps:SafeDecompile(obj),
+                            Code = self:SafeDecompile(obj),
                         })
                     end
                 end
             end
         end
         
-        -- Extraer Remotes involucrados
         if actionEntry.CorrelatedRemotes then
             for _, rem in ipairs(actionEntry.CorrelatedRemotes) do
                 table.insert(dumpPackage.RelatedRemotes, {
@@ -180,40 +251,76 @@ function SelectiveDumper:DumpDependencyChain(actionEntry)
 end
 
 -- MODO 3: Extracción manual de lista de nodos
-function SelectiveDumper:DumpManualNodes(nodeList)
+function SelectiveDumper:DumpManualNodes(nodeList, onProgress)
     local results = {
         Mode = SelectiveDumper.DumpModes.MANUAL_TREE,
         Timestamp = tick(),
         Nodes = {},
     }
-    for _, node in ipairs(nodeList) do
-        table.insert(results.Nodes, self:DumpInstance(node, true))
+    
+    local lastYield = tick()
+    for idx, node in ipairs(nodeList or {}) do
+        if tick() - lastYield > 0.012 then
+            task.wait()
+            lastYield = tick()
+        end
+        local d = self:DumpInstance(node, false, 6)
+        if d then table.insert(results.Nodes, d) end
+        if onProgress then pcall(onProgress, idx, #nodeList, node.Name) end
     end
+    
     return results
 end
 
--- MODO 4: Extracción total del entorno de scripts del juego
-function SelectiveDumper:DumpFullEnvironment()
+-- MODO 4: Extracción total del entorno de scripts del juego (Optimizado y Podado)
+function SelectiveDumper:DumpFullEnvironment(onProgress)
     local targetServices = {
-        game:GetService("ReplicatedFirst"),
-        game:GetService("ReplicatedStorage"),
-        game:GetService("StarterPlayer"),
-        game:GetService("StarterGui"),
-        game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"),
+        { Service = game:GetService("ReplicatedFirst"), Name = "ReplicatedFirst" },
+        { Service = game:GetService("ReplicatedStorage"), Name = "ReplicatedStorage" },
+        { Service = game:GetService("StarterPlayer"), Name = "StarterPlayer" },
+        { Service = game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"), Name = "PlayerGui" },
     }
     
     local dumpPackage = {
         Mode = SelectiveDumper.DumpModes.FULL_ENVIRONMENT,
         Timestamp = tick(),
+        PlaceId = game.PlaceId,
         Services = {},
         TotalScriptsDumped = 0,
+        TotalRemotesDumped = 0,
     }
     
-    for _, srv in ipairs(targetServices) do
-        if srv then
-            local srvDump = self:DumpInstance(srv, true, 8)
-            table.insert(dumpPackage.Services, srvDump)
+    local lastYield = tick()
+    local totalServices = #targetServices
+    
+    local function countEntities(dumpNode)
+        if not dumpNode then return end
+        if dumpNode.Source then dumpPackage.TotalScriptsDumped = dumpPackage.TotalScriptsDumped + 1 end
+        if dumpNode.ClassName:find("Remote") then dumpPackage.TotalRemotesDumped = dumpPackage.TotalRemotesDumped + 1 end
+        for _, child in ipairs(dumpNode.Children or {}) do
+            countEntities(child)
         end
+    end
+    
+    for idx, srvEntry in ipairs(targetServices) do
+        if srvEntry.Service then
+            if onProgress then pcall(onProgress, idx, totalServices, "Volcando " .. srvEntry.Name) end
+            
+            local srvDump = self:DumpInstance(srvEntry.Service, true, 10)
+            if srvDump then
+                countEntities(srvDump)
+                table.insert(dumpPackage.Services, srvDump)
+            end
+            
+            if tick() - lastYield > 0.012 then
+                task.wait()
+                lastYield = tick()
+            end
+        end
+    end
+    
+    if self.Logger then
+        self.Logger:Info("DUMPER", string.format("Volcado Total del Entorno completado: %d scripts y %d remotes extraídos.", dumpPackage.TotalScriptsDumped, dumpPackage.TotalRemotesDumped))
     end
     
     return dumpPackage

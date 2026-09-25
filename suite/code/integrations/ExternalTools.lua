@@ -3,7 +3,7 @@
     APEX SUITE - EXTERNAL TOOLS INTEGRATION (DARKDEX & INFINITE YIELD)
     =============================================================================
     Lanza de forma segura e independiente Infinite Yield y DarkDex con manejo
-    de errores y verificación de entorno.
+    de errores, múltiples fuentes de respaldo (CDNs) y verificación de entorno.
 --]]
 
 local ExternalTools = {}
@@ -16,35 +16,76 @@ function ExternalTools.new(logger)
     return self
 end
 
+function ExternalTools:FetchScript(urls)
+    for _, url in ipairs(urls) do
+        local s, content = pcall(function()
+            return game:HttpGet(url)
+        end)
+        if s and type(content) == "string" and #content > 100 then
+            return content
+        end
+    end
+    return nil
+end
+
 function ExternalTools:LaunchInfiniteYield()
     if self.Logger then
-        self.Logger:Info("TOOLS", "Lanzando Infinite Yield...")
+        self.Logger:Info("TOOLS", "Descargando e iniciando Infinite Yield...")
     end
     
     task.spawn(function()
-        local success, err = pcall(function()
-            loadstring(game:HttpGet('https://raw.githubusercontent.com/DarkNetworks/Infinite-Yield/main/latest.lua'))()
-        end)
+        local urls = {
+            "https://raw.githubusercontent.com/DarkNetworks/Infinite-Yield/main/latest.lua",
+            "https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source",
+        }
         
-        if not success and self.Logger then
-            self.Logger:Error("TOOLS", "Error al cargar Infinite Yield: " .. tostring(err))
+        local code = self:FetchScript(urls)
+        if code then
+            local s, fn = pcall(loadstring, code)
+            if s and fn then
+                local sRun, errRun = pcall(fn)
+                if sRun then
+                    if self.Logger then self.Logger:Info("TOOLS", "Infinite Yield iniciado exitosamente.") end
+                    return
+                else
+                    if self.Logger then self.Logger:Error("TOOLS", "Error al ejecutar Infinite Yield: " .. tostring(errRun)) end
+                end
+            end
+        end
+        
+        if self.Logger then
+            self.Logger:Error("TOOLS", "No se pudo descargar Infinite Yield de los repositorios.")
         end
     end)
 end
 
 function ExternalTools:LaunchDarkDex()
     if self.Logger then
-        self.Logger:Info("TOOLS", "Lanzando Dex Explorer...")
+        self.Logger:Info("TOOLS", "Descargando e iniciando DarkDex Explorer...")
     end
     
     task.spawn(function()
-        local success, err = pcall(function()
-            -- Cargar Dex V3/V4 oficial estable
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/infyiff/backup/main/dex.lua"))()
-        end)
+        local urls = {
+            "https://raw.githubusercontent.com/infyiff/backup/main/dex.lua",
+            "https://raw.githubusercontent.com/Babyhamsta/RBLX_Scripts/main/Universal/BypassedDarkDexV3.lua",
+        }
         
-        if not success and self.Logger then
-            self.Logger:Error("TOOLS", "Error al cargar DarkDex: " .. tostring(err))
+        local code = self:FetchScript(urls)
+        if code then
+            local s, fn = pcall(loadstring, code)
+            if s and fn then
+                local sRun, errRun = pcall(fn)
+                if sRun then
+                    if self.Logger then self.Logger:Info("TOOLS", "DarkDex Explorer iniciado exitosamente.") end
+                    return
+                else
+                    if self.Logger then self.Logger:Error("TOOLS", "Error al ejecutar DarkDex: " .. tostring(errRun)) end
+                end
+            end
+        end
+        
+        if self.Logger then
+            self.Logger:Error("TOOLS", "No se pudo descargar DarkDex Explorer de los repositorios.")
         end
     end)
 end
