@@ -23,6 +23,7 @@ function HeuristicEngine.new(capabilityManager, logger, structuralProfiler)
     self.Caps = capabilityManager
     self.Logger = logger
     self.Structural = structuralProfiler
+    self.DecompCache = setmetatable({}, { __mode = "k" }) -- Caché global en memoria compartida (Lazy Evaluation)
     
     -- DICCIONARIO MULTILINGÜE INTEGRADO DE FIRMAS
     self.Lexicon = {
@@ -123,17 +124,41 @@ function HeuristicEngine:IsIgnoredCoreInstance(instance)
     return false
 end
 
+function HeuristicEngine:IsPrunedBranch(instance)
+    local name = instance.Name:lower()
+    -- Poda drástica de ramas de recursos visuales y físicos (O(1))
+    local visualAssets = {
+        assets = true, models = true, sounds = true, audio = true,
+        animations = true, textures = true, meshes = true, fx = true,
+        worldfx = true, map = true, vfx = true, lighting = true,
+        decals = true, particles = true, npcs = true, terrain = true,
+        camera = true, props = true, effects = true, visual = true,
+    }
+    
+    if visualAssets[name] then
+        -- Salvo que contenga explícitamente palabras de código
+        if not (name:find("script") or name:find("module") or name:find("controller") or name:find("network")) then
+            return true
+        end
+    end
+    
+    -- Si es una pieza 3D pura o malla, no descender
+    if instance:IsA("BasePart") or instance:IsA("MeshPart") or instance:IsA("Decal") or instance:IsA("Texture") or instance:IsA("Sound") or instance:IsA("ParticleEmitter") or instance:IsA("Beam") or instance:IsA("Trail") then
+        return true
+    end
+    
+    return false
+end
+
 function HeuristicEngine:MatchesKeyword(targetText, keyword)
     if not targetText or not keyword then return false end
     local lowerText = targetText:lower()
     local lowerKw = keyword:lower()
     
-    -- Si contiene prefijos/sufijos técnicos o caracteres no alfanuméricos ASCII
     if lowerKw:find("^[_%W]") or lowerKw:find("[_%W]$") or lowerKw:match("[^\32-\126]") then
         return string.find(lowerText, lowerKw, 1, true) ~= nil
     end
     
-    -- Palabras ASCII normales: usar límite de frontera de palabra para evitar que 'controller' coincida con 'roll' o 'abandon' con 'ban'
     local pattern = "%f[%w]" .. lowerKw .. "%f[%W]"
     return string.find(lowerText, pattern) ~= nil
 end
@@ -150,8 +175,52 @@ function HeuristicEngine:IsStaticDataModule(code)
     return hasReturn and not hasLoops and not hasServices
 end
 
+function HeuristicEngine:SafeDecompileWithCache(instance)
+    if not instance:IsA("LuaSourceContainer") then return nil end
+    
+    -- 1. Descarte de scripts desactivados
+    if instance:IsA("BaseScript") and instance.Disabled then
+        return nil
+    end
+    
+    -- 2. Verificación en Caché (O(1))
+    if self.DecompCache[instance] ~= nil then
+        return self.DecompCache[instance]
+    end
+    
+    if not self.Caps or not self.Caps.Capabilities.HasDecompiler then
+        self.DecompCache[instance] = false
+        return nil
+    end
+    
+    -- 3. Descompilación protegida con limitador de tamaño
+    local s, code = pcall(function()
+        return decompile(instance)
+    end)
+    
+    if s and type(code) == "string" and #code > 0 and not code:find("%[Decompilación no soportada") then
+        -- Truncar análisis si el archivo es gigantesco (> 50,000 caracteres) para evitar saturar el analizador
+        if #code > 50000 then
+            code = code:sub(1, 50000)
+        end
+        self.DecompCache[instance] = code
+        return code
+    end
+    
+    self.DecompCache[instance] = false
+    return nil
+end
+
 function HeuristicEngine:ExtractCodeSnippets(code, pattern, maxSnippets)
     maxSnippets = maxSnippets or 2
+    if not code or #code == 0 then return {} end
+    
+    -- Comprobación previa de subcadena rápida: Si la palabra no existe en todo el texto, retornar inmediatamente sin partir líneas
+    local rawKeyword = pattern:gsub("%%", ""):gsub("%[.-%]", ""):gsub("%(.-%)", "")
+    if #rawKeyword > 2 and not code:find(rawKeyword, 1, true) and not code:find(pattern) then
+        return {}
+    end
+    
     local snippets = {}
     local lineNum = 1
     for line in code:gmatch("([^\r\n]*)\r?\n?") do
@@ -219,10 +288,10 @@ function HeuristicEngine:AnalyzeInstance(instance, depth)
         categoriesFound["Remotes"] = true
     end
 
-    -- 6. Análisis Profundo de Código Contextualizado (Scripts y Módulos)
+    -- 6. Análisis Profundo de Código con Descompilación Perezosa y Caché
     if instance:IsA("LuaSourceContainer") then
-        local decompiledCode = self.Caps:SafeDecompile(instance)
-        if decompiledCode and not decompiledCode:find("%[Decompilación no soportada") then
+        local decompiledCode = self:SafeDecompileWithCache(instance)
+        if decompiledCode then
             if instance:IsA("ModuleScript") and self:IsStaticDataModule(decompiledCode) then
                 isStaticConfig = true
                 table.insert(tags, "Tipo: Módulo de Configuración Estática")
@@ -346,12 +415,28 @@ function HeuristicEngine:TraverseOperationalContainers(targetContainers, callbac
         game:GetService("StarterGui"),
     }
     
+    local lastYield = tick()
+    
     local function walk(parent, currentDepth)
+        if self:IsIgnoredCoreInstance(parent) or self:IsPrunedBranch(parent) then
+            return
+        end
+        
         local s, children = pcall(function() return parent:GetChildren() end)
         if s and children then
             for _, child in ipairs(children) do
-                callback(child, currentDepth)
-                walk(child, currentDepth + 1)
+                -- Time-Slicing cooperativo cada 12ms para mantener los FPS del juego fluidos
+                if tick() - lastYield > 0.012 then
+                    task.wait()
+                    lastYield = tick()
+                end
+                
+                if not self:IsIgnoredCoreInstance(child) then
+                    callback(child, currentDepth)
+                    if not self:IsPrunedBranch(child) then
+                        walk(child, currentDepth + 1)
+                    end
+                end
             end
         end
     end

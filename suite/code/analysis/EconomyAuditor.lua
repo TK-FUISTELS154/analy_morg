@@ -4,7 +4,7 @@
     =============================================================================
     Inspecciona profundamente la lógica de economía, ruletas, gachas, drops,
     tablas de probabilidad y precios en múltiples idiomas (Chino, Japonés, Ruso, etc.),
-    sincronizando en tiempo real con los Remotes interceptados por RemoteAnalyzer.
+    con poda de ramas no funcionales y time-slicing de 12ms para evitar bloqueos.
 --]]
 
 local EconomyAuditor = {}
@@ -17,6 +17,29 @@ function EconomyAuditor.new(heuristicEngine, logger, remoteAnalyzer)
     self.Logger = logger
     self.RemoteAnalyzer = remoteAnalyzer
     return self
+end
+
+function EconomyAuditor:IsPrunedBranch(instance)
+    local name = instance.Name:lower()
+    local visualAssets = {
+        assets = true, models = true, sounds = true, audio = true,
+        animations = true, textures = true, meshes = true, fx = true,
+        worldfx = true, map = true, vfx = true, lighting = true,
+        decals = true, particles = true, npcs = true, terrain = true,
+        camera = true, props = true, effects = true, visual = true,
+    }
+    
+    if visualAssets[name] then
+        if not (name:find("script") or name:find("module") or name:find("controller") or name:find("network") or name:find("shop") or name:find("store")) then
+            return true
+        end
+    end
+    
+    if instance:IsA("BasePart") or instance:IsA("MeshPart") or instance:IsA("Decal") or instance:IsA("Texture") or instance:IsA("Sound") or instance:IsA("ParticleEmitter") or instance:IsA("Beam") or instance:IsA("Trail") then
+        return true
+    end
+    
+    return false
 end
 
 function EconomyAuditor:ScanEconomyNodes()
@@ -37,9 +60,9 @@ function EconomyAuditor:ScanEconomyNodes()
     }
     
     local lexicon = (self.Heuristic and self.Heuristic.Lexicon.Economy) or {
-        "spin", "wheel", "roll", "luck", "chance", "shop", "item", "purchase", "currency", "gem",
-        "抽奖", "抽卡", "轮盘", "扭蛋", "转盘", "概率", "几率", "爆率", "商店", "购买",
-        "ガチャ", "ルーレット", "確率", "購入", "ショップ", "рулетка", "шанс", "магазин"
+        "spin", "wheel", "roll", "luck", "chance", "shop", "purchase", "currency", "gem", "crate", "unbox", "gacha", "rebirth", "multiplier", "diamond",
+        "抽奖", "抽卡", "轮盘", "扭蛋", "转盘", "概率", "几率", "爆率", "商店", "购买", "金币", "钻石", "充值",
+        "ガチャ", "ルーレット", "確率", "購入", "ショップ", "рулетка", "шанс", "магазин", "покупка", "донат"
     }
     
     local function isIgnoredCoreInstance(instance)
@@ -74,10 +97,20 @@ function EconomyAuditor:ScanEconomyNodes()
         return inst:IsA("LuaSourceContainer") or inst:IsA("ValueBase") or inst:IsA("Configuration") or inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("GuiButton")
     end
 
+    local lastYield = tick()
+
     local function walk(parent)
+        if self:IsPrunedBranch(parent) or isIgnoredCoreInstance(parent) then return end
+        
         local s, children = pcall(function() return parent:GetChildren() end)
         if s and children then
             for _, inst in ipairs(children) do
+                -- Time-Slicing cooperativo cada 12ms
+                if tick() - lastYield > 0.012 then
+                    task.wait()
+                    lastYield = tick()
+                end
+                
                 if not isIgnoredCoreInstance(inst) then
                     if isEconomyCandidate(inst) then
                         local rawName = inst.Name
@@ -94,15 +127,17 @@ function EconomyAuditor:ScanEconomyNodes()
                             end
                         end
                         
-                        -- 2. Inspección de Atributos de probabilidad o precio
-                        local sAttrs, attrs = pcall(function() return inst:GetAttributes() end)
-                        if sAttrs and attrs then
-                            for aName, aVal in pairs(attrs) do
-                                local aLower = tostring(aName):lower()
-                                if aLower:find("chance") or aLower:find("price") or aLower:find("cost") or aLower:find("rate") or aLower:find("luck") or aLower:find("概率") or aLower:find("价格") then
-                                    isMatch = true
-                                    matchedTag = string.format("Attr(%s = %s)", aName, tostring(aVal))
-                                    break
+                        -- 2. Inspección de Atributos de probabilidad o precio (Solo si no es de assets masivos)
+                        if not isMatch and not inst:IsA("GuiButton") then
+                            local sAttrs, attrs = pcall(function() return inst:GetAttributes() end)
+                            if sAttrs and attrs then
+                                for aName, aVal in pairs(attrs) do
+                                    local aLower = tostring(aName):lower()
+                                    if aLower:find("chance") or aLower:find("price") or aLower:find("cost") or aLower:find("rate") or aLower:find("luck") or aLower:find("概率") or aLower:find("价格") then
+                                        isMatch = true
+                                        matchedTag = string.format("Attr(%s = %s)", aName, tostring(aVal))
+                                        break
+                                    end
                                 end
                             end
                         end
@@ -129,7 +164,9 @@ function EconomyAuditor:ScanEconomyNodes()
                         end
                     end
                     
-                    walk(inst)
+                    if not self:IsPrunedBranch(inst) then
+                        walk(inst)
+                    end
                 end
             end
         end

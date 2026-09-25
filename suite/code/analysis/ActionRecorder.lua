@@ -303,12 +303,12 @@ function ActionRecorder:Start()
     table.insert(self.Connections, self.LocalPlayer.CharacterAdded:Connect(hookCharacter))
     
     -- 4. Listener Profundo de Interacciones de Interfaz (PlayerGui y UI Buttons)
-    local hookedGuiElements = {}
+    local hookedGuiElements = setmetatable({}, { __mode = "k" })
     local function hookGuiElement(element)
         if not element or hookedGuiElements[element] then return end
-        hookedGuiElements[element] = true
         
         if element:IsA("GuiButton") then -- TextButton, ImageButton
+            hookedGuiElements[element] = true
             table.insert(self.Connections, element.MouseButton1Click:Connect(function()
                 if not self.IsRecording then return end
                 local btnText = element:IsA("TextButton") and element.Text or (element:IsA("ImageButton") and element.Image or "")
@@ -324,6 +324,7 @@ function ActionRecorder:Start()
             end))
             
         elseif element:IsA("TextBox") then
+            hookedGuiElements[element] = true
             table.insert(self.Connections, element.FocusLost:Connect(function(enterPressed)
                 if not self.IsRecording then return end
                 local screenGui = element:FindFirstAncestorOfClass("ScreenGui")
@@ -340,15 +341,27 @@ function ActionRecorder:Start()
     
     local playerGui = self.LocalPlayer:FindFirstChild("PlayerGui")
     if playerGui then
-        local s, desc = pcall(function() return playerGui:GetDescendants() end)
-        if s and desc then
-            for _, inst in ipairs(desc) do
-                hookGuiElement(inst)
+        task.spawn(function()
+            local s, desc = pcall(function() return playerGui:GetDescendants() end)
+            if s and desc then
+                local lastYield = tick()
+                for _, inst in ipairs(desc) do
+                    if tick() - lastYield > 0.012 then
+                        task.wait()
+                        lastYield = tick()
+                    end
+                    if not self.IsRecording then break end
+                    if inst:IsA("GuiButton") or inst:IsA("TextBox") then
+                        hookGuiElement(inst)
+                    end
+                end
             end
-        end
+        end)
         
         table.insert(self.Connections, playerGui.DescendantAdded:Connect(function(newDesc)
-            hookGuiElement(newDesc)
+            if newDesc:IsA("GuiButton") or newDesc:IsA("TextBox") then
+                hookGuiElement(newDesc)
+            end
         end))
     end
     

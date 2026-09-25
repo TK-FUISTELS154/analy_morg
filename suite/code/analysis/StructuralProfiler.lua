@@ -4,7 +4,8 @@
     =============================================================================
     Analiza la topología del juego, identifica frameworks estándar de Roblox
     (Knit, Flamework, ReplicaService, ByteNet) y genera métricas estadísticas
-    de distribución, densidad y complejidad arquitectónica.
+    de distribución, densidad y complejidad arquitectónica con poda de ramas
+    y time-slicing para evitar congelamientos de hilo.
 --]]
 
 local StructuralProfiler = {}
@@ -17,7 +18,30 @@ function StructuralProfiler.new(logger)
     return self
 end
 
--- 1. Detección de Frameworks Modernos de Roblox
+function StructuralProfiler:IsPrunedBranch(instance)
+    local name = instance.Name:lower()
+    local visualAssets = {
+        assets = true, models = true, sounds = true, audio = true,
+        animations = true, textures = true, meshes = true, fx = true,
+        worldfx = true, map = true, vfx = true, lighting = true,
+        decals = true, particles = true, npcs = true, terrain = true,
+        camera = true, props = true, effects = true, visual = true,
+    }
+    
+    if visualAssets[name] then
+        if not (name:find("script") or name:find("module") or name:find("controller") or name:find("network")) then
+            return true
+        end
+    end
+    
+    if instance:IsA("BasePart") or instance:IsA("MeshPart") or instance:IsA("Decal") or instance:IsA("Texture") or instance:IsA("Sound") or instance:IsA("ParticleEmitter") or instance:IsA("Beam") or instance:IsA("Trail") then
+        return true
+    end
+    
+    return false
+end
+
+-- 1. Detección de Frameworks Modernos de Roblox (Rápido y acotado)
 function StructuralProfiler:DetectFrameworks()
     local frameworks = {
         Knit = false,
@@ -29,27 +53,41 @@ function StructuralProfiler:DetectFrameworks()
     }
     
     local replicatedStorage = game:GetService("ReplicatedStorage")
-    local s, descendants = pcall(function() return replicatedStorage:GetDescendants() end)
+    local lastYield = tick()
     
-    if s and descendants then
-        for _, inst in ipairs(descendants) do
-            local name = inst.Name:lower()
-            if name == "knit" or name == "knitclient" then
-                frameworks.Knit = true
-            elseif name == "flamework" or name == "_flamework" then
-                frameworks.Flamework = true
-            elseif name:find("replicaservice") or name:find("replicacontroller") then
-                frameworks.ReplicaService = true
-            elseif name == "bytenet" then
-                frameworks.ByteNet = true
-            elseif name == "bridgenet" or name == "bridgenet2" then
-                frameworks.BridgeNet = true
-            elseif name == "roact" or name == "rodux" or name == "fusion" then
-                frameworks.RoactRodux = true
+    local function scanChildren(parent, depth)
+        if depth > 4 or self:IsPrunedBranch(parent) then return end
+        local s, children = pcall(function() return parent:GetChildren() end)
+        if s and children then
+            for _, inst in ipairs(children) do
+                if tick() - lastYield > 0.012 then
+                    task.wait()
+                    lastYield = tick()
+                end
+                
+                local name = inst.Name:lower()
+                if name == "knit" or name == "knitclient" then
+                    frameworks.Knit = true
+                elseif name == "flamework" or name == "_flamework" then
+                    frameworks.Flamework = true
+                elseif name:find("replicaservice") or name:find("replicacontroller") then
+                    frameworks.ReplicaService = true
+                elseif name == "bytenet" then
+                    frameworks.ByteNet = true
+                elseif name == "bridgenet" or name == "bridgenet2" then
+                    frameworks.BridgeNet = true
+                elseif name == "roact" or name == "rodux" or name == "fusion" then
+                    frameworks.RoactRodux = true
+                end
+                
+                if not self:IsPrunedBranch(inst) then
+                    scanChildren(inst, depth + 1)
+                end
             end
         end
     end
     
+    scanChildren(replicatedStorage, 1)
     return frameworks
 end
 
@@ -62,21 +100,38 @@ function StructuralProfiler:AnalyzeTopology()
         StarterCharacterScripts = { Count = 0, LocalScripts = 0, ModuleScripts = 0, Role = "Character Logic" },
     }
     
+    local lastYield = tick()
+    
     local function profileService(service, targetKey)
         if not service then return end
-        local s, desc = pcall(function() return service:GetDescendants() end)
-        if s and desc then
-            topology[targetKey].Count = #desc
-            for _, inst in ipairs(desc) do
-                if inst:IsA("LocalScript") then
-                    topology[targetKey].LocalScripts = (topology[targetKey].LocalScripts or 0) + 1
-                elseif inst:IsA("ModuleScript") then
-                    topology[targetKey].ModuleScripts = (topology[targetKey].ModuleScripts or 0) + 1
-                elseif inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") then
-                    topology[targetKey].Remotes = (topology[targetKey].Remotes or 0) + 1
+        
+        local function walk(parent, depth)
+            if depth > 8 or self:IsPrunedBranch(parent) then return end
+            local s, children = pcall(function() return parent:GetChildren() end)
+            if s and children then
+                for _, inst in ipairs(children) do
+                    if tick() - lastYield > 0.012 then
+                        task.wait()
+                        lastYield = tick()
+                    end
+                    
+                    topology[targetKey].Count = topology[targetKey].Count + 1
+                    if inst:IsA("LocalScript") then
+                        topology[targetKey].LocalScripts = (topology[targetKey].LocalScripts or 0) + 1
+                    elseif inst:IsA("ModuleScript") then
+                        topology[targetKey].ModuleScripts = (topology[targetKey].ModuleScripts or 0) + 1
+                    elseif inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("UnreliableRemoteEvent") then
+                        topology[targetKey].Remotes = (topology[targetKey].Remotes or 0) + 1
+                    end
+                    
+                    if not self:IsPrunedBranch(inst) then
+                        walk(inst, depth + 1)
+                    end
                 end
             end
         end
+        
+        walk(service, 1)
     end
     
     profileService(game:GetService("ReplicatedFirst"), "ReplicatedFirst")
@@ -91,7 +146,7 @@ function StructuralProfiler:AnalyzeTopology()
     return topology
 end
 
--- 3. Métricas Estadísticas de Distribución de Instancias (Solo Contenedores Operacionales)
+-- 3. Métricas Estadísticas de Distribución de Instancias con Time-Slicing y Poda
 function StructuralProfiler:CalculateStatistics()
     local stats = {
         TotalInstances = 0,
@@ -113,11 +168,19 @@ function StructuralProfiler:CalculateStatistics()
     }
     
     local depthSum = 0
+    local lastYield = tick()
     
     local function walk(parent, currentDepth)
+        if self:IsPrunedBranch(parent) then return end
+        
         local s, children = pcall(function() return parent:GetChildren() end)
         if s and children then
             for _, inst in ipairs(children) do
+                if tick() - lastYield > 0.012 then
+                    task.wait()
+                    lastYield = tick()
+                end
+                
                 stats.TotalInstances = stats.TotalInstances + 1
                 local cName = inst.ClassName
                 stats.ClassDistribution[cName] = (stats.ClassDistribution[cName] or 0) + 1
@@ -133,7 +196,9 @@ function StructuralProfiler:CalculateStatistics()
                     stats.MaxDepth = currentDepth
                 end
                 
-                walk(inst, currentDepth + 1)
+                if not self:IsPrunedBranch(inst) then
+                    walk(inst, currentDepth + 1)
+                end
             end
         end
     end
