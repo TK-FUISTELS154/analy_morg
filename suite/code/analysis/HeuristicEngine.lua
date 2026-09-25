@@ -406,7 +406,11 @@ function HeuristicEngine:AnalyzeInstance(instance, depth)
     }
 end
 
-function HeuristicEngine:TraverseOperationalContainers(targetContainers, callback)
+-- =========================================================================
+-- COLECTOR RÁPIDO Y MOTOR DE EJECUCIÓN MULTIHILO (WORKER POOL)
+-- =========================================================================
+
+function HeuristicEngine:CollectCandidates(targetContainers)
     local containers = targetContainers or {
         game:GetService("ReplicatedStorage"),
         game:GetService("ReplicatedFirst"),
@@ -415,6 +419,7 @@ function HeuristicEngine:TraverseOperationalContainers(targetContainers, callbac
         game:GetService("StarterGui"),
     }
     
+    local queue = {}
     local lastYield = tick()
     
     local function walk(parent, currentDepth)
@@ -425,14 +430,15 @@ function HeuristicEngine:TraverseOperationalContainers(targetContainers, callbac
         local s, children = pcall(function() return parent:GetChildren() end)
         if s and children then
             for _, child in ipairs(children) do
-                -- Time-Slicing cooperativo cada 12ms para mantener los FPS del juego fluidos
                 if tick() - lastYield > 0.012 then
                     task.wait()
                     lastYield = tick()
                 end
                 
                 if not self:IsIgnoredCoreInstance(child) then
-                    callback(child, currentDepth)
+                    if self:IsExecutableOrNetwork(child) then
+                        table.insert(queue, { Instance = child, Depth = currentDepth })
+                    end
                     if not self:IsPrunedBranch(child) then
                         walk(child, currentDepth + 1)
                     end
@@ -446,9 +452,68 @@ function HeuristicEngine:TraverseOperationalContainers(targetContainers, callbac
             walk(cont, 1)
         end
     end
+    
+    return queue
 end
 
-function HeuristicEngine:RunFullAudit(targetContainers)
+function HeuristicEngine:ProcessConcurrently(queue, processFn, onProgress, workerCount)
+    workerCount = workerCount or 6
+    local total = #queue
+    if total == 0 then return end
+    
+    local nextIndex = 1
+    local completed = 0
+    local activeWorkers = workerCount
+    local startTime = tick()
+    local lastProgressUpdate = 0
+    
+    local function notifyProgress(currentInstName)
+        local now = tick()
+        if now - lastProgressUpdate >= 0.03 or completed == total then
+            lastProgressUpdate = now
+            local elapsed = math.max(now - startTime, 0.001)
+            local speed = completed / elapsed
+            local eta = (speed > 0) and ((total - completed) / speed) or 0
+            if onProgress then
+                pcall(onProgress, completed, total, currentInstName or "Finalizando...", elapsed, eta, speed)
+            end
+        end
+    end
+    
+    local function workerLoop()
+        local workerYield = tick()
+        while true do
+            local myIndex = nextIndex
+            nextIndex = nextIndex + 1
+            if myIndex > total then break end
+            
+            local item = queue[myIndex]
+            if item and item.Instance then
+                pcall(processFn, item.Instance, item.Depth)
+                completed = completed + 1
+                notifyProgress(item.Instance.Name)
+            end
+            
+            if tick() - workerYield > 0.012 then
+                task.wait()
+                workerYield = tick()
+            end
+        end
+        activeWorkers = activeWorkers - 1
+    end
+    
+    for w = 1, workerCount do
+        task.spawn(workerLoop)
+    end
+    
+    while activeWorkers > 0 do
+        task.wait()
+    end
+    
+    notifyProgress("Completado")
+end
+
+function HeuristicEngine:RunFullAudit(targetContainers, onProgress)
     local results = {
         AntiCheat = {},
         Economy = {},
@@ -465,10 +530,11 @@ function HeuristicEngine:RunFullAudit(targetContainers)
         results.StructuralProfile = self.Structural:GenerateReport()
     end
     
-    self:TraverseOperationalContainers(targetContainers, function(inst, depth)
-        results.TotalScanned = results.TotalScanned + 1
+    local queue = self:CollectCandidates(targetContainers)
+    results.TotalScanned = #queue
+    
+    self:ProcessConcurrently(queue, function(inst, depth)
         local analysis = self:AnalyzeInstance(inst, depth)
-        
         if analysis then
             if analysis.Severity == 5 or (analysis.Categories["Admin"] and not analysis.Categories["AntiCheat"]) then
                 table.insert(results.AdminTools, analysis)
@@ -488,26 +554,25 @@ function HeuristicEngine:RunFullAudit(targetContainers)
             if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("UnreliableRemoteEvent") then
                 table.insert(results.Remotes, analysis)
             end
-            
             if analysis.Severity == HeuristicEngine.Severity.CRITICAL then
                 results.CriticalIssues = results.CriticalIssues + 1
             end
         end
-    end)
+    end, onProgress, 6)
     
     if self.Logger then
-        self.Logger:Info("AUDIT", string.format("Escaneo Heurístico Sincronizado Completado: %d analizados, %d remotes, %d amenazas críticas.", results.TotalScanned, #results.Remotes, results.CriticalIssues))
+        self.Logger:Info("AUDIT", string.format("Escaneo Heurístico Multihilo Completado: %d analizados, %d remotes, %d amenazas críticas.", results.TotalScanned, #results.Remotes, results.CriticalIssues))
     end
     
     return results
 end
 
 -- =========================================================================
--- MÉTODOS DE ESCANEO ESPECÍFICOS / DEDICADOS
+-- MÉTODOS DE ESCANEO ESPECÍFICOS / DEDICADOS MULTIHILO
 -- =========================================================================
 
 -- 1. Escaneo Dedicado de Anti-Cheat, Watchdogs e Integrity Checks
-function HeuristicEngine:RunAntiCheatAudit(customLocations)
+function HeuristicEngine:RunAntiCheatAudit(customLocations, onProgress)
     local report = {
         Category = "AntiCheat",
         Timestamp = tick(),
@@ -515,23 +580,25 @@ function HeuristicEngine:RunAntiCheatAudit(customLocations)
         TotalFound = 0,
     }
     
-    self:TraverseOperationalContainers(customLocations, function(inst, depth)
+    local queue = self:CollectCandidates(customLocations)
+    
+    self:ProcessConcurrently(queue, function(inst, depth)
         local analysis = self:AnalyzeInstance(inst, depth)
         if analysis and (analysis.Categories["AntiCheat"] or analysis.Score >= 40) then
             table.insert(report.Targets, analysis)
             report.TotalFound = report.TotalFound + 1
         end
-    end)
+    end, onProgress, 6)
     
     if self.Logger then
-        self.Logger:Info("AUDIT", string.format("Escaneo de Anti-Cheat finalizado: %d watchdogs/kicks localizados.", report.TotalFound))
+        self.Logger:Info("AUDIT", string.format("Escaneo de Anti-Cheat Multihilo finalizado: %d watchdogs/kicks localizados.", report.TotalFound))
     end
     
     return report
 end
 
 -- 2. Escaneo Dedicado de Economía, Ruleta y Azar
-function HeuristicEngine:RunEconomyAudit(customLocations)
+function HeuristicEngine:RunEconomyAudit(customLocations, onProgress)
     local report = {
         Category = "Economy",
         Timestamp = tick(),
@@ -539,23 +606,25 @@ function HeuristicEngine:RunEconomyAudit(customLocations)
         TotalFound = 0,
     }
     
-    self:TraverseOperationalContainers(customLocations, function(inst, depth)
+    local queue = self:CollectCandidates(customLocations)
+    
+    self:ProcessConcurrently(queue, function(inst, depth)
         local analysis = self:AnalyzeInstance(inst, depth)
         if analysis and (analysis.Categories["Economy"] or analysis.Score >= 20) then
             table.insert(report.Targets, analysis)
             report.TotalFound = report.TotalFound + 1
         end
-    end)
+    end, onProgress, 6)
     
     if self.Logger then
-        self.Logger:Info("AUDIT", string.format("Escaneo de Economía/Ruletas finalizado: %d elementos encontrados.", report.TotalFound))
+        self.Logger:Info("AUDIT", string.format("Escaneo de Economía/Ruletas Multihilo finalizado: %d elementos encontrados.", report.TotalFound))
     end
     
     return report
 end
 
 -- 3. Escaneo Dedicado de Todos los Remotes del Juego
-function HeuristicEngine:RunRemotesAudit(customLocations)
+function HeuristicEngine:RunRemotesAudit(customLocations, onProgress)
     local report = {
         Category = "Remotes",
         Timestamp = tick(),
@@ -564,7 +633,9 @@ function HeuristicEngine:RunRemotesAudit(customLocations)
         TotalFound = 0,
     }
     
-    self:TraverseOperationalContainers(customLocations, function(inst, depth)
+    local queue = self:CollectCandidates(customLocations)
+    
+    self:ProcessConcurrently(queue, function(inst, depth)
         if inst:IsA("RemoteEvent") or inst:IsA("UnreliableRemoteEvent") then
             table.insert(report.RemoteEvents, {
                 Name = inst.Name,
@@ -584,10 +655,10 @@ function HeuristicEngine:RunRemotesAudit(customLocations)
             })
             report.TotalFound = report.TotalFound + 1
         end
-    end)
+    end, onProgress, 8)
     
     if self.Logger then
-        self.Logger:Info("AUDIT", string.format("Mapeo de Remotes finalizado: %d RemoteEvents, %d RemoteFunctions.", #report.RemoteEvents, #report.RemoteFunctions))
+        self.Logger:Info("AUDIT", string.format("Mapeo de Remotes Multihilo finalizado: %d RemoteEvents, %d RemoteFunctions.", #report.RemoteEvents, #report.RemoteFunctions))
     end
     
     return report
