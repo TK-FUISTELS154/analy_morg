@@ -487,11 +487,67 @@ function CapabilityManager:IsEnvironmentGuardActive()
 end
 
 -- =============================================================================
+-- RUNTIME SUSPECT REGISTRY (Almacén Centralizado de Hallazgos en Tiempo Real)
+-- =============================================================================
+
+function CapabilityManager:RegisterSuspect(instance, category, score, metadata)
+    if not self._suspectRegistry then
+        self._suspectRegistry = {}
+        self._suspectMap = setmetatable({}, { __mode = "k" })
+    end
+    if not instance then return nil end
+
+    local existing = self._suspectMap[instance]
+    if existing then
+        if score and score > (existing.Score or 0) then
+            existing.Score = score
+        end
+        if category and not existing.Categories[category] then
+            existing.Categories[category] = true
+            table.insert(existing.Tags, category)
+        end
+        if metadata then
+            for k, v in pairs(metadata) do
+                existing.Metadata[k] = v
+            end
+        end
+        return existing
+    end
+
+    local path = self:GetPath(instance) or (pcall(function() return instance:GetFullName() end) and instance:GetFullName()) or tostring(instance)
+    local entry = {
+        Instance = instance,
+        Name = instance.Name,
+        ClassName = instance.ClassName,
+        Path = path,
+        Score = score or 100,
+        Categories = { [category or "RuntimeSuspect"] = true },
+        Tags = { category or "RuntimeSuspect" },
+        Timestamp = tick(),
+        Metadata = metadata or {},
+    }
+
+    self._suspectMap[instance] = entry
+    table.insert(self._suspectRegistry, entry)
+    return entry
+end
+
+function CapabilityManager:GetRuntimeSuspects()
+    return self._suspectRegistry or {}
+end
+
+function CapabilityManager:ClearRuntimeSuspects()
+    self._suspectRegistry = {}
+    self._suspectMap = setmetatable({}, { __mode = "k" })
+end
+
+-- =============================================================================
 -- DESTRUCTOR
 -- =============================================================================
 
 function CapabilityManager:Destroy()
     self:FlushCache()
+    self:ClearRuntimeSuspects()
     self._envGuardActive = false
 end
 

@@ -153,53 +153,111 @@ function ActionRecorder:GetCurrentPlayerSnapshot()
 end
 
 -- =============================================================================
--- DESCUBRIMIENTO DE SCRIPTS LOCALES EN ANCESTROS (Ancestor Script Discovery)
+-- DESCUBRIMIENTO DE SCRIPTS CONTROLADORES (v5.0: getconnections + Clousures + Ancestor Fallback)
 -- =============================================================================
--- Busca scripts LocalScript/ModuleScript en los ancestros del objeto interactuado
--- para identificar qué código controla la interacción.
 
 function ActionRecorder:DiscoverControllingScripts(targetInstance)
     local scripts = {}
     if not targetInstance then return scripts end
 
-    -- 1. Buscar scripts en los descendientes directos del objeto y su padre inmediato
+    local visited = {}
+    local function addScript(child, matchReason)
+        if not child or not child:IsA("LuaSourceContainer") then return end
+        if self:IsIgnoredLibraryScript(child) then return end
+        local fullName = self:GetCachedPath(child)
+        if not visited[fullName] then
+            visited[fullName] = true
+            local src = nil
+            if self.Caps then
+                src = self.Caps:SafeDecompile(child)
+            end
+            table.insert(scripts, {
+                Instance = child,
+                Path = fullName,
+                Name = child.Name,
+                ClassName = child.ClassName,
+                SourcePreview = src and src:sub(1, 500) or nil,
+                HasSource = src ~= nil and #(src or "") > 0,
+                MatchReason = matchReason or "Ancestor",
+            })
+        end
+    end
+
+    -- 1. Inspección de conexiones activas vía getconnections() nativo
+    local getconn = (type(getconnections) == "function" and getconnections)
+        or (self.Caps and self.Caps.APIs and self.Caps.APIs.getconnections)
+    
+    if getconn then
+        local signalsToInspect = {}
+        if targetInstance:IsA("GuiButton") then
+            pcall(function() table.insert(signalsToInspect, targetInstance.MouseButton1Click) end)
+            pcall(function() table.insert(signalsToInspect, targetInstance.Activated) end)
+            pcall(function() table.insert(signalsToInspect, targetInstance.MouseButton1Down) end)
+        elseif targetInstance:IsA("TextBox") then
+            pcall(function() table.insert(signalsToInspect, targetInstance.FocusLost) end)
+        elseif targetInstance:IsA("ProximityPrompt") then
+            pcall(function() table.insert(signalsToInspect, targetInstance.Triggered) end)
+        elseif targetInstance:IsA("ClickDetector") then
+            pcall(function() table.insert(signalsToInspect, targetInstance.MouseClick) end)
+        elseif targetInstance:IsA("Tool") then
+            pcall(function() table.insert(signalsToInspect, targetInstance.Activated) end)
+            pcall(function() table.insert(signalsToInspect, targetInstance.Equipped) end)
+        end
+
+        for _, signal in ipairs(signalsToInspect) do
+            local s, conns = pcall(getconn, signal)
+            if s and type(conns) == "table" then
+                for _, c in ipairs(conns) do
+                    local fn = c.Function
+                    if fn and type(fn) == "function" then
+                        local scriptObj = nil
+                        pcall(function()
+                            local env = getfenv(fn)
+                            if env and env.script and typeof(env.script) == "Instance" then
+                                scriptObj = env.script
+                            end
+                        end)
+
+                        if not scriptObj and debug and debug.getinfo then
+                            pcall(function()
+                                local info = debug.getinfo(fn)
+                                if info and info.source then
+                                    local srcPath = info.source:gsub("^@", "")
+                                    for _, sInst in ipairs(game:GetDescendants()) do
+                                        if sInst:IsA("LuaSourceContainer") and (sInst:GetFullName() == srcPath or sInst.Name == srcPath) then
+                                            scriptObj = sInst
+                                            break
+                                        end
+                                    end
+                                end
+                            end)
+                        end
+
+                        if scriptObj then
+                            addScript(scriptObj, "getconnections")
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- 2. Fallback: Búsqueda en descendientes y ancestros
     local searchRoots = { targetInstance }
     local parent = targetInstance.Parent
     if parent then table.insert(searchRoots, parent) end
 
-    -- Buscar en el ancestro Model/ScreenGui más cercano
     local ancestorModel = targetInstance:FindFirstAncestorOfClass("Model")
     local ancestorScreenGui = targetInstance:FindFirstAncestorOfClass("ScreenGui")
     if ancestorModel then table.insert(searchRoots, ancestorModel) end
     if ancestorScreenGui then table.insert(searchRoots, ancestorScreenGui) end
 
-    local visited = {}
     for _, root in ipairs(searchRoots) do
-        if not visited[root] then
-            visited[root] = true
-            local s, children = pcall(function() return root:GetDescendants() end)
-            if s and children then
-                for _, child in ipairs(children) do
-                    if child:IsA("LocalScript") or child:IsA("ModuleScript") then
-                        if not self:IsIgnoredLibraryScript(child) then
-                            local fullName = self:GetCachedPath(child)
-                            if not visited[fullName] then
-                                visited[fullName] = true
-                                local src = nil
-                                if self.Caps then
-                                    src = self.Caps:SafeDecompile(child)
-                                end
-                                table.insert(scripts, {
-                                    Instance = child,
-                                    Path = fullName,
-                                    Name = child.Name,
-                                    ClassName = child.ClassName,
-                                    SourcePreview = src and src:sub(1, 500) or nil,
-                                    HasSource = src ~= nil and #(src or "") > 0,
-                                })
-                            end
-                        end
-                    end
+        local s, children = pcall(function() return root:GetDescendants() end)
+        if s and children then
+            for _, child in ipairs(children) do
+                if child:IsA("LocalScript") or child:IsA("ModuleScript") then
+                    addScript(child, "AncestorTree")
                 end
             end
         end
@@ -369,6 +427,33 @@ function ActionRecorder:CorrelateRemoteCall(remoteEntry)
                     delta * 1000,
                     math.floor(confidence * 100), reason
                 ))
+            end
+
+            -- Inyección Causal Directa al Almacén Global (RuntimeSuspectRegistry)
+            if confidence >= 0.70 and self.Caps then
+                if action.Instance then
+                    self.Caps:RegisterSuspect(action.Instance, "RuntimeActionCorrelated", 100, {
+                        ActionType = action.Type,
+                        Remote = remoteEntry.Path,
+                        Confidence = confidence,
+                    })
+                end
+                for _, ctrl in ipairs(action.ControllingScripts or {}) do
+                    if ctrl.Instance then
+                        self.Caps:RegisterSuspect(ctrl.Instance, "RuntimeActionCorrelatedScript", 100, {
+                            ActionType = action.Type,
+                            Remote = remoteEntry.Path,
+                            Confidence = confidence,
+                        })
+                    end
+                end
+                if remoteEntry.Remote then
+                    self.Caps:RegisterSuspect(remoteEntry.Remote, "RuntimeCorrelatedRemote", 100, {
+                        ActionType = action.Type,
+                        Confidence = confidence,
+                        Method = remoteEntry.Method,
+                    })
+                end
             end
 
             if self.EventBus then
@@ -637,9 +722,36 @@ function ActionRecorder:Raycast3DFromCamera(screenPos)
 
     local hitPart = result.Instance
     local hitPosition = result.Position
+    local parentModel = hitPart:FindFirstAncestorOfClass("Model")
 
-    -- 1. Verificar si el part tiene SurfaceGui
+    -- 1. Verificar si el part tiene SurfaceGui directo
     local surfaceGui = hitPart:FindFirstChildOfClass("SurfaceGui")
+    -- 2. Verificar BillboardGui directo en el part o su modelo padre
+    local billboard = hitPart:FindFirstChildOfClass("BillboardGui") or (parentModel and parentModel:FindFirstChildOfClass("BillboardGui"))
+
+    -- 3. Si no se encontró en el workspace, buscar interfaces en PlayerGui cuyo .Adornee apunte a hitPart o parentModel
+    if not surfaceGui and not billboard then
+        local playerGui = self.LocalPlayer and self.LocalPlayer:FindFirstChild("PlayerGui")
+        if playerGui then
+            local s, guis = pcall(function() return playerGui:GetDescendants() end)
+            if s and guis then
+                for _, gui in ipairs(guis) do
+                    if gui:IsA("SurfaceGui") or gui:IsA("BillboardGui") then
+                        local adornee = gui.Adornee or gui.Parent
+                        if adornee == hitPart or (parentModel and adornee == parentModel) then
+                            if gui:IsA("SurfaceGui") then
+                                surfaceGui = gui
+                            else
+                                billboard = gui
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     if surfaceGui then
         return "SurfaceGui", {
             SurfaceGuiName = surfaceGui.Name,
@@ -647,28 +759,22 @@ function ActionRecorder:Raycast3DFromCamera(screenPos)
             HitPart = hitPart.Name,
             HitPartPath = self:GetCachedPath(hitPart),
             HitPosition = tostring(hitPosition),
-        }, hitPart
+            IsAdorneeFromPlayerGui = (surfaceGui.Parent ~= hitPart),
+        }, surfaceGui
     end
 
-    -- 2. Verificar BillboardGui en el part o su modelo padre
-    local searchTargets = { hitPart }
-    local parentModel = hitPart:FindFirstAncestorOfClass("Model")
-    if parentModel then table.insert(searchTargets, parentModel) end
-
-    for _, target in ipairs(searchTargets) do
-        local billboard = target:FindFirstChildOfClass("BillboardGui")
-        if billboard then
-            return "BillboardGui", {
-                BillboardGuiName = billboard.Name,
-                BillboardGuiPath = self:GetCachedPath(billboard),
-                HitPart = hitPart.Name,
-                HitPartPath = self:GetCachedPath(hitPart),
-                HitPosition = tostring(hitPosition),
-            }, hitPart
-        end
+    if billboard then
+        return "BillboardGui", {
+            BillboardGuiName = billboard.Name,
+            BillboardGuiPath = self:GetCachedPath(billboard),
+            HitPart = hitPart.Name,
+            HitPartPath = self:GetCachedPath(hitPart),
+            HitPosition = tostring(hitPosition),
+            IsAdorneeFromPlayerGui = (billboard.Parent ~= hitPart and billboard.Parent ~= parentModel),
+        }, billboard
     end
 
-    -- 3. Verificar ClickDetector en el part o ancestros
+    -- 4. Verificar ClickDetector en el part o ancestros
     local clickDetector = hitPart:FindFirstChildOfClass("ClickDetector")
     if not clickDetector and hitPart.Parent then
         clickDetector = hitPart.Parent:FindFirstChildOfClass("ClickDetector")
@@ -683,7 +789,7 @@ function ActionRecorder:Raycast3DFromCamera(screenPos)
         }, clickDetector.Parent or hitPart
     end
 
-    -- 4. Objeto genérico del mundo (modelo, part interactivo)
+    -- 5. Objeto genérico del mundo (modelo, part interactivo)
     return "WorldObject", {
         ObjectName = hitPart.Name,
         ObjectClass = hitPart.ClassName,
@@ -954,8 +1060,63 @@ function ActionRecorder:GetTimeline()
     return self.RecordedTimeline
 end
 
-function ActionRecorder:GetRecentAction()
-    return self.RecentAction
+function ActionRecorder:GetCorrelatedSuspects()
+    local suspects = {}
+    local seen = {}
+
+    for _, act in ipairs(self.RecordedTimeline) do
+        if act.CorrelatedRemotes and #act.CorrelatedRemotes > 0 then
+            for _, rem in ipairs(act.CorrelatedRemotes) do
+                if (rem.Confidence or 0) >= 0.70 then
+                    if act.Instance and not seen[act.Instance] then
+                        seen[act.Instance] = true
+                        table.insert(suspects, {
+                            Instance = act.Instance,
+                            Path = act.InstancePath,
+                            Name = act.Instance.Name,
+                            ClassName = act.Instance.ClassName,
+                            Score = 100,
+                            Tags = { "RuntimeActionCorrelated" },
+                            ActionType = act.Type,
+                            RemotePath = rem.Path,
+                        })
+                    end
+
+                    for _, ctrl in ipairs(act.ControllingScripts or {}) do
+                        if ctrl.Instance and not seen[ctrl.Instance] then
+                            seen[ctrl.Instance] = true
+                            table.insert(suspects, {
+                                Instance = ctrl.Instance,
+                                Path = ctrl.Path,
+                                Name = ctrl.Name,
+                                ClassName = ctrl.ClassName,
+                                Score = 100,
+                                Tags = { "RuntimeActionCorrelatedScript" },
+                                ActionType = act.Type,
+                                RemotePath = rem.Path,
+                            })
+                        end
+                    end
+
+                    if rem.Remote and not seen[rem.Remote] then
+                        seen[rem.Remote] = true
+                        table.insert(suspects, {
+                            Instance = rem.Remote,
+                            Path = rem.Path,
+                            Name = rem.Name,
+                            ClassName = rem.Remote.ClassName,
+                            Score = 100,
+                            Tags = { "RuntimeCorrelatedRemote" },
+                            ActionType = act.Type,
+                            RemotePath = rem.Path,
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    return suspects
 end
 
 return ActionRecorder

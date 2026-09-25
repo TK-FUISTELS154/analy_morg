@@ -168,10 +168,13 @@ end
 -- =========================================================================
 -- INSPECCIÓN PROFUNDA DEL RASTREO DE ORIGEN (CALLSITE AUDITOR)
 -- =========================================================================
+-- INSPECCIÓN PROFUNDA DEL RASTREO DE ORIGEN (CALLSITE AUDITOR)
+-- =========================================================================
 function RemoteAnalyzer:AuditCallsite()
     local callsite = {
         ScriptPath = nil,
         ScriptName = "Unknown",
+        ScriptInstance = nil,
         IsLegitimate = true,
         OriginType = "GameScript", -- "GameScript", "RobloxCore", "InjectedThread"
         ClosureEnvironment = "Normal",
@@ -181,6 +184,7 @@ function RemoteAnalyzer:AuditCallsite()
         local s, scriptObj = pcall(getcallingscript)
         if s and scriptObj then
             local sPath, full = pcall(function() return scriptObj:GetFullName() end)
+            callsite.ScriptInstance = scriptObj
             callsite.ScriptPath = (sPath and full) or scriptObj.Name
             callsite.ScriptName = scriptObj.Name
             
@@ -199,7 +203,7 @@ function RemoteAnalyzer:AuditCallsite()
 end
 
 -- =========================================================================
--- EVALUACIÓN DE RIESGO
+-- EVALUACIÓN DE RIESGO (CON LÍMITES LÉXICOS Y SUPRESIÓN DE FALSOS POSITIVOS)
 -- =========================================================================
 function RemoteAnalyzer:AssessRiskLevel(remoteName, args, callsite)
     local lower = remoteName:lower()
@@ -214,8 +218,15 @@ function RemoteAnalyzer:AssessRiskLevel(remoteName, args, callsite)
         return RemoteAnalyzer.RiskLevel.HIGH
     end
     
-    -- 3. Medio
-    if lower:find("move") or lower:find("teleport") or lower:find("pos") or lower:find("state") or lower:find("ability") or lower:find("skill") or lower:find("cframe") or lower:find("hit") then
+    -- 3. Medio (Fronteras léxicas para "move": descarta "remove", "unmove", "clear")
+    local isMove = false
+    if not lower:find("remove") and not lower:find("unmove") and not lower:find("clear") then
+        if lower:match("%f[%a]move%f[%A]") or lower:find("movement") then
+            isMove = true
+        end
+    end
+
+    if isMove or lower:find("teleport") or lower:find("pos") or lower:find("state") or lower:find("ability") or lower:find("skill") or lower:find("cframe") or lower:find("hit") then
         return RemoteAnalyzer.RiskLevel.MEDIUM
     end
     
@@ -311,6 +322,19 @@ function RemoteAnalyzer:ProcessRemoteCall(remoteObj, method, args, isScriptCalle
         table.remove(self.Logs)
     end
     
+    -- Inyección dinámica de sospechosos de alto riesgo hacia el RuntimeSuspectRegistry
+    local caps = self.Caps or (self.Heuristic and self.Heuristic.Caps)
+    if caps and (risk == RemoteAnalyzer.RiskLevel.CRITICAL or risk == RemoteAnalyzer.RiskLevel.HIGH) then
+        local targetInst = callsite.ScriptInstance or remoteObj
+        caps:RegisterSuspect(targetInst, "ActiveRemoteCaller", (risk == RemoteAnalyzer.RiskLevel.CRITICAL) and 100 or 85, {
+            RemotePath = logEntry.Path,
+            Method = logEntry.Method,
+            RiskLevel = risk,
+            CallingScript = callsite.ScriptPath,
+            Signature = signature,
+        })
+    end
+
     if self.Logger and risk == RemoteAnalyzer.RiskLevel.CRITICAL then
         self.Logger:Vuln("REMOTESPY", string.format("Remote de riesgo CRÍTICO interceptado: %s (%s)", remoteName, signature))
     end
@@ -318,6 +342,28 @@ function RemoteAnalyzer:ProcessRemoteCall(remoteObj, method, args, isScriptCalle
     if self.EventBus then
         self.EventBus:Publish("RemoteFired", logEntry)
     end
+end
+
+function RemoteAnalyzer:GetHighRiskCallers()
+    local callers = {}
+    local seen = {}
+    for _, log in ipairs(self.Logs) do
+        if (log.RiskLevel == RemoteAnalyzer.RiskLevel.CRITICAL or log.RiskLevel == RemoteAnalyzer.RiskLevel.HIGH) and log.CallingScript then
+            if not seen[log.CallingScript] then
+                seen[log.CallingScript] = true
+                table.insert(callers, {
+                    Path = log.CallingScript,
+                    RemoteName = log.Name,
+                    RemotePath = log.Path,
+                    RiskLevel = log.RiskLevel,
+                    Method = log.Method,
+                    TypeSignature = log.TypeSignature,
+                    Score = (log.RiskLevel == RemoteAnalyzer.RiskLevel.CRITICAL) and 100 or 85,
+                })
+            end
+        end
+    end
+    return callers
 end
 
 function RemoteAnalyzer:Start()

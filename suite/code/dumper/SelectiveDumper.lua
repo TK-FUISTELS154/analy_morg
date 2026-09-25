@@ -21,10 +21,11 @@ SelectiveDumper.DumpModes = {
     FULL_ENVIRONMENT   = "FULL_ENVIRONMENT",   -- Todos los scripts del juego
 }
 
-function SelectiveDumper.new(capabilityManager, logger)
+function SelectiveDumper.new(capabilityManager, logger, registry)
     local self = setmetatable({}, SelectiveDumper)
     self.Caps = capabilityManager
     self.Logger = logger
+    self.Registry = registry
     -- NOTA: El caché de descompilación se gestiona EXCLUSIVAMENTE en CapabilityManager._decompCache
     -- NO crear cachés locales aquí.
     return self
@@ -184,7 +185,7 @@ end
 -- MODOS DE EXTRACCIÓN AVANZADA
 -- =========================================================================
 
--- MODO 1: Extracción de hallazgos heurísticos con sus carpetas contenedoras
+-- MODO 1: Extracción de hallazgos heurísticos con sus carpetas contenedoras (Estáticos + Dinámicos en Vivo)
 function SelectiveDumper:DumpHeuristicFindings(auditResults, onProgress)
     local extractedMap = {}
     local dumpPackage = {
@@ -196,8 +197,23 @@ function SelectiveDumper:DumpHeuristicFindings(auditResults, onProgress)
     }
     
     local function collectFinding(finding)
-        if not finding or not finding.Instance then return end
+        if not finding then return end
         local inst = finding.Instance
+        
+        -- Si no hay Instance directa pero hay Path, intentar resolver objeto
+        if not inst and finding.Path then
+            pcall(function()
+                local parts = string.split(finding.Path, ".")
+                local curr = game
+                for _, p in ipairs(parts) do
+                    curr = curr:FindFirstChild(p)
+                    if not curr then break end
+                end
+                inst = curr
+            end)
+        end
+        if not inst then return end
+
         local parentFolder = inst.Parent or inst
         
         if not extractedMap[parentFolder] then
@@ -215,6 +231,7 @@ function SelectiveDumper:DumpHeuristicFindings(auditResults, onProgress)
         end
     end
     
+    -- 1. Hallazgos Estáticos de HeuristicEngine
     if auditResults then
         if auditResults.AntiCheat then
             for _, item in ipairs(auditResults.AntiCheat) do collectFinding(item) end
@@ -229,9 +246,39 @@ function SelectiveDumper:DumpHeuristicFindings(auditResults, onProgress)
             for _, item in ipairs(auditResults.AdminTools) do collectFinding(item) end
         end
     end
+
+    -- 2. Hallazgos Dinámicos en Tiempo Real desde CapabilityManager (RuntimeSuspectRegistry)
+    if self.Caps and self.Caps.GetRuntimeSuspects then
+        local runtimeSuspects = self.Caps:GetRuntimeSuspects()
+        for _, suspect in ipairs(runtimeSuspects) do
+            collectFinding(suspect)
+        end
+    end
+
+    -- 3. Hallazgos de ActionRecorder (Acciones Correlacionadas en Vivo)
+    local actionRecorder = self.Registry and self.Registry:Get("ActionRecorder")
+    if actionRecorder and actionRecorder.GetCorrelatedSuspects then
+        local liveSuspects = actionRecorder:GetCorrelatedSuspects()
+        for _, suspect in ipairs(liveSuspects) do
+            collectFinding(suspect)
+        end
+    end
+
+    -- 4. Invocadores de Alto Riesgo de RemoteAnalyzer (ActiveRemoteCallers)
+    local remoteAnalyzer = self.Registry and self.Registry:Get("RemoteAnalyzer")
+    if remoteAnalyzer and remoteAnalyzer.GetHighRiskCallers then
+        local highRiskCallers = remoteAnalyzer:GetHighRiskCallers()
+        for _, caller in ipairs(highRiskCallers) do
+            collectFinding({
+                Path = caller.Path,
+                Score = caller.Score or 95,
+                Tags = { "ActiveRemoteCaller", caller.RiskLevel or "HIGH" },
+            })
+        end
+    end
     
     if self.Logger then
-        self.Logger:Info("DUMPER", string.format("Modo HEURISTIC_FINDINGS: %d contenedores con hallazgos extraídos.", dumpPackage.TotalExtracted))
+        self.Logger:Info("DUMPER", string.format("Modo HEURISTIC_FINDINGS: %d contenedores con hallazgos (estáticos + dinámicos) extraídos.", dumpPackage.TotalExtracted))
     end
     
     return dumpPackage

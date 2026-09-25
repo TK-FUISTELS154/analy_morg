@@ -725,28 +725,34 @@ function HeuristicEngine:RunFullAudit(targetContainers, onProgress)
             end
         end
         
-        -- Clasificación por categoría de amenaza (solo si el análisis produjo resultados)
+        -- Clasificación por categoría de amenaza (creando copias superficiales limpias)
         if analysis then
+            local function shallowCopy(src)
+                local copy = {}
+                for k, v in pairs(src) do copy[k] = v end
+                return copy
+            end
+
             if analysis.Severity == 5 or (analysis.Categories["Admin"] and not analysis.Categories["AntiCheat"]) then
-                table.insert(results.AdminTools, analysis)
+                table.insert(results.AdminTools, shallowCopy(analysis))
             end
             if analysis.Categories["AntiCheat"] or (analysis.Score >= 55 and not analysis.Categories["Architecture"]) then
-                table.insert(results.AntiCheat, analysis)
+                table.insert(results.AntiCheat, shallowCopy(analysis))
             end
             if analysis.Categories["Economy"] then
-                table.insert(results.Economy, analysis)
+                table.insert(results.Economy, shallowCopy(analysis))
             end
             if analysis.Categories["Combat"] then
-                table.insert(results.Combat, analysis)
+                table.insert(results.Combat, shallowCopy(analysis))
             end
             if analysis.Categories["Admin"] then
-                table.insert(results.Admin, analysis)
+                table.insert(results.Admin, shallowCopy(analysis))
             end
             if analysis.Categories["Architecture"] then
-                table.insert(results.Architecture, analysis)
+                table.insert(results.Architecture, shallowCopy(analysis))
             end
             if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("UnreliableRemoteEvent") then
-                table.insert(results.Remotes, analysis)
+                table.insert(results.Remotes, shallowCopy(analysis))
             end
             if analysis.Severity == HeuristicEngine.Severity.CRITICAL then
                 results.CriticalIssues = results.CriticalIssues + 1

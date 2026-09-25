@@ -31,27 +31,30 @@ end
 -- SANITIZACIÓN JSON SEGURA (Profundidad limitada, ciclos detectados)
 -- =============================================================================
 
-function ReportExporter:SanitizeForJSON(val, depth, visited)
+function ReportExporter:SanitizeForJSON(val, depth, stack)
     depth = depth or 0
-    visited = visited or {}
-    if depth > 8 then return "[Depth Limit]" end
+    stack = stack or {}
+    if depth > 12 then return "[Depth Limit]" end
 
     local t = typeof(val)
     if t == "string" or t == "number" or t == "boolean" or t == "nil" then
         return val
     elseif t == "Instance" then
-        return pcall(function() return val:GetFullName() end) and val:GetFullName() or tostring(val)
+        local s, full = pcall(function() return val:GetFullName() end)
+        return (s and full) or tostring(val)
     elseif t == "Vector3" or t == "Vector2" or t == "CFrame" or t == "Color3" or t == "UDim2" or t == "EnumItem" then
         return tostring(val)
     elseif t == "table" then
-        if visited[val] then return "[Circular Reference]" end
-        visited[val] = true
+        if stack[val] then return "[Circular Reference]" end
+        stack[val] = true
 
         local cleanTbl = {}
         for k, v in pairs(val) do
             local cleanKey = tostring(k)
-            cleanTbl[cleanKey] = self:SanitizeForJSON(v, depth + 1, visited)
+            cleanTbl[cleanKey] = self:SanitizeForJSON(v, depth + 1, stack)
         end
+
+        stack[val] = nil -- Liberar de la pila de recursión al desapilar
         return cleanTbl
     else
         return tostring(val)

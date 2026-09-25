@@ -150,7 +150,7 @@ if registry and logger and eventBus then
     local physics = PhysicsAuditor and PhysicsAuditor.new(heuristic, logger, caps, remoteAnalyzer)
     if physics then registry:Register("PhysicsAuditor", physics) end
     
-    local dumper = SelectiveDumper and SelectiveDumper.new(caps, logger)
+    local dumper = SelectiveDumper and SelectiveDumper.new(caps, logger, registry)
     if dumper then registry:Register("SelectiveDumper", dumper) end
     
     local exporter = ReportExporter and ReportExporter.new(caps, logger)
