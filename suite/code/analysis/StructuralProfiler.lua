@@ -91,7 +91,7 @@ function StructuralProfiler:AnalyzeTopology()
     return topology
 end
 
--- 3. Métricas Estadísticas de Distribución de Instancias
+-- 3. Métricas Estadísticas de Distribución de Instancias (Solo Contenedores Operacionales)
 function StructuralProfiler:CalculateStatistics()
     local stats = {
         TotalInstances = 0,
@@ -100,45 +100,55 @@ function StructuralProfiler:CalculateStatistics()
         ScriptRatio = 0,
         MeanDepth = 0,
         MaxDepth = 0,
+        TotalScripts = 0,
+        TotalRemotes = 0,
     }
     
-    local s, allDesc = pcall(function() return game:GetDescendants() end)
-    if not s or not allDesc then return stats end
+    local containers = {
+        game:GetService("ReplicatedStorage"),
+        game:GetService("ReplicatedFirst"),
+        game:GetService("StarterPlayer"),
+        game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"),
+        game:GetService("StarterGui"),
+    }
     
-    stats.TotalInstances = #allDesc
-    local totalScripts = 0
-    local totalRemotes = 0
     local depthSum = 0
     
-    for _, inst in ipairs(allDesc) do
-        local cName = inst.ClassName
-        stats.ClassDistribution[cName] = (stats.ClassDistribution[cName] or 0) + 1
-        
-        if inst:IsA("LuaSourceContainer") then
-            totalScripts = totalScripts + 1
-        elseif inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") then
-            totalRemotes = totalRemotes + 1
+    local function walk(parent, currentDepth)
+        local s, children = pcall(function() return parent:GetChildren() end)
+        if s and children then
+            for _, inst in ipairs(children) do
+                stats.TotalInstances = stats.TotalInstances + 1
+                local cName = inst.ClassName
+                stats.ClassDistribution[cName] = (stats.ClassDistribution[cName] or 0) + 1
+                
+                if inst:IsA("LuaSourceContainer") then
+                    stats.TotalScripts = stats.TotalScripts + 1
+                elseif inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("UnreliableRemoteEvent") then
+                    stats.TotalRemotes = stats.TotalRemotes + 1
+                end
+                
+                depthSum = depthSum + currentDepth
+                if currentDepth > stats.MaxDepth then
+                    stats.MaxDepth = currentDepth
+                end
+                
+                walk(inst, currentDepth + 1)
+            end
         end
-        
-        -- Cálculo de Profundidad Jerárquica
-        local depth = 0
-        local curr = inst.Parent
-        while curr and curr ~= game do
-            depth = depth + 1
-            curr = curr.Parent
+    end
+    
+    for _, cont in ipairs(containers) do
+        if cont then
+            walk(cont, 1)
         end
-        depthSum = depthSum + depth
-        if depth > stats.MaxDepth then stats.MaxDepth = depth end
     end
     
     if stats.TotalInstances > 0 then
         stats.MeanDepth = depthSum / stats.TotalInstances
-        stats.RemoteDensity = (totalRemotes / stats.TotalInstances) * 100
-        stats.ScriptRatio = (totalScripts / stats.TotalInstances) * 100
+        stats.RemoteDensity = (stats.TotalRemotes / stats.TotalInstances) * 100
+        stats.ScriptRatio = (stats.TotalScripts / stats.TotalInstances) * 100
     end
-    
-    stats.TotalScripts = totalScripts
-    stats.TotalRemotes = totalRemotes
     
     return stats
 end

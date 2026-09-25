@@ -138,48 +138,58 @@ function HeuristicEngine:MatchesKeyword(targetText, keyword)
     return string.find(lowerText, pattern) ~= nil
 end
 
-function HeuristicEngine:CalculateEntropy(str)
-    if not str or #str == 0 then return 0 end
-    local counts = {}
-    local len = #str
-    for i = 1, len do
-        local byte = string.byte(str, i)
-        counts[byte] = (counts[byte] or 0) + 1
-    end
-    local entropy = 0
-    for _, count in pairs(counts) do
-        local p = count / len
-        entropy = entropy - (p * (math.log(p) / math.log(2)))
-    end
-    return entropy
+function HeuristicEngine:IsExecutableOrNetwork(instance)
+    return instance:IsA("LuaSourceContainer") or instance:IsA("RemoteEvent") or instance:IsA("RemoteFunction") or instance:IsA("UnreliableRemoteEvent")
 end
 
-function HeuristicEngine:AnalyzeInstance(instance)
+function HeuristicEngine:IsStaticDataModule(code)
+    if not code or #code == 0 then return false end
+    local hasReturn = code:find("return%s+{") or code:find("return%s+setmetatable")
+    local hasLoops = code:find("while%s+") or code:find("for%s+") or code:find("repeat%s+")
+    local hasServices = code:find("GetService") or code:find("FireServer") or code:find("InvokeServer") or code:find("Connect%(")
+    return hasReturn and not hasLoops and not hasServices
+end
+
+function HeuristicEngine:ExtractCodeSnippets(code, pattern, maxSnippets)
+    maxSnippets = maxSnippets or 2
+    local snippets = {}
+    local lineNum = 1
+    for line in code:gmatch("([^\r\n]*)\r?\n?") do
+        if line:find(pattern) then
+            local cleanLine = line:match("^%s*(.-)%s*$")
+            if #cleanLine > 120 then cleanLine = cleanLine:sub(1, 117) .. "..." end
+            table.insert(snippets, { Line = lineNum, Code = cleanLine })
+            if #snippets >= maxSnippets then break end
+        end
+        lineNum = lineNum + 1
+    end
+    return snippets
+end
+
+function HeuristicEngine:AnalyzeInstance(instance, depth)
+    depth = depth or 0
+    -- 1. FILTRADO PREMATURO: Si no es ejecutable ni red, descartar en O(1)
+    if not self:IsExecutableOrNetwork(instance) then
+        return nil
+    end
+
+    local path = instance:GetFullName()
+    -- 2. Descarte de Core Roblox
     if self:IsIgnoredCoreInstance(instance) then
-        return {
-            Instance = instance,
-            Name = instance.Name,
-            ClassName = instance.ClassName,
-            Path = instance:GetFullName(),
-            Score = 0,
-            Severity = HeuristicEngine.Severity.LOW,
-            MatchedKeywords = {},
-            Tags = { "Ignored: Core Roblox Script" },
-            Categories = {},
-            Code = nil,
-            IsIgnored = true,
-        }
+        return nil
     end
 
     local rawName = instance.Name
     local className = instance.ClassName
-    local path = instance:GetFullName()
     local score = 0
     local matchedKeywords = {}
     local tags = {}
     local categoriesFound = {}
-    
-    -- 1. Análisis Multilingüe de Nombres con límites de palabra estrictos
+    local codeFindings = {}
+    local isStaticConfig = false
+    local isRem = instance:IsA("RemoteEvent") or instance:IsA("RemoteFunction") or instance:IsA("UnreliableRemoteEvent")
+
+    -- 3. Análisis de Nombres con límites de palabra estrictos
     for catName, keywords in pairs(self.Lexicon) do
         for _, kw in ipairs(keywords) do
             if self:MatchesKeyword(rawName, kw) then
@@ -192,108 +202,165 @@ function HeuristicEngine:AnalyzeInstance(instance)
             end
         end
     end
-    
-    -- 2. SINCRONIZACIÓN TOPOLÓGICA (Ponderación por ubicación estándar del motor)
-    local repFirst = game:GetService("ReplicatedFirst")
-    if repFirst and instance:IsDescendantOf(repFirst) then
-        score = score + 20
-        table.insert(tags, "Topología: ReplicatedFirst (Early Bootloader)")
+
+    -- 4. Ponderación Topológica de Ubicación
+    if string.find(path, "ReplicatedFirst") then
+        score = score + 30
+        table.insert(tags, "Topología: ReplicatedFirst (Early Boot)")
         categoriesFound["AntiCheat"] = true
-    end
-    
-    -- 3. Análisis de Profundidad y Entropía
-    local depth = 0
-    local curr = instance.Parent
-    while curr and curr ~= game do
-        depth = depth + 1
-        curr = curr.Parent
-    end
-    
-    local nameEntropy = self:CalculateEntropy(rawName)
-    if nameEntropy > 4.2 and #rawName > 10 then
-        score = score + 20
-        table.insert(tags, string.format("Alta Entropía (%.2f) - Posible Ofuscación", nameEntropy))
-    end
-    if depth > 8 then
+    elseif string.find(path, "PlayerScripts") or string.find(path, "StarterPlayer") then
         score = score + 10
-        table.insert(tags, string.format("Árbol Profundo (%d niveles)", depth))
     end
-    
-    -- 4. Inspección de Atributos y Configuraciones
-    local successAttrs, attrs = pcall(function() return instance:GetAttributes() end)
-    if successAttrs and attrs then
-        for attrName, attrVal in pairs(attrs) do
-            for catName, keywords in pairs(self.Lexicon) do
-                for _, kw in ipairs(keywords) do
-                    if self:MatchesKeyword(tostring(attrName), kw) then
-                        score = score + 10
-                        table.insert(tags, "Attr:" .. attrName)
-                        categoriesFound[catName] = true
-                        break
-                    end
-                end
-            end
-        end
+
+    -- 5. Ponderación por Clase de Red
+    if isRem then
+        score = score + 15
+        table.insert(tags, "Clase: " .. className)
+        categoriesFound["Remotes"] = true
     end
-    
-    -- 5. Análisis Profundo de Código (Scripts y Módulos)
-    local decompiledCode = nil
+
+    -- 6. Análisis Profundo de Código Contextualizado (Scripts y Módulos)
     if instance:IsA("LuaSourceContainer") then
-        decompiledCode = self.Caps:SafeDecompile(instance)
+        local decompiledCode = self.Caps:SafeDecompile(instance)
         if decompiledCode and not decompiledCode:find("%[Decompilación no soportada") then
-            -- Búsqueda de firmas estáticas
-            for _, sig in ipairs(self.CodeSignatures) do
-                if string.find(decompiledCode, sig.Pattern) then
-                    score = score + sig.Score
-                    table.insert(tags, sig.Desc)
-                    categoriesFound[sig.Category] = true
+            if instance:IsA("ModuleScript") and self:IsStaticDataModule(decompiledCode) then
+                isStaticConfig = true
+                table.insert(tags, "Tipo: Módulo de Configuración Estática")
+            else
+                -- Regla 1: Kick
+                if decompiledCode:find("LocalPlayer:Kick") or decompiledCode:find("Players%.LocalPlayer:Kick") then
+                    score = score + 45
+                    categoriesFound["AntiCheat"] = true
+                    local snips = self:ExtractCodeSnippets(decompiledCode, "Kick")
+                    table.insert(codeFindings, { Desc = "Llamada Directa a Expulsión (LocalPlayer:Kick)", Snippets = snips })
+                    table.insert(tags, "Kick")
                 end
-            end
-            
-            -- Análisis multilingüe dentro del propio código con límites de palabra
-            for catName, keywords in pairs(self.Lexicon) do
-                for _, kw in ipairs(keywords) do
-                    if self:MatchesKeyword(decompiledCode, kw) then
-                        score = score + 5
-                        categoriesFound[catName] = true
-                        break
-                    end
+
+                -- Regla 2: Metatables / Debug
+                if decompiledCode:find("hookmetamethod") or decompiledCode:find("getrawmetatable") then
+                    score = score + 30
+                    categoriesFound["AntiCheat"] = true
+                    local snips = self:ExtractCodeSnippets(decompiledCode, "metatable")
+                    table.insert(codeFindings, { Desc = "Manipulación/Auditoría de Metatablas", Snippets = snips })
+                    table.insert(tags, "Metatables")
                 end
-            end
-            
-            -- Detección de ofuscadores conocidos
-            if decompiledCode:find("LPH_") or decompiledCode:find("IronBrew") or decompiledCode:find("MoonSec") or decompiledCode:find("PSU_") then
-                score = score + 40
-                table.insert(tags, "Ofuscador Comercial Detectado (Luraph/IronBrew/Moonsec)")
+
+                if decompiledCode:find("debug%.info") or decompiledCode:find("debug%.traceback") then
+                    score = score + 20
+                    categoriesFound["AntiCheat"] = true
+                    local snips = self:ExtractCodeSnippets(decompiledCode, "debug%.")
+                    table.insert(codeFindings, { Desc = "Introspección de Callstack / Trap", Snippets = snips })
+                    table.insert(tags, "DebugTrap")
+                end
+
+                -- Regla 3: Noclip Contextualizado (Character + Loop)
+                local hasCanCollide = decompiledCode:find("CanCollide%s*=%s*false")
+                local hasBodyParts = decompiledCode:find("HumanoidRootPart") or decompiledCode:find("Torso") or decompiledCode:find("Character")
+                local hasLoop = decompiledCode:find("RenderStepped") or decompiledCode:find("Heartbeat") or decompiledCode:find("Stepped")
+                if hasCanCollide and hasBodyParts and hasLoop then
+                    score = score + 40
+                    categoriesFound["Admin"] = true
+                    local snips = self:ExtractCodeSnippets(decompiledCode, "CanCollide")
+                    table.insert(codeFindings, { Desc = "Rutina Continua de Noclip en Character (RenderStepped)", Snippets = snips })
+                    table.insert(tags, "Noclip:Contextual")
+                end
+
+                -- Regla 4: Fly / BodyVelocity
+                if decompiledCode:find("BodyVelocity") and (decompiledCode:find("HumanoidRootPart") or decompiledCode:find("Torso")) then
+                    score = score + 35
+                    categoriesFound["Admin"] = true
+                    local snips = self:ExtractCodeSnippets(decompiledCode, "BodyVelocity")
+                    table.insert(codeFindings, { Desc = "Manipulación de Vuelo / Fuerza Física (BodyVelocity)", Snippets = snips })
+                    table.insert(tags, "Fly:BodyVelocity")
+                end
+
+                -- Regla 5: Estado Global (_G / shared)
+                if decompiledCode:find("_G%.__") or decompiledCode:find("shared%.__") then
+                    score = score + 20
+                    categoriesFound["Admin"] = true
+                    local snips = self:ExtractCodeSnippets(decompiledCode, "_G%.")
+                    table.insert(codeFindings, { Desc = "Exposición de Funciones/Banderas Globales (_G/shared)", Snippets = snips })
+                    table.insert(tags, "GlobalState")
+                end
+
+                -- Regla 6: RNG Transaccional vs Cosmético
+                local hasRandom = decompiledCode:find("math%.random") or decompiledCode:find("Random%.new")
+                local hasNetworkOrPurchase = decompiledCode:find("FireServer") or decompiledCode:find("InvokeServer") or decompiledCode:find("MarketplaceService")
+                if hasRandom and hasNetworkOrPurchase then
+                    score = score + 25
+                    categoriesFound["Economy"] = true
+                    local snips = self:ExtractCodeSnippets(decompiledCode, "random")
+                    table.insert(codeFindings, { Desc = "Lógica de RNG Vinculada a Red/Transacciones", Snippets = snips })
+                    table.insert(tags, "Economy:TransactionalRNG")
+                elseif hasRandom then
+                    table.insert(tags, "RNG Cosmético / Cliente")
+                end
+
+                -- Regla 7: Ofuscadores Comerciales
+                if decompiledCode:find("LPH_") or decompiledCode:find("IronBrew") or decompiledCode:find("MoonSec") or decompiledCode:find("PSU_") then
+                    score = score + 45
+                    categoriesFound["AntiCheat"] = true
+                    table.insert(codeFindings, { Desc = "Ofuscador Comercial Detectado (Luraph/IronBrew/Moonsec)", Snippets = {} })
+                    table.insert(tags, "Ofuscador")
+                end
             end
         end
     end
-    
-    -- Normalizar Score a máximo 100
+
     if score > 100 then score = 100 end
-    
-    -- Determinar Severidad
+
+    -- Determinar Severidad y Categoría de Herramienta Administrativa
     local severity = HeuristicEngine.Severity.LOW
-    if score >= 75 or (categoriesFound["AntiCheat"] and score >= 55) or (categoriesFound["Admin"] and score >= 50) then
+    if categoriesFound["Admin"] and score >= 45 and not categoriesFound["AntiCheat"] then
+        severity = 5 -- ADMIN_TOOL
+    elseif score >= 75 or (categoriesFound["AntiCheat"] and score >= 55) then
         severity = HeuristicEngine.Severity.CRITICAL
-    elseif score >= 50 or categoriesFound["Combat"] or categoriesFound["Admin"] then
+    elseif score >= 50 or categoriesFound["Combat"] then
         severity = HeuristicEngine.Severity.HIGH
     elseif score >= 25 or categoriesFound["Economy"] then
         severity = HeuristicEngine.Severity.MEDIUM
     end
-    
+
     return {
         Instance = instance,
         Name = rawName,
         ClassName = className,
         Path = path,
+        Depth = depth,
         Score = score,
         Severity = severity,
         MatchedKeywords = matchedKeywords,
         Tags = tags,
         Categories = categoriesFound,
-        Code = decompiledCode,
+        Findings = codeFindings,
+        IsStaticConfig = isStaticConfig,
     }
+end
+
+function HeuristicEngine:TraverseOperationalContainers(targetContainers, callback)
+    local containers = targetContainers or {
+        game:GetService("ReplicatedStorage"),
+        game:GetService("ReplicatedFirst"),
+        game:GetService("StarterPlayer"),
+        game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"),
+        game:GetService("StarterGui"),
+    }
+    
+    local function walk(parent, currentDepth)
+        local s, children = pcall(function() return parent:GetChildren() end)
+        if s and children then
+            for _, child in ipairs(children) do
+                callback(child, currentDepth)
+                walk(child, currentDepth + 1)
+            end
+        end
+    end
+    
+    for _, cont in ipairs(containers) do
+        if cont then
+            walk(cont, 1)
+        end
+    end
 end
 
 function HeuristicEngine:RunFullAudit(targetContainers)
@@ -301,6 +368,7 @@ function HeuristicEngine:RunFullAudit(targetContainers)
         AntiCheat = {},
         Economy = {},
         Combat = {},
+        AdminTools = {},
         Admin = {},
         Remotes = {},
         CriticalIssues = 0,
@@ -312,49 +380,38 @@ function HeuristicEngine:RunFullAudit(targetContainers)
         results.StructuralProfile = self.Structural:GenerateReport()
     end
     
-    local containers = targetContainers or {
-        game:GetService("ReplicatedStorage"),
-        game:GetService("ReplicatedFirst"),
-        game:GetService("StarterPlayer"),
-        game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"),
-    }
-    
-    for _, container in ipairs(containers) do
-        if container then
-            local success, descendants = pcall(function() return container:GetDescendants() end)
-            if success and descendants then
-                for _, inst in ipairs(descendants) do
-                    results.TotalScanned = results.TotalScanned + 1
-                    local analysis = self:AnalyzeInstance(inst)
-                    
-                    if not analysis.IsIgnored and (analysis.Score > 0 or inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction")) then
-                        if analysis.Categories["AntiCheat"] or analysis.Score >= 50 then
-                            table.insert(results.AntiCheat, analysis)
-                        end
-                        if analysis.Categories["Economy"] then
-                            table.insert(results.Economy, analysis)
-                        end
-                        if analysis.Categories["Combat"] then
-                            table.insert(results.Combat, analysis)
-                        end
-                        if analysis.Categories["Admin"] then
-                            table.insert(results.Admin, analysis)
-                        end
-                        if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") then
-                            table.insert(results.Remotes, analysis)
-                        end
-                        
-                        if analysis.Severity == HeuristicEngine.Severity.CRITICAL then
-                            results.CriticalIssues = results.CriticalIssues + 1
-                        end
-                    end
-                end
+    self:TraverseOperationalContainers(targetContainers, function(inst, depth)
+        results.TotalScanned = results.TotalScanned + 1
+        local analysis = self:AnalyzeInstance(inst, depth)
+        
+        if analysis then
+            if analysis.Severity == 5 or (analysis.Categories["Admin"] and not analysis.Categories["AntiCheat"]) then
+                table.insert(results.AdminTools, analysis)
+            end
+            if analysis.Categories["AntiCheat"] or analysis.Score >= 45 then
+                table.insert(results.AntiCheat, analysis)
+            end
+            if analysis.Categories["Economy"] then
+                table.insert(results.Economy, analysis)
+            end
+            if analysis.Categories["Combat"] then
+                table.insert(results.Combat, analysis)
+            end
+            if analysis.Categories["Admin"] then
+                table.insert(results.Admin, analysis)
+            end
+            if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("UnreliableRemoteEvent") then
+                table.insert(results.Remotes, analysis)
+            end
+            
+            if analysis.Severity == HeuristicEngine.Severity.CRITICAL then
+                results.CriticalIssues = results.CriticalIssues + 1
             end
         end
-    end
+    end)
     
     if self.Logger then
-        self.Logger:Info("AUDIT", string.format("Escaneo Heurístico-Topológico Sincronizado Completado: %d objetos analizados, %d remotes, %d amenazas críticas.", results.TotalScanned, #results.Remotes, results.CriticalIssues))
+        self.Logger:Info("AUDIT", string.format("Escaneo Heurístico Sincronizado Completado: %d analizados, %d remotes, %d amenazas críticas.", results.TotalScanned, #results.Remotes, results.CriticalIssues))
     end
     
     return results
@@ -373,27 +430,13 @@ function HeuristicEngine:RunAntiCheatAudit(customLocations)
         TotalFound = 0,
     }
     
-    local locations = customLocations or {
-        game:GetService("ReplicatedFirst"),
-        game:GetService("StarterPlayer"),
-        game:GetService("ReplicatedStorage"),
-        game:GetService("RobloxReplicatedStorage"),
-    }
-    
-    for _, loc in ipairs(locations) do
-        if loc then
-            local s, desc = pcall(function() return loc:GetDescendants() end)
-            if s and desc then
-                for _, inst in ipairs(desc) do
-                    local analysis = self:AnalyzeInstance(inst)
-                    if not analysis.IsIgnored and (analysis.Categories["AntiCheat"] or analysis.Score >= 40) then
-                        table.insert(report.Targets, analysis)
-                        report.TotalFound = report.TotalFound + 1
-                    end
-                end
-            end
+    self:TraverseOperationalContainers(customLocations, function(inst, depth)
+        local analysis = self:AnalyzeInstance(inst, depth)
+        if analysis and (analysis.Categories["AntiCheat"] or analysis.Score >= 40) then
+            table.insert(report.Targets, analysis)
+            report.TotalFound = report.TotalFound + 1
         end
-    end
+    end)
     
     if self.Logger then
         self.Logger:Info("AUDIT", string.format("Escaneo de Anti-Cheat finalizado: %d watchdogs/kicks localizados.", report.TotalFound))
@@ -411,25 +454,13 @@ function HeuristicEngine:RunEconomyAudit(customLocations)
         TotalFound = 0,
     }
     
-    local locations = customLocations or {
-        game:GetService("ReplicatedStorage"),
-        game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"),
-    }
-    
-    for _, loc in ipairs(locations) do
-        if loc then
-            local s, desc = pcall(function() return loc:GetDescendants() end)
-            if s and desc then
-                for _, inst in ipairs(desc) do
-                    local analysis = self:AnalyzeInstance(inst)
-                    if not analysis.IsIgnored and analysis.Categories["Economy"] then
-                        table.insert(report.Targets, analysis)
-                        report.TotalFound = report.TotalFound + 1
-                    end
-                end
-            end
+    self:TraverseOperationalContainers(customLocations, function(inst, depth)
+        local analysis = self:AnalyzeInstance(inst, depth)
+        if analysis and (analysis.Categories["Economy"] or analysis.Score >= 20) then
+            table.insert(report.Targets, analysis)
+            report.TotalFound = report.TotalFound + 1
         end
-    end
+    end)
     
     if self.Logger then
         self.Logger:Info("AUDIT", string.format("Escaneo de Economía/Ruletas finalizado: %d elementos encontrados.", report.TotalFound))
@@ -439,7 +470,7 @@ function HeuristicEngine:RunEconomyAudit(customLocations)
 end
 
 -- 3. Escaneo Dedicado de Todos los Remotes del Juego
-function HeuristicEngine:RunRemotesAudit()
+function HeuristicEngine:RunRemotesAudit(customLocations)
     local report = {
         Category = "Remotes",
         Timestamp = tick(),
@@ -448,28 +479,27 @@ function HeuristicEngine:RunRemotesAudit()
         TotalFound = 0,
     }
     
-    local s, desc = pcall(function() return game:GetDescendants() end)
-    if s and desc then
-        for _, inst in ipairs(desc) do
-            if not self:IsIgnoredCoreInstance(inst) then
-                if inst:IsA("RemoteEvent") then
-                    table.insert(report.RemoteEvents, {
-                        Name = inst.Name,
-                        Path = inst:GetFullName(),
-                        Instance = inst,
-                    })
-                    report.TotalFound = report.TotalFound + 1
-                elseif inst:IsA("RemoteFunction") then
-                    table.insert(report.RemoteFunctions, {
-                        Name = inst.Name,
-                        Path = inst:GetFullName(),
-                        Instance = inst,
-                    })
-                    report.TotalFound = report.TotalFound + 1
-                end
-            end
+    self:TraverseOperationalContainers(customLocations, function(inst, depth)
+        if inst:IsA("RemoteEvent") or inst:IsA("UnreliableRemoteEvent") then
+            table.insert(report.RemoteEvents, {
+                Name = inst.Name,
+                ClassName = inst.ClassName,
+                Path = inst:GetFullName(),
+                Depth = depth,
+                Instance = inst,
+            })
+            report.TotalFound = report.TotalFound + 1
+        elseif inst:IsA("RemoteFunction") then
+            table.insert(report.RemoteFunctions, {
+                Name = inst.Name,
+                ClassName = "RemoteFunction",
+                Path = inst:GetFullName(),
+                Depth = depth,
+                Instance = inst,
+            })
+            report.TotalFound = report.TotalFound + 1
         end
-    end
+    end)
     
     if self.Logger then
         self.Logger:Info("AUDIT", string.format("Mapeo de Remotes finalizado: %d RemoteEvents, %d RemoteFunctions.", #report.RemoteEvents, #report.RemoteFunctions))

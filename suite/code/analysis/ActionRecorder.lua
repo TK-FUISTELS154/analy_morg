@@ -33,11 +33,24 @@ function ActionRecorder.new(eventBus, logger, capabilityManager)
     self.RecordedTimeline = {}
     self.RecentAction = nil
     self.CorrelationWindow = 0.6 -- Ventana de tiempo (segundos) para correlacionar Remotes
+    self.PathCache = setmetatable({}, { __mode = "k" }) -- Weak-key cache para instancias
     
     self.Connections = {}
     self.LocalPlayer = Players.LocalPlayer
     
     return self
+end
+
+function ActionRecorder:GetCachedPath(inst)
+    if not inst then return nil end
+    local cached = self.PathCache[inst]
+    if cached then return cached end
+    local s, full = pcall(function() return inst:GetFullName() end)
+    if s and full then
+        self.PathCache[inst] = full
+        return full
+    end
+    return nil
 end
 
 function ActionRecorder:GetCurrentPlayerSnapshot()
@@ -53,7 +66,7 @@ function ActionRecorder:GetCurrentPlayerSnapshot()
     pcall(function()
         local mouse = self.LocalPlayer:GetMouse()
         if mouse then
-            snap.MouseTarget = mouse.Target and mouse.Target:GetFullName() or nil
+            snap.MouseTarget = mouse.Target and self:GetCachedPath(mouse.Target) or nil
             snap.MouseHit = mouse.Hit and tostring(mouse.Hit.Position) or nil
         end
         
@@ -66,7 +79,7 @@ function ActionRecorder:GetCurrentPlayerSnapshot()
             if hum then snap.Health = hum.Health end
             
             local tool = char:FindFirstChildOfClass("Tool")
-            if tool then snap.EquippedTool = tool:GetFullName() end
+            if tool then snap.EquippedTool = self:GetCachedPath(tool) end
         end
     end)
     
@@ -83,7 +96,7 @@ function ActionRecorder:RegisterAction(actionType, details, relatedInstance)
         Type = actionType, -- "Input", "Prompt", "Tool", "StateChange", "UIClick"
         Details = details,
         Instance = relatedInstance,
-        InstancePath = relatedInstance and pcall(function() return relatedInstance:GetFullName() end) and relatedInstance:GetFullName() or nil,
+        InstancePath = relatedInstance and self:GetCachedPath(relatedInstance) or nil,
         Snapshot = snapshot,
         CorrelatedRemotes = {},
     }
