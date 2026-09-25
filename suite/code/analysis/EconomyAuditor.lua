@@ -72,7 +72,6 @@ function EconomyAuditor:ScanEconomyNodes(onProgress)
         game:GetService("ReplicatedStorage"),
         game:GetService("StarterPlayer"),
         game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"),
-        game:GetService("StarterGui"),
     }
     
     local lexicon = (self.Heuristic and self.Heuristic.Lexicon.Economy) or {
@@ -92,7 +91,20 @@ function EconomyAuditor:ScanEconomyNodes(onProgress)
            or fullName:find("%.spec")
            or fullName:find("%.test")
            or fullName:find("Jest")
-           or fullName:find("TestEZ") then
+           or fullName:find("TestEZ")
+           or fullName:find("TopbarPlus")
+           or fullName:find("Packages")
+           or fullName:find("_Index")
+           or fullName:find("Janitor")
+           or fullName:find("Promise")
+           or fullName:find("Vendor")
+           or fullName:find("pkg")
+           or fullName:find("Roact")
+           or fullName:find("Rodux")
+           or fullName:find("Fusion")
+           or fullName:find("Flipper")
+           or fullName:find("GoodSignal")
+           or fullName:find("Signal") then
             return true
         end
         return false

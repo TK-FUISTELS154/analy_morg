@@ -24,15 +24,16 @@ function HeuristicEngine.new(capabilityManager, logger, structuralProfiler)
     self.Logger = logger
     self.Structural = structuralProfiler
     self.DecompCache = setmetatable({}, { __mode = "k" }) -- Caché global en memoria compartida (Lazy Evaluation)
+    self.LastFullAudit = nil -- Resultados cacheados de auditoría completa para reutilización instantánea
     
     -- DICCIONARIO MULTILINGÜE INTEGRADO DE FIRMAS
     self.Lexicon = {
         AntiCheat = {
             -- Inglés
             "detect", "kick", "ban", "report", "exploit", "cheat", "integrity",
-            "watchdog", "tamper", "anticheat", "security", "heartbeat", "noclip",
+            "watchdog", "tamper", "anticheat", "security", "heartbeat",
             "walkspeed", "jumppower", "teleport", "hook", "metatable", "memscan",
-            "gcscan", "debug", "honeypot", "tripwire", "flag", "punish", "blacklist",
+            "gcscan", "honeypot", "tripwire", "flag", "punish", "blacklist",
             -- Chino (中文)
             "检测", "作弊", "外挂", "封号", "封禁", "踢出", "安全", "防封",
             "监控", "反作弊", "查外挂", "异常", "挂机", "校验", "拦截", "风控",
@@ -92,15 +93,12 @@ function HeuristicEngine.new(capabilityManager, logger, structuralProfiler)
         { Pattern = "hookfunction", Score = 40, Desc = "Hooking de Funciones Detectado", Category = "AntiCheat" },
         { Pattern = "GetPropertyChangedSignal%([\"']WalkSpeed[\"']%)", Score = 30, Desc = "Watchdog de Velocidad (WalkSpeed)", Category = "AntiCheat" },
         { Pattern = "GetPropertyChangedSignal%([\"']JumpPower[\"']%)", Score = 25, Desc = "Watchdog de Salto (JumpPower)", Category = "AntiCheat" },
-        { Pattern = "debug%.info", Score = 30, Desc = "Inspección de Callstack / Debug Traps", Category = "AntiCheat" },
+        { Pattern = "debug%.info%s*%(%s*%d", Score = 30, Desc = "Inspección de Callstack / Debug Traps", Category = "AntiCheat" },
         { Pattern = "LocalPlayer:Kick", Score = 50, Desc = "Llamada Directa a Expulsión (LocalPlayer:Kick)", Category = "AntiCheat" },
-        { Pattern = "math%.random", Score = 15, Desc = "Generación de Números Aleatorios en Cliente", Category = "Economy" },
-        { Pattern = "Random%.new", Score = 15, Desc = "Instanciación de RNG en Cliente", Category = "Economy" },
         { Pattern = "FireServer%(.*[Dd]amage.*%)", Score = 35, Desc = "Disparo de Daño desde el Cliente", Category = "Combat" },
         -- Firmas de Capacidades Críticas de Modding / Admin Abuse
         { Pattern = "BodyVelocity", Score = 35, Desc = "Manipulación de Vuelo / Física Forzada (BodyVelocity)", Category = "Admin" },
         { Pattern = "BodyGyro", Score = 25, Desc = "Manipulación de Orientación / Vuelo (BodyGyro)", Category = "Admin" },
-        { Pattern = "CanCollide%s*=%s*false", Score = 40, Desc = "Rutina de Noclip en tiempo de ejecución", Category = "Admin" },
         { Pattern = "_G%.", Score = 20, Desc = "Exposición de Variables Globales en Memoria (_G)", Category = "Admin" },
     }
     
@@ -118,7 +116,20 @@ function HeuristicEngine:IsIgnoredCoreInstance(instance)
        or fullName:find("%.spec")
        or fullName:find("%.test")
        or fullName:find("Jest")
-       or fullName:find("TestEZ") then
+       or fullName:find("TestEZ")
+       or fullName:find("TopbarPlus")
+       or fullName:find("Packages")
+       or fullName:find("_Index")
+       or fullName:find("Janitor")
+       or fullName:find("Promise")
+       or fullName:find("Vendor")
+       or fullName:find("pkg")
+       or fullName:find("Roact")
+       or fullName:find("Rodux")
+       or fullName:find("Fusion")
+       or fullName:find("Flipper")
+       or fullName:find("GoodSignal")
+       or fullName:find("Signal") then
         return true
     end
     return false
@@ -146,16 +157,17 @@ function HeuristicEngine:IsPrunedBranch(instance)
         return true
     end
     
-    -- 2. Poda por Nombre de Contenedor de Recursos Visuales
+    -- 2. Poda por Nombre de Contenedor de Recursos Visuales y Modelos 3D
     local name = instance.Name:lower()
     local visualAssets = {
         assets = true, models = true, sounds = true, audio = true,
         animations = true, anim = true, anims = true, textures = true,
         meshes = true, mesh = true, fx = true, worldfx = true, map = true,
-        vfx = true, lighting = true, decals = true, particles = true,
+        maps = true, vfx = true, lighting = true, decals = true, particles = true,
         npcs = true, terrain = true, camera = true, props = true,
         effects = true, visual = true, materials = true, clothing = true,
         accessories = true, rigs = true, characters = true, prefabs = true,
+        modelpartstorage = true, characterassets = true, mapassets = true,
     }
     
     if visualAssets[name] then
@@ -216,7 +228,6 @@ function HeuristicEngine:SafeDecompileWithCache(instance)
     end)
     
     if s and type(code) == "string" and #code > 0 and not code:find("%[Decompilación no soportada") then
-        -- Truncar análisis si el archivo es gigantesco (> 50,000 caracteres) para evitar saturar el analizador
         if #code > 50000 then
             code = code:sub(1, 50000)
         end
@@ -232,7 +243,6 @@ function HeuristicEngine:ExtractCodeSnippets(code, pattern, maxSnippets)
     maxSnippets = maxSnippets or 2
     if not code or #code == 0 then return {} end
     
-    -- Comprobación previa de subcadena rápida: Si la palabra no existe en todo el texto, retornar inmediatamente sin partir líneas
     local rawKeyword = pattern:gsub("%%", ""):gsub("%[.-%]", ""):gsub("%(.-%)", "")
     if #rawKeyword > 2 and not code:find(rawKeyword, 1, true) and not code:find(pattern) then
         return {}
@@ -260,7 +270,7 @@ function HeuristicEngine:AnalyzeInstance(instance, depth)
     end
 
     local path = instance:GetFullName()
-    -- 2. Descarte de Core Roblox
+    -- 2. Descarte de Core Roblox y Paquetes de Terceros
     if self:IsIgnoredCoreInstance(instance) then
         return nil
     end
@@ -331,28 +341,45 @@ function HeuristicEngine:AnalyzeInstance(instance, depth)
                     table.insert(tags, "Metatables")
                 end
 
-                if decompiledCode:find("debug%.info") or decompiledCode:find("debug%.traceback") then
-                    score = score + 20
+                -- Introspección maliciosa de Callstack / Debug (Excluye debug.traceback)
+                if decompiledCode:find("debug%.info%s*%(%s*%d") or decompiledCode:find("debug%.getinfo%s*%(%s*%d") then
+                    score = score + 25
                     categoriesFound["AntiCheat"] = true
-                    local snips = self:ExtractCodeSnippets(decompiledCode, "debug%.")
-                    table.insert(codeFindings, { Desc = "Introspección de Callstack / Trap", Snippets = snips })
+                    local snips = self:ExtractCodeSnippets(decompiledCode, "debug%.info")
+                    table.insert(codeFindings, { Desc = "Introspección Maliciosa de Callstack / Trap (debug.info)", Snippets = snips })
                     table.insert(tags, "DebugTrap")
                 end
 
-                -- Regla 3: Noclip Contextualizado (Character + Loop)
+                -- Regla 3: Noclip Contextualizado (Filtra partículas, confeti, selección de pesca)
                 local hasCanCollide = decompiledCode:find("CanCollide%s*=%s*false")
-                local hasBodyParts = decompiledCode:find("HumanoidRootPart") or decompiledCode:find("Torso") or decompiledCode:find("Character")
-                local hasLoop = decompiledCode:find("RenderStepped") or decompiledCode:find("Heartbeat") or decompiledCode:find("Stepped")
-                if hasCanCollide and hasBodyParts and hasLoop then
-                    score = score + 40
-                    categoriesFound["Admin"] = true
-                    local snips = self:ExtractCodeSnippets(decompiledCode, "CanCollide")
-                    table.insert(codeFindings, { Desc = "Rutina Continua de Noclip en Character (RenderStepped)", Snippets = snips })
-                    table.insert(tags, "Noclip:Contextual")
+                if hasCanCollide then
+                    local isFalsePositive = false
+                    for line in decompiledCode:gmatch("([^\r\n]*CanCollide%s*=%s*false[^\r\n]*)") do
+                        local lLower = line:lower()
+                        if lLower:find("confetti") or lLower:find("selectpart") or lLower:find("particle")
+                           or lLower:find("ring") or lLower:find("effect") or lLower:find("marker")
+                           or lLower:find("fishball") or lLower:find("debris") or lLower:find("drop")
+                           or lLower:find("coin") or lLower:find("visual") or lLower:find("trail")
+                           or lLower:find("circle") or lLower:find("highlight") then
+                            isFalsePositive = true
+                        end
+                    end
+                    
+                    if not isFalsePositive then
+                        local hasBodyParts = decompiledCode:find("HumanoidRootPart") or decompiledCode:find("Torso") or decompiledCode:find("UpperTorso") or decompiledCode:find("LowerTorso")
+                        local hasLoop = decompiledCode:find("RenderStepped") or decompiledCode:find("Heartbeat") or decompiledCode:find("Stepped")
+                        if hasBodyParts and hasLoop then
+                            score = score + 40
+                            categoriesFound["Admin"] = true
+                            local snips = self:ExtractCodeSnippets(decompiledCode, "CanCollide")
+                            table.insert(codeFindings, { Desc = "Rutina Continua de Noclip en Character (RenderStepped)", Snippets = snips })
+                            table.insert(tags, "Noclip:Contextual")
+                        end
+                    end
                 end
 
                 -- Regla 4: Fly / BodyVelocity
-                if decompiledCode:find("BodyVelocity") and (decompiledCode:find("HumanoidRootPart") or decompiledCode:find("Torso")) then
+                if decompiledCode:find("BodyVelocity") and (decompiledCode:find("HumanoidRootPart") or decompiledCode:find("Torso") or decompiledCode:find("UpperTorso")) then
                     score = score + 35
                     categoriesFound["Admin"] = true
                     local snips = self:ExtractCodeSnippets(decompiledCode, "BodyVelocity")
@@ -369,17 +396,30 @@ function HeuristicEngine:AnalyzeInstance(instance, depth)
                     table.insert(tags, "GlobalState")
                 end
 
-                -- Regla 6: RNG Transaccional vs Cosmético
+                -- Regla 6: RNG Transaccional vs Cosmético (Filtra modulación de audio y diálogos)
                 local hasRandom = decompiledCode:find("math%.random") or decompiledCode:find("Random%.new")
-                local hasNetworkOrPurchase = decompiledCode:find("FireServer") or decompiledCode:find("InvokeServer") or decompiledCode:find("MarketplaceService")
-                if hasRandom and hasNetworkOrPurchase then
-                    score = score + 25
-                    categoriesFound["Economy"] = true
-                    local snips = self:ExtractCodeSnippets(decompiledCode, "random")
-                    table.insert(codeFindings, { Desc = "Lógica de RNG Vinculada a Red/Transacciones", Snippets = snips })
-                    table.insert(tags, "Economy:TransactionalRNG")
-                elseif hasRandom then
-                    table.insert(tags, "RNG Cosmético / Cliente")
+                if hasRandom then
+                    local hasNetworkOrPurchase = decompiledCode:find("FireServer") or decompiledCode:find("InvokeServer") or decompiledCode:find("MarketplaceService")
+                    local isCosmeticAudioOrDialogue = true
+                    for line in decompiledCode:gmatch("([^\r\n]*math%.random[^\r\n]*)") do
+                        local lLower = line:lower()
+                        if not (lLower:find("playbackspeed") or lLower:find("pitch") or lLower:find("volume")
+                                or lLower:find("rotation") or lLower:find("offset") or lLower:find("color")
+                                or lLower:find("angles") or lLower:find("dialogue") or lLower:find("greeting")
+                                or line:find("%[%s*math%.random") or line:find("#%a+%)") or line:find("npc") or line:find("sound")) then
+                            isCosmeticAudioOrDialogue = false
+                        end
+                    end
+                    
+                    if hasNetworkOrPurchase and not isCosmeticAudioOrDialogue then
+                        score = score + 25
+                        categoriesFound["Economy"] = true
+                        local snips = self:ExtractCodeSnippets(decompiledCode, "random")
+                        table.insert(codeFindings, { Desc = "Lógica de RNG Vinculada a Red/Transacciones", Snippets = snips })
+                        table.insert(tags, "Economy:TransactionalRNG")
+                    else
+                        table.insert(tags, "RNG Cosmético / Cliente")
+                    end
                 end
 
                 -- Regla 7: Ofuscadores Comerciales
@@ -428,12 +468,12 @@ end
 -- =========================================================================
 
 function HeuristicEngine:CollectCandidates(targetContainers)
+    -- Se elimina StarterGui para evitar escanear y descompilar duplicados de PlayerGui
     local containers = targetContainers or {
         game:GetService("ReplicatedStorage"),
         game:GetService("ReplicatedFirst"),
         game:GetService("StarterPlayer"),
         game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"),
-        game:GetService("StarterGui"),
     }
     
     local queue = {}
@@ -577,6 +617,8 @@ function HeuristicEngine:RunFullAudit(targetContainers, onProgress)
         end
     end, onProgress, 6)
     
+    self.LastFullAudit = results
+    
     if self.Logger then
         self.Logger:Info("AUDIT", string.format("Escaneo Heurístico Multihilo Completado: %d analizados, %d remotes, %d amenazas críticas.", results.TotalScanned, #results.Remotes, results.CriticalIssues))
     end
@@ -585,11 +627,23 @@ function HeuristicEngine:RunFullAudit(targetContainers, onProgress)
 end
 
 -- =========================================================================
--- MÉTODOS DE ESCANEO ESPECÍFICOS / DEDICADOS MULTIHILO
+-- MÉTODOS DE ESCANEO ESPECÍFICOS (CON REUTILIZACIÓN DE MEMORIA)
 -- =========================================================================
 
 -- 1. Escaneo Dedicado de Anti-Cheat, Watchdogs e Integrity Checks
 function HeuristicEngine:RunAntiCheatAudit(customLocations, onProgress)
+    -- Si ya existe un escaneo previo en memoria y no se piden ubicaciones personalizadas, filtrar instantáneamente
+    if not customLocations and self.LastFullAudit and self.LastFullAudit.AntiCheat then
+        local cachedTargets = self.LastFullAudit.AntiCheat
+        if onProgress then onProgress(#cachedTargets, #cachedTargets, "Caché", 0.001, 0, #cachedTargets) end
+        return {
+            Category = "AntiCheat",
+            Timestamp = tick(),
+            Targets = cachedTargets,
+            TotalFound = #cachedTargets,
+        }
+    end
+
     local report = {
         Category = "AntiCheat",
         Timestamp = tick(),
@@ -616,6 +670,18 @@ end
 
 -- 2. Escaneo Dedicado de Economía, Ruleta y Azar
 function HeuristicEngine:RunEconomyAudit(customLocations, onProgress)
+    -- Reutilización de memoria instantánea
+    if not customLocations and self.LastFullAudit and self.LastFullAudit.Economy then
+        local cachedTargets = self.LastFullAudit.Economy
+        if onProgress then onProgress(#cachedTargets, #cachedTargets, "Caché", 0.001, 0, #cachedTargets) end
+        return {
+            Category = "Economy",
+            Timestamp = tick(),
+            Targets = cachedTargets,
+            TotalFound = #cachedTargets,
+        }
+    end
+
     local report = {
         Category = "Economy",
         Timestamp = tick(),
@@ -642,6 +708,27 @@ end
 
 -- 3. Escaneo Dedicado de Todos los Remotes del Juego
 function HeuristicEngine:RunRemotesAudit(customLocations, onProgress)
+    -- Reutilización de memoria instantánea
+    if not customLocations and self.LastFullAudit and self.LastFullAudit.Remotes then
+        local cachedRemotes = self.LastFullAudit.Remotes
+        local remEvents, remFuncs = {}, {}
+        for _, rem in ipairs(cachedRemotes) do
+            if rem.ClassName == "RemoteFunction" then
+                table.insert(remFuncs, rem)
+            else
+                table.insert(remEvents, rem)
+            end
+        end
+        if onProgress then onProgress(#cachedRemotes, #cachedRemotes, "Caché", 0.001, 0, #cachedRemotes) end
+        return {
+            Category = "Remotes",
+            Timestamp = tick(),
+            RemoteEvents = remEvents,
+            RemoteFunctions = remFuncs,
+            TotalFound = #cachedRemotes,
+        }
+    end
+
     local report = {
         Category = "Remotes",
         Timestamp = tick(),
