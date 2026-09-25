@@ -306,42 +306,24 @@ function CapabilityManager:SafeDecompile(scriptInstance)
         return msg
     end
 
-    -- 4. Intento 2: Descompilador C de alto nivel del ejecutor (Nivel 7+) CON TIMEOUT
+    -- 4. Intento 2: Descompilador C de alto nivel del ejecutor (Nivel 7+)
     local decompiler = self.APIs.decompile
     if decompiler then
-        local result = nil
-        local finished = false
-
-        task.spawn(function()
-            local success, code = pcall(decompiler, scriptInstance)
-            if success and type(code) == "string" and #code > 0 then
-                local lowerCode = code:lower()
-                if not lowerCode:find("decompilation not supported")
-                   and not lowerCode:find("failed to decompile")
-                   and not lowerCode:find("not a client script")
-                   and not lowerCode:find("c%+%+ exception")
-                   and not (code == "-- [Código no disponible]") then
-                    result = code
-                end
+        local success, code = pcall(decompiler, scriptInstance)
+        if success and type(code) == "string" and #code > 0 then
+            local lowerCode = code:lower()
+            if not lowerCode:find("decompilation not supported")
+               and not lowerCode:find("failed to decompile")
+               and not lowerCode:find("not a client script")
+               and not lowerCode:find("c%+%+ exception")
+               and not (code == "-- [Código no disponible]") then
+                self._decompCache[scriptInstance] = code
+                return code
             end
-            finished = true
-        end)
-
-        -- Espera activa con deadline (self.DecompileTimeout)
-        local deadline = tick() + self.DecompileTimeout
-        while not finished and tick() < deadline do
-            task.wait()
-        end
-
-        if finished and result then
-            self._decompCache[scriptInstance] = result
-            return result
-        elseif not finished then
-            self._cacheStats.Timeouts = self._cacheStats.Timeouts + 1
         end
     end
 
-    -- 5. Intento 3: Extracción de Bytecode Luau nativo (Nivel 5-6) + Análisis de Constantes + Base64
+    -- 5. Intento 3: Extracción de Bytecode Luau nativo (Nivel 5-6) + Análisis de Constantes
     local bytecodeGetter = self.APIs.getscriptbytecode
     if bytecodeGetter then
         local success, bc = pcall(bytecodeGetter, scriptInstance)
@@ -349,7 +331,6 @@ function CapabilityManager:SafeDecompile(scriptInstance)
             local byteLen = #bc
             local luauVersion = string.byte(bc, 1) or 0
             local stringConstants = extractBytecodeStrings(bc)
-            local b64 = encodeBase64(bc)
 
             local constSection = ""
             if #stringConstants > 0 then
@@ -359,6 +340,8 @@ function CapabilityManager:SafeDecompile(scriptInstance)
                 end
                 constSection = string.format("\n-- [CONSTANTES Y SÍMBOLOS DETECTADOS EN BYTECODE (%d)]:\n--%s\n", #stringConstants, table.concat(constList, "\n--"))
             end
+
+            local b64 = (byteLen <= 25000) and encodeBase64(bc) or "-- [Bytecode > 25KB: Volcar individualmente]"
 
             local formatted = string.format([[-- =============================================================================
 -- [VOLCADO DE BYTECODE LUAU - EJECUTOR SIN DESCOMPILADOR NATIVO C]

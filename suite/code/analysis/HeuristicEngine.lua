@@ -259,7 +259,10 @@ function HeuristicEngine:AnalyzeCodeSinglePass(code, rawName, path)
     }
     
     -- Recorrido Lineal en un Solo Paso O(N)
-    for line in code:gmatch("([^\r\n]*)\r?\n?") do
+    for line in code:gmatch("[^\r\n]+") do
+        if #line > 300 then
+            line = line:sub(1, 300)
+        end
         local lLower = line:lower()
         local cleanLine = nil
         local function getCleanLine()
@@ -388,48 +391,55 @@ function HeuristicEngine:ExtractRemoteInvocations(code, scriptPath)
     if not code or #code == 0 then return invocations end
     
     local lineNum = 1
-    for line in code:gmatch("([^\r\n]*)\r?\n?") do
-        -- Buscar invocaciones a FireServer o InvokeServer (patrón corregido para Lua)
-        local function tryExtract(pattern, methodName)
-            local remExpr, args = line:match(pattern)
-            if remExpr and args then
-                local cleanRem = remExpr:match("([%w_]+)$") or remExpr
-                local cleanArgs = args:match("^%s*(.-)%s*$") or ""
-                
-                -- Inferir tipos aproximados de los argumentos pasados
-                local argTypes = {}
-                if #cleanArgs > 0 then
-                    for argToken in cleanArgs:gmatch("([^,]+)") do
-                        local tToken = argToken:match("^%s*(.-)%s*$")
-                        if tToken:find('^"') or tToken:find("^'") then
-                            table.insert(argTypes, "string(" .. tToken .. ")")
-                        elseif tonumber(tToken) then
-                            table.insert(argTypes, "number(" .. tToken .. ")")
-                        elseif tToken == "true" or tToken == "false" then
-                            table.insert(argTypes, "boolean(" .. tToken .. ")")
-                        elseif tToken:find("Vector3") or tToken:find("CFrame") then
-                            table.insert(argTypes, "Vector/CFrame")
-                        else
-                            table.insert(argTypes, "var(" .. tToken .. ")")
-                        end
-                    end
-                end
-                
-                table.insert(invocations, {
-                    RemoteName = cleanRem,
-                    FullExpression = remExpr,
-                    Method = methodName,
-                    ArgumentsRaw = cleanArgs,
-                    InferredTypes = #argTypes > 0 and ("(" .. table.concat(argTypes, ", ") .. ")") or "()",
-                    LineNumber = lineNum,
-                    ScriptPath = scriptPath,
-                    Snippet = line:match("^%s*(.-)%s*$") or line,
-                })
-            end
+    for line in code:gmatch("[^\r\n]+") do
+        if #line > 300 then
+            line = line:sub(1, 300)
         end
         
-        tryExtract("([%w_%.:]+)%s*:%s*[Ff]ire[Ss]erver%s*%((.-)%)", "FireServer")
-        tryExtract("([%w_%.:]+)%s*:%s*[Ii]nvoke[Ss]erver%s*%((.-)%)", "InvokeServer")
+        -- Ignorar comentarios o volcados de bytecode
+        if not line:find("^%s*%-%-") and not line:find("__BYTECODE_B64__") then
+            -- Buscar invocaciones a FireServer o InvokeServer
+            local function tryExtract(pattern, methodName)
+                local remExpr, args = line:match(pattern)
+                if remExpr and args then
+                    local cleanRem = remExpr:match("([%w_]+)$") or remExpr
+                    local cleanArgs = args:match("^%s*(.-)%s*$") or ""
+                    
+                    -- Inferir tipos aproximados de los argumentos pasados
+                    local argTypes = {}
+                    if #cleanArgs > 0 then
+                        for argToken in cleanArgs:gmatch("([^,]+)") do
+                            local tToken = argToken:match("^%s*(.-)%s*$")
+                            if tToken:find('^"') or tToken:find("^'") then
+                                table.insert(argTypes, "string(" .. tToken .. ")")
+                            elseif tonumber(tToken) then
+                                table.insert(argTypes, "number(" .. tToken .. ")")
+                            elseif tToken == "true" or tToken == "false" then
+                                table.insert(argTypes, "boolean(" .. tToken .. ")")
+                            elseif tToken:find("Vector3") or tToken:find("CFrame") then
+                                table.insert(argTypes, "Vector/CFrame")
+                            else
+                                table.insert(argTypes, "var(" .. tToken .. ")")
+                            end
+                        end
+                    end
+                    
+                    table.insert(invocations, {
+                        RemoteName = cleanRem,
+                        FullExpression = remExpr,
+                        Method = methodName,
+                        ArgumentsRaw = cleanArgs,
+                        InferredTypes = #argTypes > 0 and ("(" .. table.concat(argTypes, ", ") .. ")") or "()",
+                        LineNumber = lineNum,
+                        ScriptPath = scriptPath,
+                        Snippet = line:match("^%s*(.-)%s*$") or line,
+                    })
+                end
+            end
+            
+            tryExtract("([%w_%.:]+)%s*:%s*[Ff]ire[Ss]erver%s*%((.-)%)", "FireServer")
+            tryExtract("([%w_%.:]+)%s*:%s*[Ii]nvoke[Ss]erver%s*%((.-)%)", "InvokeServer")
+        end
         
         lineNum = lineNum + 1
     end
@@ -693,38 +703,25 @@ function HeuristicEngine:RunFullAudit(targetContainers, onProgress)
         local analysis = self:AnalyzeInstance(inst, depth)
         
         -- =====================================================================
-        -- EXTRACCIÓN DESACOPLADA DE RED: Se ejecuta en TODOS los scripts de
-        -- cliente, independientemente de si tienen score de amenaza o no.
-        -- Un script legítimo puede llamar a un remoto crítico y esa conexión
-        -- DEBE aparecer en la matriz cruzada.
+        -- MATRIZ CRUZADA CÓDIGO-A-RED: Se puebla directamente desde las
+        -- invocaciones extraídas en el paso único de análisis
         -- =====================================================================
-        if inst:IsA("LuaSourceContainer") then
-            local code = self:SafeDecompileWithCache(inst)
-            if code and #code > 0 then
-                local path = (analysis and analysis.Path) or inst:GetFullName()
-                local invocations = self:ExtractRemoteInvocations(code, path)
-                if #invocations > 0 then
-                    -- Registrar en la matriz cruzada usando table.insert lineal
-                    results.CrossReferenceMatrix.ScriptsToRemotes[path] = invocations
-                    for _, inv in ipairs(invocations) do
-                        local rName = inv.RemoteName
-                        if not results.CrossReferenceMatrix.RemotesToCallers[rName] then
-                            results.CrossReferenceMatrix.RemotesToCallers[rName] = {}
-                        end
-                        table.insert(results.CrossReferenceMatrix.RemotesToCallers[rName], {
-                            Script = path,
-                            Line = inv.LineNumber,
-                            Method = inv.Method,
-                            ArgumentsRaw = inv.ArgumentsRaw,
-                            InferredTypes = inv.InferredTypes,
-                            Snippet = inv.Snippet,
-                        })
-                    end
-                    -- Si el analysis no capturó estas invocaciones, inyectarlas
-                    if analysis and (not analysis.RemoteInvocations or #analysis.RemoteInvocations == 0) then
-                        analysis.RemoteInvocations = invocations
-                    end
+        if analysis and analysis.RemoteInvocations and #analysis.RemoteInvocations > 0 then
+            local path = analysis.Path
+            results.CrossReferenceMatrix.ScriptsToRemotes[path] = analysis.RemoteInvocations
+            for _, inv in ipairs(analysis.RemoteInvocations) do
+                local rName = inv.RemoteName
+                if not results.CrossReferenceMatrix.RemotesToCallers[rName] then
+                    results.CrossReferenceMatrix.RemotesToCallers[rName] = {}
                 end
+                table.insert(results.CrossReferenceMatrix.RemotesToCallers[rName], {
+                    Script = path,
+                    Line = inv.LineNumber,
+                    Method = inv.Method,
+                    ArgumentsRaw = inv.ArgumentsRaw,
+                    InferredTypes = inv.InferredTypes,
+                    Snippet = inv.Snippet,
+                })
             end
         end
         
@@ -755,7 +752,7 @@ function HeuristicEngine:RunFullAudit(targetContainers, onProgress)
                 results.CriticalIssues = results.CriticalIssues + 1
             end
         end
-    end, onProgress, 6)
+    end, onProgress, 4)
     
     self.LastFullAudit = results
     self.CrossReferenceMatrix = results.CrossReferenceMatrix
