@@ -15,6 +15,8 @@
 
 local HttpService = game:GetService("HttpService")
 local CollectionService = game:GetService("CollectionService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
 local DumperView = {}
 DumperView.__index = DumperView
@@ -55,6 +57,8 @@ function DumperView.new(parentFrame, registry)
     self.SearchId = 0
     self.SelectedNodeForInspection = nil
     self.LastExtractedPackage = nil
+    self.IsPickerActive = false
+    self.PickerConnection = nil
 
     -- Registro de Modificaciones (Snapshots de Clonaciones y Eliminaciones)
     self.ModificationHistory = {}
@@ -353,7 +357,7 @@ function DumperView:Render()
     leftPanel.Parent = body
     Instance.new("UICorner", leftPanel).CornerRadius = UDim.new(0, 6)
 
-    -- Barra de Búsqueda y Botón Refrescar Heatmap
+    -- Barra de Búsqueda, Picker 2D/3D y Botón Refrescar Heatmap
     local searchRow = Instance.new("Frame")
     searchRow.Size = UDim2.new(1, -10, 0, 26)
     searchRow.Position = UDim2.new(0, 5, 0, 5)
@@ -361,7 +365,7 @@ function DumperView:Render()
     searchRow.Parent = leftPanel
 
     local searchBox = Instance.new("TextBox")
-    searchBox.Size = UDim2.new(1, -56, 1, 0)
+    searchBox.Size = UDim2.new(1, -122, 1, 0)
     searchBox.BackgroundColor3 = Color3.fromRGB(24, 28, 38)
     searchBox.TextColor3 = Color3.fromRGB(235, 240, 250)
     searchBox.PlaceholderText = "Filtrar por nombre o clase..."
@@ -373,8 +377,8 @@ function DumperView:Render()
     Instance.new("UICorner", searchBox).CornerRadius = UDim.new(0, 5)
 
     local searchBtn = Instance.new("TextButton")
-    searchBtn.Size = UDim2.new(0, 26, 1, 0)
-    searchBtn.Position = UDim2.new(1, -52, 0, 0)
+    searchBtn.Size = UDim2.new(0, 24, 1, 0)
+    searchBtn.Position = UDim2.new(1, -118, 0, 0)
     searchBtn.BackgroundColor3 = Color3.fromRGB(35, 60, 100)
     searchBtn.Text = "🔍"
     searchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -382,6 +386,17 @@ function DumperView:Render()
     searchBtn.TextSize = 11
     searchBtn.Parent = searchRow
     Instance.new("UICorner", searchBtn).CornerRadius = UDim.new(0, 5)
+
+    local pickerBtn = Instance.new("TextButton")
+    pickerBtn.Size = UDim2.new(0, 64, 1, 0)
+    pickerBtn.Position = UDim2.new(1, -90, 0, 0)
+    pickerBtn.BackgroundColor3 = Color3.fromRGB(30, 95, 155)
+    pickerBtn.Text = "🎯 PICKER"
+    pickerBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    pickerBtn.Font = Enum.Font.GothamBold
+    pickerBtn.TextSize = 9
+    pickerBtn.Parent = searchRow
+    Instance.new("UICorner", pickerBtn).CornerRadius = UDim.new(0, 5)
 
     local refreshHeatmapBtn = Instance.new("TextButton")
     refreshHeatmapBtn.Size = UDim2.new(0, 24, 1, 0)
@@ -545,7 +560,7 @@ function DumperView:Render()
     inspectorBox.Parent = rightPanel
     Instance.new("UICorner", inspectorBox).CornerRadius = UDim.new(0, 6)
 
-    -- Barra de Exportación de Volcados
+    -- Barra de Exportación de Volcados (JSON, Markdown, Disco, VFS)
     local dumpActionRow = Instance.new("Frame")
     dumpActionRow.Size = UDim2.new(1, -12, 0, 28)
     dumpActionRow.Position = UDim2.new(0, 6, 1, -62)
@@ -553,35 +568,46 @@ function DumperView:Render()
     dumpActionRow.Parent = rightPanel
 
     local dumpJsonBtn = Instance.new("TextButton")
-    dumpJsonBtn.Size = UDim2.new(0.33, -3, 1, 0)
+    dumpJsonBtn.Size = UDim2.new(0.25, -2, 1, 0)
     dumpJsonBtn.Position = UDim2.new(0, 0, 0, 0)
     dumpJsonBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 225)
-    dumpJsonBtn.Text = "📂 EXTRAER JSON"
+    dumpJsonBtn.Text = "📂 JSON (.json)"
     dumpJsonBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     dumpJsonBtn.Font = Enum.Font.GothamBold
-    dumpJsonBtn.TextSize = 9
+    dumpJsonBtn.TextSize = 8
     dumpJsonBtn.Parent = dumpActionRow
     Instance.new("UICorner", dumpJsonBtn).CornerRadius = UDim.new(0, 4)
 
+    local dumpMdBtn = Instance.new("TextButton")
+    dumpMdBtn.Size = UDim2.new(0.25, -2, 1, 0)
+    dumpMdBtn.Position = UDim2.new(0.25, 1, 0, 0)
+    dumpMdBtn.BackgroundColor3 = Color3.fromRGB(0, 175, 130)
+    dumpMdBtn.Text = "📄 MARKDOWN (.md)"
+    dumpMdBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    dumpMdBtn.Font = Enum.Font.GothamBold
+    dumpMdBtn.TextSize = 8
+    dumpMdBtn.Parent = dumpActionRow
+    Instance.new("UICorner", dumpMdBtn).CornerRadius = UDim.new(0, 4)
+
     local dumpDiskBtn = Instance.new("TextButton")
-    dumpDiskBtn.Size = UDim2.new(0.33, -3, 1, 0)
-    dumpDiskBtn.Position = UDim2.new(0.33, 2, 0, 0)
+    dumpDiskBtn.Size = UDim2.new(0.25, -2, 1, 0)
+    dumpDiskBtn.Position = UDim2.new(0.50, 2, 0, 0)
     dumpDiskBtn.BackgroundColor3 = Color3.fromRGB(135, 55, 195)
-    dumpDiskBtn.Text = "💾 DISCO (.LUA)"
+    dumpDiskBtn.Text = "💾 DISCO (.lua)"
     dumpDiskBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     dumpDiskBtn.Font = Enum.Font.GothamBold
-    dumpDiskBtn.TextSize = 9
+    dumpDiskBtn.TextSize = 8
     dumpDiskBtn.Parent = dumpActionRow
     Instance.new("UICorner", dumpDiskBtn).CornerRadius = UDim.new(0, 4)
 
     local dumpVfsBtn = Instance.new("TextButton")
-    dumpVfsBtn.Size = UDim2.new(0.34, -3, 1, 0)
-    dumpVfsBtn.Position = UDim2.new(0.66, 4, 0, 0)
+    dumpVfsBtn.Size = UDim2.new(0.25, -2, 1, 0)
+    dumpVfsBtn.Position = UDim2.new(0.75, 3, 0, 0)
     dumpVfsBtn.BackgroundColor3 = Color3.fromRGB(30, 140, 85)
     dumpVfsBtn.Text = "📦 VFS ARCHIVE"
     dumpVfsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     dumpVfsBtn.Font = Enum.Font.GothamBold
-    dumpVfsBtn.TextSize = 9
+    dumpVfsBtn.TextSize = 8
     dumpVfsBtn.Parent = dumpActionRow
     Instance.new("UICorner", dumpVfsBtn).CornerRadius = UDim.new(0, 4)
 
@@ -716,6 +742,355 @@ function DumperView:Render()
     end)
 
     -- =========================================================================
+    -- =========================================================================
+    -- MENÚ CONTEXTUAL FLOTANTE (CLIC DERECHO / DARKDEX STYLE)
+    -- =========================================================================
+    local contextMenu = Instance.new("Frame")
+    contextMenu.Size = UDim2.new(0, 190, 0, 230)
+    contextMenu.BackgroundColor3 = Color3.fromRGB(18, 22, 30)
+    contextMenu.BorderSizePixel = 1
+    contextMenu.BorderColor3 = Color3.fromRGB(0, 150, 225)
+    contextMenu.ZIndex = 120
+    contextMenu.Visible = false
+    contextMenu.Parent = frame
+    Instance.new("UICorner", contextMenu).CornerRadius = UDim.new(0, 6)
+
+    local currentContextObj = nil
+
+    local function createMenuOption(text, icon, posY, callback, color)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, -8, 0, 24)
+        btn.Position = UDim2.new(0, 4, 0, posY)
+        btn.BackgroundColor3 = color or Color3.fromRGB(24, 28, 40)
+        btn.Text = "  " .. icon .. "  " .. text
+        btn.TextColor3 = Color3.fromRGB(230, 240, 255)
+        btn.Font = Enum.Font.GothamBold
+        btn.TextSize = 9
+        btn.TextXAlignment = Enum.TextXAlignment.Left
+        btn.ZIndex = 121
+        btn.Parent = contextMenu
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+
+        btn.MouseEnter:Connect(function()
+            btn.BackgroundColor3 = Color3.fromRGB(0, 130, 200)
+        end)
+        btn.MouseLeave:Connect(function()
+            btn.BackgroundColor3 = color or Color3.fromRGB(24, 28, 40)
+        end)
+        btn.MouseButton1Click:Connect(function()
+            contextMenu.Visible = false
+            if currentContextObj and callback then
+                callback(currentContextObj)
+            end
+        end)
+        return btn
+    end
+
+    -- =========================================================================
+    -- MODAL DE CAMBIO DE NOMBRE (RENAME MODAL)
+    -- =========================================================================
+    local renameModal = Instance.new("Frame")
+    renameModal.Size = UDim2.new(0, 260, 0, 110)
+    renameModal.Position = UDim2.new(0.5, -130, 0.4, -55)
+    renameModal.BackgroundColor3 = Color3.fromRGB(20, 24, 34)
+    renameModal.BorderSizePixel = 1
+    renameModal.BorderColor3 = Color3.fromRGB(0, 180, 255)
+    renameModal.ZIndex = 150
+    renameModal.Visible = false
+    renameModal.Parent = frame
+    Instance.new("UICorner", renameModal).CornerRadius = UDim.new(0, 6)
+
+    local renameTitle = Instance.new("TextLabel")
+    renameTitle.Size = UDim2.new(1, -10, 0, 22)
+    renameTitle.Position = UDim2.new(0, 5, 0, 4)
+    renameTitle.BackgroundTransparency = 1
+    renameTitle.Text = "✏️ Cambiar Nombre de Instancia"
+    renameTitle.TextColor3 = Color3.fromRGB(240, 245, 255)
+    renameTitle.Font = Enum.Font.GothamBold
+    renameTitle.TextSize = 10
+    renameTitle.ZIndex = 151
+    renameTitle.Parent = renameModal
+
+    local renameInput = Instance.new("TextBox")
+    renameInput.Size = UDim2.new(1, -16, 0, 26)
+    renameInput.Position = UDim2.new(0, 8, 0, 30)
+    renameInput.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
+    renameInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+    renameInput.Font = Enum.Font.Gotham
+    renameInput.TextSize = 11
+    renameInput.Text = ""
+    renameInput.ZIndex = 151
+    renameInput.ClearTextOnFocus = false
+    renameInput.Parent = renameModal
+    Instance.new("UICorner", renameInput).CornerRadius = UDim.new(0, 4)
+
+    local renameSaveBtn = Instance.new("TextButton")
+    renameSaveBtn.Size = UDim2.new(0.48, -2, 0, 24)
+    renameSaveBtn.Position = UDim2.new(0, 8, 1, -30)
+    renameSaveBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
+    renameSaveBtn.Text = "💾 Guardar"
+    renameSaveBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    renameSaveBtn.Font = Enum.Font.GothamBold
+    renameSaveBtn.TextSize = 10
+    renameSaveBtn.ZIndex = 151
+    renameSaveBtn.Parent = renameModal
+    Instance.new("UICorner", renameSaveBtn).CornerRadius = UDim.new(0, 4)
+
+    local renameCancelBtn = Instance.new("TextButton")
+    renameCancelBtn.Size = UDim2.new(0.48, -2, 0, 24)
+    renameCancelBtn.Position = UDim2.new(0.52, 2, 1, -30)
+    renameCancelBtn.BackgroundColor3 = Color3.fromRGB(40, 45, 60)
+    renameCancelBtn.Text = "Cancelar"
+    renameCancelBtn.TextColor3 = Color3.fromRGB(200, 210, 230)
+    renameCancelBtn.Font = Enum.Font.GothamMedium
+    renameCancelBtn.TextSize = 10
+    renameCancelBtn.ZIndex = 151
+    renameCancelBtn.Parent = renameModal
+    Instance.new("UICorner", renameCancelBtn).CornerRadius = UDim.new(0, 4)
+
+    local renamingTarget = nil
+    local function openRenameModal(obj)
+        if not obj then return end
+        renamingTarget = obj
+        renameInput.Text = obj.Name
+        renameModal.Visible = true
+        renameInput:CaptureFocus()
+    end
+
+    local function applyRename()
+        if renamingTarget and renameInput.Text ~= "" then
+            local oldName = renamingTarget.Name
+            local newName = renameInput.Text
+            local s, err = pcall(function() renamingTarget.Name = newName end)
+            if s then
+                treeStatus.Text = string.format("✏️ Renombrado: '%s' → '%s'", oldName, newName)
+                if self.SelectedNodeForInspection == renamingTarget then
+                    self:InspectNode(renamingTarget)
+                end
+                rebuildFlatTree()
+            else
+                treeStatus.Text = "❌ Error al renombrar: " .. tostring(err)
+            end
+        end
+        renameModal.Visible = false
+        renamingTarget = nil
+    end
+
+    renameSaveBtn.MouseButton1Click:Connect(applyRename)
+    renameInput.FocusLost:Connect(function(enter) if enter then applyRename() end end)
+    renameCancelBtn.MouseButton1Click:Connect(function()
+        renameModal.Visible = false
+        renamingTarget = nil
+    end)
+
+    -- Opciones del Menú Contextual
+    createMenuOption("Copiar Ruta", "📋", 4, function(obj)
+        local path = obj:GetFullName()
+        if safeSetClipboard(path) then
+            treeStatus.Text = "📋 Ruta copiada: " .. path
+        end
+    end)
+
+    createMenuOption("Copiar Código", "📜", 32, function(obj)
+        local caps = self.Registry:Get("CapabilityManager")
+        local src = (caps and caps:SafeDecompile(obj)) or (obj:IsA("LuaSourceContainer") and obj.Source) or "-- [No es script]"
+        if safeSetClipboard(src) then
+            treeStatus.Text = string.format("📜 Código de '%s' copiado (%d bytes).", obj.Name, #src)
+        end
+    end)
+
+    createMenuOption("Renombrar", "✏️", 60, function(obj)
+        openRenameModal(obj)
+    end)
+
+    createMenuOption("Duplicar / Clonar", "🧬", 88, function(obj)
+        local s, cloned = pcall(function() return obj:Clone() end)
+        if s and cloned then
+            cloned.Name = obj.Name .. "_Clone"
+            cloned.Parent = obj.Parent or Workspace
+            local snippet = self:GenerateLuaCreationSnippet(obj)
+            table.insert(self.ModificationHistory, 1, {
+                Action = "CLONE",
+                Timestamp = tick(),
+                Name = obj.Name,
+                CloneName = cloned.Name,
+                ClassName = obj.ClassName,
+                Path = obj:GetFullName(),
+                ParentPath = obj.Parent and obj.Parent:GetFullName() or "Workspace",
+                CreationSnippet = snippet,
+            })
+            treeStatus.Text = "🧬 Elemento clonado: " .. cloned.Name
+            rebuildFlatTree()
+        else
+            treeStatus.Text = "❌ No se pudo clonar este objeto."
+        end
+    end)
+
+    createMenuOption("Eliminar", "🗑️", 116, function(obj)
+        local caps = self.Registry:Get("CapabilityManager")
+        local src = obj:IsA("LuaSourceContainer") and (caps and caps:SafeDecompile(obj) or obj.Source) or nil
+        local snippet = self:GenerateLuaCreationSnippet(obj)
+        table.insert(self.ModificationHistory, 1, {
+            Action = "DESTROY",
+            Timestamp = tick(),
+            Name = obj.Name,
+            ClassName = obj.ClassName,
+            Path = obj:GetFullName(),
+            ParentPath = obj.Parent and obj.Parent:GetFullName() or "Workspace",
+            CreationSnippet = snippet,
+            SourceCode = src,
+        })
+        local s, err = pcall(function() obj:Destroy() end)
+        if s then
+            self.SelectedNodes[obj] = nil
+            self.SelectedNodeForInspection = nil
+            treeStatus.Text = string.format("🗑️ '%s' eliminado y respaldado.", obj.Name)
+            rebuildFlatTree()
+        else
+            treeStatus.Text = "❌ Error al eliminar: " .. tostring(err)
+        end
+    end, Color3.fromRGB(60, 20, 20))
+
+    createMenuOption("Exportar MD (.md)", "📄", 144, function(obj)
+        local dumper = self.Registry:Get("SelectiveDumper")
+        local exporter = self.Registry:Get("ReportExporter")
+        if dumper and exporter then
+            local pkg = dumper:DumpManualNodes({ obj })
+            local s, path = exporter:ExportAsMarkdown("dump_" .. obj.Name:gsub("[^%w_]", "_") .. ".md", pkg, "Apex Dump - " .. obj.Name)
+            treeStatus.Text = s and ("📄 Exportado MD: " .. tostring(path)) or "Error al exportar MD"
+        end
+    end)
+
+    createMenuOption("Exportar JSON (.json)", "📂", 172, function(obj)
+        local dumper = self.Registry:Get("SelectiveDumper")
+        local exporter = self.Registry:Get("ReportExporter")
+        if dumper and exporter then
+            local pkg = dumper:DumpManualNodes({ obj })
+            local jsonStr = exporter:ToJSON(pkg)
+            local s, path = exporter:SaveToFile("dump_" .. obj.Name:gsub("[^%w_]", "_") .. ".json", jsonStr)
+            treeStatus.Text = s and ("📂 Exportado JSON: " .. tostring(path)) or "Error al exportar JSON"
+        end
+    end)
+
+    createMenuOption("Inspeccionar", "🕵️", 200, function(obj)
+        self:InspectNode(obj)
+    end)
+
+    local function openContextMenu(obj, inputPos)
+        if not obj then return end
+        currentContextObj = obj
+        self.SelectedNodeForInspection = obj
+        local mousePos = inputPos or UserInputService:GetMouseLocation()
+        local framePos = frame.AbsolutePosition
+        local localX = math.clamp(mousePos.X - framePos.X + 4, 10, math.max(10, frame.AbsoluteSize.X - 200))
+        local localY = math.clamp(mousePos.Y - framePos.Y + 4, 10, math.max(10, frame.AbsoluteSize.Y - 240))
+        contextMenu.Position = UDim2.new(0, localX, 0, localY)
+        contextMenu.Visible = true
+    end
+
+    UserInputService.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if contextMenu.Visible then
+                local mPos = UserInputService:GetMouseLocation()
+                local cPos = contextMenu.AbsolutePosition
+                local cSize = contextMenu.AbsoluteSize
+                if mPos.X < cPos.X or mPos.X > cPos.X + cSize.X or mPos.Y < cPos.Y or mPos.Y > cPos.Y + cSize.Y then
+                    contextMenu.Visible = false
+                end
+            end
+        end
+    end)
+
+    -- =========================================================================
+    -- DETECTOR / PICKER DE OBJETOS 2D (GUI) Y 3D (WORKSPACE)
+    -- =========================================================================
+    local function togglePicker()
+        self.IsPickerActive = not self.IsPickerActive
+        if self.IsPickerActive then
+            pickerBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 110)
+            pickerBtn.Text = "🎯 ACTIVO"
+            treeStatus.Text = "🎯 Haz clic en cualquier elemento 2D (GUI) o 3D (Workspace)..."
+
+            if self.PickerConnection then self.PickerConnection:Disconnect() end
+            self.PickerConnection = UserInputService.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    local mousePos = UserInputService:GetMouseLocation()
+                    local targetInst = nil
+
+                    -- 1. Intentar detectar objeto 2D en PlayerGui
+                    pcall(function()
+                        local lp = game.Players.LocalPlayer
+                        if lp then
+                            local pGui = lp:FindFirstChild("PlayerGui")
+                            if pGui then
+                                local guiObjects = pGui:GetGuiObjectsAtPosition(mousePos.X, mousePos.Y)
+                                for _, guiObj in ipairs(guiObjects) do
+                                    if not guiObj:IsDescendantOf(self.Parent) and not guiObj:IsDescendantOf(frame) then
+                                        targetInst = guiObj
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end)
+
+                    -- 2. Si no es GUI, detectar objeto 3D en Workspace
+                    if not targetInst then
+                        pcall(function()
+                            local cam = Workspace.CurrentCamera
+                            if cam then
+                                local ray = cam:ViewportPointToRay(mousePos.X, mousePos.Y)
+                                local lp = game.Players.LocalPlayer
+                                local params = RaycastParams.new()
+                                params.FilterType = RaycastFilterType.Exclude
+                                if lp and lp.Character then
+                                    params.FilterDescendantsInstances = { lp.Character }
+                                end
+                                local result = Workspace:Raycast(ray.Origin, ray.Direction * 3000, params)
+                                if result and result.Instance then
+                                    targetInst = result.Instance
+                                end
+                            end
+                        end)
+                    end
+
+                    if targetInst then
+                        -- Expandir todos los ancestros
+                        local curr = targetInst.Parent
+                        while curr and curr ~= game do
+                            self.ExpandedNodes[curr] = true
+                            curr = curr.Parent
+                        end
+
+                        self.SelectedNodes[targetInst] = true
+                        rebuildFlatTree()
+                        self:InspectNode(targetInst)
+
+                        for idx, data in ipairs(self.FlatTree) do
+                            if data.obj == targetInst then
+                                treeScroll.CanvasPosition = Vector2.new(0, math.max(0, (idx - 4) * ROW_HEIGHT))
+                                break
+                            end
+                        end
+
+                        treeStatus.Text = string.format("🎯 Objeto detectado: %s (%s)", targetInst.Name, targetInst.ClassName)
+                        togglePicker()
+                    end
+                end
+            end)
+        else
+            pickerBtn.BackgroundColor3 = Color3.fromRGB(30, 95, 155)
+            pickerBtn.Text = "🎯 PICKER"
+            if self.PickerConnection then
+                self.PickerConnection:Disconnect()
+                self.PickerConnection = nil
+            end
+        end
+    end
+
+    pickerBtn.MouseButton1Click:Connect(togglePicker)
+
+    -- =========================================================================
     -- LÓGICA DE VIRTUALIZACIÓN DEL ÁRBOL
     -- =========================================================================
     local function hasChildrenSafe(obj)
@@ -752,9 +1127,9 @@ function DumperView:Render()
                 frameRow.CheckBtn.Position = UDim2.new(0, xOffset + 18, 0, 3)
 
                 local textX = xOffset + 38
-                local badgeWidth = data.badge and 85 or 0
+                local badgeWidth = data.badge and 80 or 0
                 frameRow.NameLabel.Position = UDim2.new(0, textX, 0, 0)
-                frameRow.NameLabel.Size = UDim2.new(1, -textX - badgeWidth - 4, 1, 0)
+                frameRow.NameLabel.Size = UDim2.new(1, -textX - badgeWidth - 28, 1, 0)
 
                 local displayName = self.IsSearching and data.obj:GetFullName() or data.obj.Name
                 frameRow.NameLabel.Text = displayName
@@ -799,7 +1174,7 @@ function DumperView:Render()
         return true
     end
 
-    local function rebuildFlatTree()
+    function rebuildFlatTree()
         table.clear(self.FlatTree)
 
         if self.IsSearching then
@@ -957,8 +1332,8 @@ function DumperView:Render()
         nameLabel.Parent = row
 
         local badgeLabel = Instance.new("TextLabel")
-        badgeLabel.Size = UDim2.new(0, 85, 0, 16)
-        badgeLabel.Position = UDim2.new(1, -88, 0, 3)
+        badgeLabel.Size = UDim2.new(0, 80, 0, 16)
+        badgeLabel.Position = UDim2.new(1, -106, 0, 3)
         badgeLabel.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
         badgeLabel.Font = Enum.Font.GothamBold
         badgeLabel.TextSize = 8
@@ -966,12 +1341,24 @@ function DumperView:Render()
         badgeLabel.Parent = row
         Instance.new("UICorner", badgeLabel).CornerRadius = UDim.new(0, 3)
 
+        local moreBtn = Instance.new("TextButton")
+        moreBtn.Size = UDim2.new(0, 18, 0, 16)
+        moreBtn.Position = UDim2.new(1, -22, 0, 3)
+        moreBtn.BackgroundColor3 = Color3.fromRGB(28, 32, 44)
+        moreBtn.Text = "⋮"
+        moreBtn.TextColor3 = Color3.fromRGB(180, 190, 210)
+        moreBtn.Font = Enum.Font.GothamBold
+        moreBtn.TextSize = 11
+        moreBtn.Parent = row
+        Instance.new("UICorner", moreBtn).CornerRadius = UDim.new(0, 3)
+
         local frameData = {
             Frame = row,
             ExpandBtn = expandBtn,
             CheckBtn = checkBtn,
             NameLabel = nameLabel,
             BadgeLabel = badgeLabel,
+            MoreBtn = moreBtn,
             NodeObj = nil,
         }
 
@@ -1000,6 +1387,21 @@ function DumperView:Render()
             local obj = frameData.NodeObj
             if obj then
                 self:InspectNode(obj)
+            end
+        end)
+
+        -- Menú Contextual (DarkDex Style): Clic Derecho y Botón ⋮
+        nameLabel.MouseButton2Click:Connect(function()
+            openContextMenu(frameData.NodeObj)
+        end)
+
+        moreBtn.MouseButton1Click:Connect(function()
+            openContextMenu(frameData.NodeObj)
+        end)
+
+        row.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                openContextMenu(frameData.NodeObj, Vector2.new(input.Position.X, input.Position.Y))
             end
         end)
 
@@ -1119,7 +1521,7 @@ function DumperView:Render()
                 local s, json = pcall(function() return HttpService:JSONEncode(self.LastExtractedPackage) end)
                 setInspectorText((s and json) or "-- Error al codificar JSON")
             else
-                setInspectorText("-- No hay ningún paquete de volcado extraído aún. Presiona EXTRAER JSON abajo.")
+                setInspectorText("-- No hay ningún paquete de volcado extraído aún. Presiona EXTRAER JSON o MARKDOWN abajo.")
             end
         elseif tabId == "ModHistory" then
             local patchScript = self:GenerateImportablePatchScript()
@@ -1164,7 +1566,7 @@ function DumperView:Render()
     self:SelectRightTab("NodeInspector")
 
     -- =========================================================================
-    -- EJECUCIÓN DE VOLCADOS
+    -- EJECUCIÓN DE VOLCADOS MULTIHILO (JSON, MARKDOWN, DISCO, VFS)
     -- =========================================================================
     local function executeDump(exportMode)
         local dumper = self.Registry:Get("SelectiveDumper")
@@ -1175,9 +1577,10 @@ function DumperView:Render()
         if not dumper or not exporter then return end
 
         dumpJsonBtn.Text = "⏳ VOLCANDO..."
+        dumpMdBtn.Text = "⏳ VOLCANDO..."
         dumpDiskBtn.Text = "⏳ VOLCANDO..."
         dumpVfsBtn.Text = "⏳ VOLCANDO..."
-        treeStatus.Text = "⏳ Procesando extracción en modo " .. self.CurrentMode .. "..."
+        treeStatus.Text = "⏳ Procesando extracción multihilo en modo " .. self.CurrentMode .. "..."
 
         task.spawn(function()
             local startTime = tick()
@@ -1220,6 +1623,17 @@ function DumperView:Render()
                     treeStatus.Text = "❌ VFS Error: " .. tostring(path)
                 end
                 self:SelectRightTab("Stats")
+            elseif exportMode == "md" then
+                local mdTitle = "Apex Suite - Volcado " .. self.CurrentMode
+                local fname = "dump_" .. self.CurrentMode:lower() .. "_" .. math.floor(tick()) .. ".md"
+                local s, path, mdContent = exporter:ExportAsMarkdown(fname, package, mdTitle)
+                self:SelectRightTab("JSONOutput")
+                setInspectorText(mdContent)
+                if s then
+                    treeStatus.Text = string.format("✅ Markdown guardado en %.2fs (%d KB) → %s", duration, math.floor(#mdContent / 1024), tostring(path))
+                else
+                    treeStatus.Text = "Resultado Markdown: " .. tostring(path)
+                end
             elseif exportMode == "disk" then
                 local jsonStr = exporter:ToJSON(package)
                 self:SelectRightTab("JSONOutput")
@@ -1240,13 +1654,15 @@ function DumperView:Render()
                 treeStatus.Text = string.format("✅ JSON guardado en %.2fs (%d KB) → %s", duration, math.floor(#jsonStr / 1024), tostring(path))
             end
 
-            dumpJsonBtn.Text = "📂 EXTRAER JSON"
-            dumpDiskBtn.Text = "💾 DISCO (.LUA)"
+            dumpJsonBtn.Text = "📂 JSON (.json)"
+            dumpMdBtn.Text = "📄 MARKDOWN (.md)"
+            dumpDiskBtn.Text = "💾 DISCO (.lua)"
             dumpVfsBtn.Text = "📦 VFS ARCHIVE"
         end)
     end
 
     dumpJsonBtn.MouseButton1Click:Connect(function() executeDump("json") end)
+    dumpMdBtn.MouseButton1Click:Connect(function() executeDump("md") end)
     dumpDiskBtn.MouseButton1Click:Connect(function() executeDump("disk") end)
     dumpVfsBtn.MouseButton1Click:Connect(function() executeDump("vfs") end)
 

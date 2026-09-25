@@ -142,6 +142,147 @@ function ReportExporter:ExportAsVFSArchive(rootName, dumpPackage)
 end
 
 -- =============================================================================
+-- MARKDOWN REPORT GENERATOR (.MD)
+-- =============================================================================
+
+function ReportExporter:GenerateMarkdown(dumpPackage, title)
+    title = title or "Apex Suite - Instance Dump Report"
+    local lines = {}
+
+    table.insert(lines, "# " .. title)
+    table.insert(lines, "")
+    table.insert(lines, string.format("- **Place ID:** `%s`", tostring(game.PlaceId)))
+    table.insert(lines, string.format("- **Job ID:** `%s`", tostring(game.JobId)))
+    table.insert(lines, string.format("- **Fecha / Timestamp:** `%s` (tick: %.2f)", os.date("!%Y-%m-%d %H:%M:%SZ"), tick()))
+    table.insert(lines, string.format("- **Modo de Volcado:** `%s`", dumpPackage and dumpPackage.Mode or "Custom"))
+    table.insert(lines, "")
+    table.insert(lines, "---")
+    table.insert(lines, "")
+
+    local totalScripts = 0
+    local totalRemotes = 0
+    local totalInstances = 0
+    local scriptEntries = {}
+
+    local function traverseNode(node, depth, pathSoFar)
+        if not node then return end
+        totalInstances = totalInstances + 1
+
+        local currentPath = pathSoFar .. "/" .. tostring(node.Name)
+        local indent = string.rep("  ", depth)
+        local icon = "📁"
+        if node.ClassName == "LocalScript" or node.ClassName == "Script" or node.ClassName == "ModuleScript" then
+            icon = "📜"
+            totalScripts = totalScripts + 1
+            table.insert(scriptEntries, {
+                Name = node.Name,
+                ClassName = node.ClassName,
+                Path = node.Path or currentPath,
+                Source = node.Source,
+                BytecodeSize = node.BytecodeSize or (node.Source and #node.Source or 0),
+                Attributes = node.Attributes,
+                Tags = node.Tags,
+            })
+        elseif node.ClassName and node.ClassName:find("Remote") then
+            icon = "📡"
+            totalRemotes = totalRemotes + 1
+        elseif node.ClassName and (node.ClassName:find("Part") or node.ClassName:find("Model")) then
+            icon = "📦"
+        elseif node.ClassName and node.ClassName:find("Gui") or node.ClassName and (node.ClassName:find("Text") or node.ClassName:find("Button") or node.ClassName:find("Image")) then
+            icon = "🖼️"
+        end
+
+        table.insert(lines, string.format("%s- %s **%s** (`%s`)", indent, icon, node.Name, node.ClassName or "Instance"))
+
+        for _, child in ipairs(node.Children or {}) do
+            traverseNode(child, depth + 1, currentPath)
+        end
+    end
+
+    table.insert(lines, "## 🌲 Estructura del Árbol de Instancias")
+    table.insert(lines, "")
+
+    if type(dumpPackage) == "table" then
+        if dumpPackage.Services then
+            for _, srv in ipairs(dumpPackage.Services) do
+                traverseNode(srv, 0, "")
+            end
+        elseif dumpPackage.Nodes then
+            for _, node in ipairs(dumpPackage.Nodes) do
+                traverseNode(node, 0, "")
+            end
+        elseif dumpPackage.Containers then
+            for _, c in ipairs(dumpPackage.Containers) do
+                if c.Data then traverseNode(c.Data, 0, "") end
+            end
+        else
+            traverseNode(dumpPackage, 0, "")
+        end
+    end
+
+    table.insert(lines, "")
+    table.insert(lines, "---")
+    table.insert(lines, "")
+    table.insert(lines, "## 📊 Métricas de Extracción")
+    table.insert(lines, "")
+    table.insert(lines, string.format("| Métrica | Cantidad |"))
+    table.insert(lines, "| :--- | :--- |")
+    table.insert(lines, string.format("| **Total Instancias** | `%d` |", totalInstances))
+    table.insert(lines, string.format("| **Scripts Extraídos** | `%d` |", totalScripts))
+    table.insert(lines, string.format("| **Remotes Detectados** | `%d` |", totalRemotes))
+    table.insert(lines, "")
+    table.insert(lines, "---")
+    table.insert(lines, "")
+    table.insert(lines, "## 📜 Código Fuente y Bytecode de Scripts")
+    table.insert(lines, "")
+
+    if #scriptEntries == 0 then
+        table.insert(lines, "_No se extrajeron scripts de código fuente en esta selección._")
+    else
+        for idx, sc in ipairs(scriptEntries) do
+            table.insert(lines, string.format("### [%d] %s (`%s`)", idx, sc.Name, sc.ClassName))
+            table.insert(lines, string.format("- **Ruta:** `%s`", tostring(sc.Path)))
+            table.insert(lines, string.format("- **Tamaño:** `%d bytes`", sc.BytecodeSize or 0))
+            if sc.Tags and #sc.Tags > 0 then
+                table.insert(lines, string.format("- **Tags:** `[%s]`", table.concat(sc.Tags, ", ")))
+            end
+            if sc.Attributes and next(sc.Attributes) then
+                local attrList = {}
+                for k, v in pairs(sc.Attributes) do
+                    table.insert(attrList, string.format("%s=%s", tostring(k), tostring(v)))
+                end
+                table.insert(lines, string.format("- **Atributos:** `%s`", table.concat(attrList, ", ")))
+            end
+            table.insert(lines, "")
+            table.insert(lines, "```lua")
+            if sc.Source and #sc.Source > 0 and not sc.Source:find("%[Código no disponible") then
+                table.insert(lines, sc.Source)
+            else
+                table.insert(lines, "-- [Código fuente no disponible o protegido por el ejecutor]")
+            end
+            table.insert(lines, "```")
+            table.insert(lines, "")
+        end
+    end
+
+    return table.concat(lines, "\n")
+end
+
+function ReportExporter:ExportAsMarkdown(filename, dumpPackage, title)
+    filename = filename or string.format("apex_dump_%s_%d.md", tostring(game.PlaceId), tick())
+    if not filename:match("%.md$") then filename = filename .. ".md" end
+
+    local mdContent = self:GenerateMarkdown(dumpPackage, title)
+    local saved, path = self:SaveToFileChunked(filename, mdContent)
+
+    if self.Logger then
+        self.Logger:Info("EXPORTER", string.format("Reporte Markdown exportado a %s (%d bytes)", tostring(path), #mdContent))
+    end
+
+    return saved, path, mdContent
+end
+
+-- =============================================================================
 -- CHUNKED STREAM EXPORTER (Fragmenta payloads >1MB)
 -- =============================================================================
 

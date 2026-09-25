@@ -333,7 +333,7 @@ function SelectiveDumper:DumpDependencyChain(actionEntry, onProgress)
     return dumpPackage
 end
 
--- MODO 3: Extracción manual de lista de nodos
+-- MODO 3: Extracción manual de lista de nodos (Multihilo Concurrente con Worker Pool)
 function SelectiveDumper:DumpManualNodes(nodeList, onProgress)
     local results = {
         Mode = SelectiveDumper.DumpModes.MANUAL_TREE,
@@ -341,28 +341,88 @@ function SelectiveDumper:DumpManualNodes(nodeList, onProgress)
         Nodes = {},
     }
     
-    local lastYield = tick()
-    for idx, node in ipairs(nodeList or {}) do
-        if tick() - lastYield > 0.012 then
-            task.wait()
-            lastYield = tick()
-        end
-        local d = self:DumpInstance(node, false, 6)
+    local list = nodeList or {}
+    local total = #list
+    if total == 0 then return results end
+    
+    -- Inicializar slots preservando el orden
+    local rawResults = table.create(total)
+    local completed = 0
+    local nextIndex = 1
+    local numWorkers = math.clamp(math.min(total, 8), 1, 8)
+    local activeWorkers = numWorkers
+    
+    for workerId = 1, numWorkers do
+        task.spawn(function()
+            local lastYield = tick()
+            while true do
+                local currentIdx = nil
+                -- Asignación atómica de tarea
+                if nextIndex <= total then
+                    currentIdx = nextIndex
+                    nextIndex = nextIndex + 1
+                else
+                    break
+                end
+                
+                local node = list[currentIdx]
+                if node then
+                    local s, d = pcall(function()
+                        return self:DumpInstance(node, false, 8)
+                    end)
+                    if s and d then
+                        rawResults[currentIdx] = d
+                    end
+                end
+                
+                completed = completed + 1
+                if onProgress then
+                    pcall(onProgress, completed, total, node and node.Name or "Nodo")
+                end
+                
+                -- Time-slicing cooperativo por worker (12ms)
+                if tick() - lastYield > 0.012 then
+                    task.wait()
+                    lastYield = tick()
+                end
+            end
+            activeWorkers = activeWorkers - 1
+        end)
+    end
+    
+    -- Esperar a que todos los workers completen
+    while activeWorkers > 0 do
+        task.wait()
+    end
+    
+    for _, d in ipairs(rawResults) do
         if d then table.insert(results.Nodes, d) end
-        if onProgress then pcall(onProgress, idx, #nodeList, node.Name) end
+    end
+    
+    if self.Logger then
+        self.Logger:Info("DUMPER", string.format("Volcado Manual completado: %d/%d nodos procesados con %d hilos.", #results.Nodes, total, numWorkers))
     end
     
     return results
 end
 
--- MODO 4: Extracción total del entorno de scripts del juego (Optimizado y Podado)
+-- MODO 4: Extracción total del entorno de scripts del juego (Multihilo Concurrente y Podado)
 function SelectiveDumper:DumpFullEnvironment(onProgress)
     local targetServices = {
         { Service = game:GetService("ReplicatedFirst"), Name = "ReplicatedFirst" },
         { Service = game:GetService("ReplicatedStorage"), Name = "ReplicatedStorage" },
         { Service = game:GetService("StarterPlayer"), Name = "StarterPlayer" },
+        { Service = game:GetService("StarterGui"), Name = "StarterGui" },
+        { Service = game:GetService("Lighting"), Name = "Lighting" },
         { Service = game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"), Name = "PlayerGui" },
+        { Service = game:GetService("Workspace"), Name = "Workspace" },
     }
+    
+    -- Filtrar servicios disponibles
+    local validServices = {}
+    for _, item in ipairs(targetServices) do
+        if item.Service then table.insert(validServices, item) end
+    end
     
     local dumpPackage = {
         Mode = SelectiveDumper.DumpModes.FULL_ENVIRONMENT,
@@ -373,40 +433,78 @@ function SelectiveDumper:DumpFullEnvironment(onProgress)
         TotalRemotesDumped = 0,
     }
     
-    local lastYield = tick()
-    local totalServices = #targetServices
+    local totalServices = #validServices
+    local rawServiceResults = table.create(totalServices)
+    local completed = 0
+    local nextServiceIdx = 1
+    local numWorkers = math.clamp(math.min(totalServices, 6), 1, 6)
+    local activeWorkers = numWorkers
     
     local function countEntities(dumpNode)
         if not dumpNode then return end
         if dumpNode.Source then dumpPackage.TotalScriptsDumped = dumpPackage.TotalScriptsDumped + 1 end
-        if dumpNode.ClassName:find("Remote") then dumpPackage.TotalRemotesDumped = dumpPackage.TotalRemotesDumped + 1 end
+        if dumpNode.ClassName and dumpNode.ClassName:find("Remote") then dumpPackage.TotalRemotesDumped = dumpPackage.TotalRemotesDumped + 1 end
         for _, child in ipairs(dumpNode.Children or {}) do
             countEntities(child)
         end
     end
     
-    for idx, srvEntry in ipairs(targetServices) do
-        if srvEntry.Service then
-            if onProgress then pcall(onProgress, idx, totalServices, "Volcando " .. srvEntry.Name) end
-            
-            local srvDump = self:DumpInstance(srvEntry.Service, true, 10)
-            if srvDump then
-                countEntities(srvDump)
-                table.insert(dumpPackage.Services, srvDump)
+    for workerId = 1, numWorkers do
+        task.spawn(function()
+            local lastYield = tick()
+            while true do
+                local currentIdx = nil
+                if nextServiceIdx <= totalServices then
+                    currentIdx = nextServiceIdx
+                    nextServiceIdx = nextServiceIdx + 1
+                else
+                    break
+                end
+                
+                local srvEntry = validServices[currentIdx]
+                if srvEntry and srvEntry.Service then
+                    if onProgress then pcall(onProgress, completed, totalServices, "Volcando " .. srvEntry.Name) end
+                    
+                    local s, srvDump = pcall(function()
+                        return self:DumpInstance(srvEntry.Service, true, 10)
+                    end)
+                    
+                    if s and srvDump then
+                        rawServiceResults[currentIdx] = srvDump
+                    end
+                end
+                
+                completed = completed + 1
+                if onProgress then
+                    pcall(onProgress, completed, totalServices, srvEntry and srvEntry.Name or "Servicio")
+                end
+                
+                if tick() - lastYield > 0.012 then
+                    task.wait()
+                    lastYield = tick()
+                end
             end
-            
-            if tick() - lastYield > 0.012 then
-                task.wait()
-                lastYield = tick()
-            end
+            activeWorkers = activeWorkers - 1
+        end)
+    end
+    
+    while activeWorkers > 0 do
+        task.wait()
+    end
+    
+    for _, srvDump in ipairs(rawServiceResults) do
+        if srvDump then
+            countEntities(srvDump)
+            table.insert(dumpPackage.Services, srvDump)
         end
     end
     
     if self.Logger then
-        self.Logger:Info("DUMPER", string.format("Volcado Total del Entorno completado: %d scripts y %d remotes extraídos.", dumpPackage.TotalScriptsDumped, dumpPackage.TotalRemotesDumped))
+        self.Logger:Info("DUMPER", string.format("Volcado Total Multihilo completado: %d scripts y %d remotes extraídos de %d servicios.", dumpPackage.TotalScriptsDumped, dumpPackage.TotalRemotesDumped, #dumpPackage.Services))
     end
     
     return dumpPackage
 end
 
 return SelectiveDumper
+
