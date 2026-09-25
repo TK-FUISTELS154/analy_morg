@@ -6,7 +6,10 @@
     para que la suite funcione en cualquier entorno sin lanzar excepciones.
 --]]
 
-local Class = loadstring(readfile and isfile and isfile("suite/code/core/Class.lua") and readfile("suite/code/core/Class.lua") or "")()
+local Class = (getgenv()._APEX_IMPORT and getgenv()._APEX_IMPORT("code/core/Class.lua"))
+    or (typeof(readfile) == "function" and typeof(isfile) == "function" and isfile("suite/code/core/Class.lua") and loadstring(readfile("suite/code/core/Class.lua"))())
+    or (pcall(function() return game:HttpGet("https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/suite/code/core/Class.lua") end) and loadstring(game:HttpGet("https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/suite/code/core/Class.lua"))())
+
 if not Class then
     -- Fallback si no está cargado mediante filesystem
     Class = {}

@@ -176,11 +176,17 @@ function MainWindow:SetupTabs()
     end
     
     -- Cargar Vistas
-    local AuditView = loadstring(readfile and isfile and isfile("suite/gui/views/AuditView.lua") and readfile("suite/gui/views/AuditView.lua") or "")()
-    local DumperView = loadstring(readfile and isfile and isfile("suite/gui/views/DumperView.lua") and readfile("suite/gui/views/DumperView.lua") or "")()
-    local RemoteSpyView = loadstring(readfile and isfile and isfile("suite/gui/views/RemoteSpyView.lua") and readfile("suite/gui/views/RemoteSpyView.lua") or "")()
-    local EconomyView = loadstring(readfile and isfile and isfile("suite/gui/views/EconomyView.lua") and readfile("suite/gui/views/EconomyView.lua") or "")()
-    local ToolsView = loadstring(readfile and isfile and isfile("suite/gui/views/ToolsView.lua") and readfile("suite/gui/views/ToolsView.lua") or "")()
+    local import = getgenv()._APEX_IMPORT or function(p)
+        local s = (typeof(readfile) == "function" and typeof(isfile) == "function" and isfile("suite/" .. p) and readfile("suite/" .. p))
+            or (pcall(function() return game:HttpGet("https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/suite/" .. p) end) and game:HttpGet("https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/suite/" .. p))
+        return s and loadstring(s)()
+    end
+    
+    local AuditView     = import("gui/views/AuditView.lua")
+    local DumperView    = import("gui/views/DumperView.lua")
+    local RemoteSpyView = import("gui/views/RemoteSpyView.lua")
+    local EconomyView   = import("gui/views/EconomyView.lua")
+    local ToolsView     = import("gui/views/ToolsView.lua")
     
     if AuditView then self.Views["Audit"] = AuditView.new(self.ContentArea, self.Registry) end
     if DumperView then self.Views["Dumper"] = DumperView.new(self.ContentArea, self.Registry) end

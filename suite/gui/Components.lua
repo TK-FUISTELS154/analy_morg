@@ -5,7 +5,10 @@
     Colección de componentes POO para interfaces modulares y fluidas.
 --]]
 
-local Theme = loadstring(readfile and isfile and isfile("suite/gui/Theme.lua") and readfile("suite/gui/Theme.lua") or "")()
+local Theme = (getgenv()._APEX_IMPORT and getgenv()._APEX_IMPORT("gui/Theme.lua"))
+    or (typeof(readfile) == "function" and typeof(isfile) == "function" and isfile("suite/gui/Theme.lua") and loadstring(readfile("suite/gui/Theme.lua"))())
+    or (pcall(function() return game:HttpGet("https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/suite/gui/Theme.lua") end) and loadstring(game:HttpGet("https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/suite/gui/Theme.lua"))())
+
 if not Theme then
     Theme = {
         Colors = {
