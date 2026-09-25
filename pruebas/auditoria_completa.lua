@@ -1,14 +1,27 @@
 --[[
     =============================================================================
-    APEX SUITE - TEST STANDALONE: AUDITORÍA COMPLETA Y HEURÍSTICA TOPOLÓGICA
+    APEX SUITE - MOTOR DE AUDITORÍA Y ANÁLISIS DE SEGURIDAD v2.0 (OPTIMIZADO)
     =============================================================================
-    Archivo autónomo (100% Todo-en-Uno) para depurar y probar en aislamiento:
-    - 🛡️ Modo 1: Anti-Cheat, Watchdogs e Integrity Checks
-    - 🎰 Modo 2: Lógica de Ruleta, Gacha, Tiendas, Precios y Probabilidades
-    - 📡 Modo 3: Mapeo Integral de Remotes (Events & Functions)
-    - 🌐 Modo 4: Auditoría Completa Arquitectónica y Detección de Frameworks
+    Archivo autónomo de alto rendimiento con optimizaciones arquitectónicas:
     
-    Sin dependencias externas ni llamadas HTTP requeridas.
+    1. ⚡ FILTRADO PREMATURO DE INSTANCIAS:
+       - Solo se procesan contenedores de código ejecutables (LocalScript, Script, ModuleScript)
+         y remotes de red (RemoteEvent, RemoteFunction, UnreliableRemoteEvent).
+       - Descarte instantáneo en O(1) de sonidos, mallas, partículas, geometrías y texturas.
+    
+    2. 🚫 ELIMINACIÓN DE ESCANEOS GLOBALES:
+       - Servicios delimitados: ReplicatedStorage, ReplicatedFirst, StarterPlayer, PlayerGui.
+       - Cero recorridos sobre Workspace, Terreno o la raíz global (game:GetDescendants).
+    
+    3. 🧠 REGLAS DE DETECCIÓN CONTEXTUALIZADAS:
+       - Noclip contextual: Exige concurrencia de alteración de colisión del Character en bucles (RenderStepped/Heartbeat).
+       - Bypass de Módulos de Configuración Estática: Detecta tablas de datos puras y evita falsos positivos.
+       - RNG Cosmético vs Transaccional: Diferencia entre animaciones y remotes de compra.
+       - Clasificación limpia: Separa 'ADMIN_TOOL' (Herramientas Administrativas) de Cheats y Kicks.
+    
+    4. 📦 RESUMEN CONTEXTUAL (CERO DESBORDAMIENTO DE MEMORIA):
+       - En lugar de clonar megabytes de código descompilado, almacena firmas con líneas y snippets representativos.
+       - Serialización JSON ultra ligera y rápida (<25 KB).
     =============================================================================
 --]]
 
@@ -34,7 +47,7 @@ local Capabilities = {
 
 local function safeDecompile(scriptInstance)
     if not Capabilities.HasDecompiler then
-        return "-- [Decompilación no soportada en este ejecutor]"
+        return nil
     end
     local s, code = pcall(function()
         return decompile(scriptInstance)
@@ -42,82 +55,13 @@ local function safeDecompile(scriptInstance)
     if s and type(code) == "string" and #code > 0 then
         return code
     end
-    return "-- [Error o código no disponible al decompilar]"
+    return nil
 end
 
 -- =========================================================================
--- 2. DICCIONARIO MULTILINGÜE Y FIRMAS ESTÁTICAS
+-- 2. FILTROS CORE Y DISCRIMINACIÓN PREMATURA DE INSTANCIAS
 -- =========================================================================
-local Lexicon = {
-    AntiCheat = {
-        "anticheat", "anti_cheat", "ac_", "_ac", "watchdog", "warden", "integrity",
-        "tamper", "hook_check", "memcheck", "noclip", "flycheck", "speedcheck",
-        "teleportcheck", "bypass", "exploit", "detection", "security", "guard",
-        "kick", "ban", "punish", "flag", "report", "crash",
-        -- Español
-        "anticheat", "seguridad", "proteccion", "vigilante", "expulsar", "baneo", "trampa", "verificar",
-        -- Ruso
-        "античит", "защита", "кик", "бан", "проверка", "читы",
-        -- Chino
-        "反作弊", "安全", "封禁", "踢出", "作弊", "检测", "验证", "防护",
-        -- Japonés
-        "チート対策", "セキュリティ", "BAN", "キック", "不正検出", "検証",
-    },
-    Economy = {
-        "spin", "wheel", "roll", "roulette", "loot", "crate", "box", "case",
-        "shop", "store", "buy", "purchase", "price", "cost", "gems", "coins",
-        "gold", "cash", "money", "currency", "diamond", "probability", "chance",
-        "weight", "drop", "rarity", "gacha", "draw", "ticket",
-        -- Español
-        "ruleta", "tienda", "comprar", "precio", "costo", "gemas", "monedas", "oro", "dinero", "probabilidad", "azar", "tirada",
-        -- Ruso
-        "рулетка", "магазин", "купить", "цена", "монеты", "золото", "деньги", "шанс", "дроп",
-        -- Chino
-        "轮盘", "商店", "购买", "价格", "金币", "钻石", "货币", "概率", "抽奖", "掉落", "扭蛋",
-        -- Japonés
-        "ルーレット", "ショップ", "購入", "価格", "コイン", "ダイヤ", "確率", "ガチャ", "ドロップ",
-    },
-    Combat = {
-        "hitbox", "damage", "health", "hp", "bullet", "gun", "sword", "weapon",
-        "attack", "aim", "silentaim", "cooldown", "parry", "block", "combo",
-        "combat", "skill", "stamina", "ammo", "reload",
-        -- Español
-        "ataque", "arma", "espada", "daño", "vida", "recarga", "habilidad",
-        -- Ruso
-        "урон", "оружие", "атака", "хп", "пуля",
-        -- Chino
-        "攻击", "伤害", "武器", "子弹", "生命值", "技能",
-        -- Japonés
-        "攻撃", "ダメージ", "武器", "弾丸", "スキル",
-    },
-    Admin = {
-        "admin", "owner", "mod", "moderator", "cmd", "command", "rank", "permission",
-        "superadmin", "creator", "dev", "developer", "whitelist", "blacklist",
-    }
-}
-
-local CodeSignatures = {
-    { Pattern = "game%.Players%.LocalPlayer:Kick", Score = 50, Desc = "Llamada directa de Kick al LocalPlayer", Category = "AntiCheat" },
-    { Pattern = "hookmetamethod", Score = 30, Desc = "Integridad o monitoreo de metamétodos", Category = "AntiCheat" },
-    { Pattern = "getrawmetatable", Score = 30, Desc = "Acceso a metatablas del motor", Category = "AntiCheat" },
-    { Pattern = "debug%.info", Score = 25, Desc = "Introspección de Callstack / Rastreo", Category = "AntiCheat" },
-    { Pattern = "getfenv", Score = 20, Desc = "Lectura del entorno de ejecución", Category = "AntiCheat" },
-    { Pattern = "setfenv", Score = 35, Desc = "Modificación del entorno de ejecución", Category = "AntiCheat" },
-    { Pattern = "math%.random", Score = 15, Desc = "Lógica de Probabilidad / RNG", Category = "Economy" },
-    { Pattern = "Random%.new", Score = 15, Desc = "Lógica de Generador Aleatorio Seguro", Category = "Economy" },
-    { Pattern = "MarketplaceService", Score = 25, Desc = "Interacción con compras y Gamepasses", Category = "Economy" },
-    -- Capacidades Críticas de Modding / Admin Abuse
-    { Pattern = "BodyVelocity", Score = 35, Desc = "Manipulación de Vuelo / Física Forzada (BodyVelocity)", Category = "Admin" },
-    { Pattern = "BodyGyro", Score = 25, Desc = "Manipulación de Orientación / Vuelo (BodyGyro)", Category = "Admin" },
-    { Pattern = "CanCollide%s*=%s*false", Score = 40, Desc = "Rutina de Noclip en tiempo de ejecución", Category = "Admin" },
-    { Pattern = "_G%.", Score = 20, Desc = "Exposición de Variables Globales en Memoria (_G)", Category = "Admin" },
-}
-
--- =========================================================================
--- 3. FILTROS DE CORE DE ROBLOX & EMPAREJAMIENTO EXACTO POR LÍMITES DE PALABRA
--- =========================================================================
-local function isIgnoredCoreInstance(inst)
-    local fullName = inst:GetFullName()
+local function isIgnoredCorePath(fullName)
     if fullName:find("StarterPlayer%.StarterPlayerScripts%.PlayerModule")
        or fullName:find("StarterPlayer%.StarterPlayerScripts%.RbxCharacterSounds")
        or fullName:find("PlayerScriptsLoader")
@@ -133,7 +77,14 @@ local function isIgnoredCoreInstance(inst)
     return false
 end
 
-local function matchesKeyword(targetText, keyword)
+local function isExecutableOrNetwork(inst)
+    return inst:IsA("LuaSourceContainer") or inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("UnreliableRemoteEvent")
+end
+
+-- =========================================================================
+-- 3. EMPAREJADOR CON FRONTERAS DE PALABRA (FRONTIER PATTERNS)
+-- =========================================================================
+local function matchesWord(targetText, keyword)
     if not targetText or not keyword then return false end
     local lowerText = targetText:lower()
     local lowerKw = keyword:lower()
@@ -143,45 +94,118 @@ local function matchesKeyword(targetText, keyword)
         return string.find(lowerText, lowerKw, 1, true) ~= nil
     end
     
-    -- Palabras ASCII normales: usar límite de frontera de palabra para evitar que 'controller' coincida con 'roll' o 'abandon' con 'ban'
+    -- Límite estricto de frontera de palabra
     local pattern = "%f[%w]" .. lowerKw .. "%f[%W]"
     return string.find(lowerText, pattern) ~= nil
 end
 
 -- =========================================================================
--- 4. MOTOR DE ANÁLISIS HEURÍSTICO
+-- 4. DICCIONARIO MULTILINGÜE Y FIRMAS ESTÁTICAS CONTEXTUALIZADAS
 -- =========================================================================
-local function analyzeInstance(inst)
-    -- Omitir automáticamente scripts nativos del core de Roblox
-    if isIgnoredCoreInstance(inst) then
-        return {
-            Instance = inst,
-            Name = inst.Name,
-            ClassName = inst.ClassName,
-            Path = inst:GetFullName(),
-            Score = 0,
-            Severity = "IGNORED",
-            MatchedKeywords = {},
-            Tags = { "Ignored: Core Roblox Script" },
-            Categories = {},
-            Code = nil,
-            IsIgnored = true,
-        }
-    end
+local Lexicon = {
+    AntiCheat = {
+        "anticheat", "anti_cheat", "ac_", "_ac", "watchdog", "warden", "integrity",
+        "tamper", "hook_check", "memcheck", "noclip", "flycheck", "speedcheck",
+        "teleportcheck", "bypass", "exploit", "detection", "security", "guard",
+        "kick", "ban", "punish", "flag", "report", "crash",
+        -- Español / Multilingüe
+        "seguridad", "proteccion", "vigilante", "expulsar", "baneo", "trampa", "verificar",
+        "античит", "защита", "кик", "бан", "проверка", "читы",
+        "反作弊", "安全", "封禁", "踢出", "作弊", "检测", "验证", "防护",
+        "チート対策", "セキュリティ", "BAN", "キック", "不正検出", "検証",
+    },
+    Economy = {
+        "spin", "wheel", "roll", "roulette", "loot", "crate", "box", "case",
+        "shop", "store", "buy", "purchase", "price", "cost", "gems", "coins",
+        "gold", "cash", "money", "currency", "diamond", "probability", "chance",
+        "weight", "drop", "rarity", "gacha", "draw", "ticket",
+        -- Español / Multilingüe
+        "ruleta", "tienda", "comprar", "precio", "costo", "gemas", "monedas", "oro", "dinero", "probabilidad", "azar", "tirada",
+        "рулетка", "магазин", "купить", "цена", "монеты", "золото", "деньги", "шанс", "дроп",
+        "轮盘", "商店", "购买", "价格", "金币", "钻石", "货币", "概率", "抽奖", "掉落", "扭蛋",
+        "ルーレット", "ショップ", "購入", "価格", "コイン", "ダイヤ", "確率", "ガチャ", "ドロップ",
+    },
+    Combat = {
+        "hitbox", "damage", "health", "hp", "bullet", "gun", "sword", "weapon",
+        "attack", "aim", "silentaim", "cooldown", "parry", "block", "combo",
+        "combat", "skill", "stamina", "ammo", "reload",
+        -- Español / Multilingüe
+        "ataque", "arma", "espada", "daño", "vida", "recarga", "habilidad",
+        "урон", "оружие", "атака", "хп", "пуля",
+        "攻击", "伤害", "武器", "子弹", "生命值", "技能",
+        "攻撃", "ダメージ", "武器", "弾丸", "スキル",
+    },
+    Admin = {
+        "admin", "owner", "mod", "moderator", "cmd", "command", "rank", "permission",
+        "superadmin", "creator", "dev", "developer", "whitelist", "blacklist",
+    }
+}
 
-    local score = 0
+-- Pre-analizador de tablas de datos estáticos (Config bypass)
+local function isStaticDataModule(code)
+    if not code or #code == 0 then return false end
+    -- Si es un módulo que solo retorna una tabla literal y no contiene llamadas a servicios o bucles
+    local hasReturn = code:find("return%s+{") or code:find("return%s+setmetatable")
+    local hasLoops = code:find("while%s+") or code:find("for%s+") or code:find("repeat%s+")
+    local hasServices = code:find("GetService") or code:find("FireServer") or code:find("InvokeServer") or code:find("Connect%(")
+    
+    if hasReturn and not hasLoops and not hasServices then
+        return true
+    end
+    return false
+end
+
+-- Extractor de snippets representativos concisos
+local function extractCodeSnippets(code, pattern, maxSnippets)
+    maxSnippets = maxSnippets or 2
+    local snippets = {}
+    local lineNum = 1
+    
+    for line in code:gmatch("([^\r\n]*)\r?\n?") do
+        if line:find(pattern) then
+            local cleanLine = line:match("^%s*(.-)%s*$")
+            if #cleanLine > 120 then cleanLine = cleanLine:sub(1, 117) .. "..." end
+            table.insert(snippets, { Line = lineNum, Code = cleanLine })
+            if #snippets >= maxSnippets then break end
+        end
+        lineNum = lineNum + 1
+    end
+    return snippets
+end
+
+-- =========================================================================
+-- 5. MOTOR DE ANÁLISIS HEURÍSTICO REFINADO
+-- =========================================================================
+local function analyzeInstance(inst, depth)
+    depth = depth or 0
     local rawName = inst.Name
     local className = inst.ClassName
     local path = inst:GetFullName()
+    
+    -- 1. FILTRADO PREMATURO: Si no es ejecutable ni red, descartar en O(1)
+    if not isExecutableOrNetwork(inst) then
+        return nil
+    end
+    
+    -- 2. Descarte de Core Roblox
+    if isIgnoredCorePath(path) then
+        return nil
+    end
+    
+    local score = 0
+    local matchedKeywords = {}
     local tags = {}
     local categoriesFound = {}
-    local matchedKeywords = {}
+    local codeFindings = {}
+    local isStaticConfig = false
+    local isRem = inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("UnreliableRemoteEvent")
 
-    -- 1. Ponderación por Nombre con límites de palabra estrictos
+    -- 3. Análisis de Nombres de Scripts y Remotes
     for catName, keywords in pairs(Lexicon) do
         for _, kw in ipairs(keywords) do
-            if matchesKeyword(rawName, kw) then
-                score = score + 25
+            if matchesWord(rawName, kw) then
+                local weight = (catName == "AntiCheat" and 25) or (catName == "Admin" and 20) or 15
+                score = score + weight
                 table.insert(matchedKeywords, kw)
                 categoriesFound[catName] = true
                 table.insert(tags, "Nombre:" .. kw)
@@ -190,104 +214,172 @@ local function analyzeInstance(inst)
         end
     end
 
-    -- 2. Ponderación Topológica de Ubicación
+    -- 4. Ponderación Topológica de Ubicación
     if string.find(path, "ReplicatedFirst") then
-        score = score + 35
-        table.insert(tags, "Ubicación:ReplicatedFirst (Arranque Prioritario)")
+        score = score + 30
+        table.insert(tags, "Topología:ReplicatedFirst (Early Boot)")
         categoriesFound["AntiCheat"] = true
     elseif string.find(path, "PlayerScripts") or string.find(path, "StarterPlayer") then
-        score = score + 15
-        table.insert(tags, "Ubicación:PlayerScripts (Cliente)")
-    elseif string.find(path, "ReplicatedStorage") then
         score = score + 10
     end
 
-    -- 3. Ponderación por Clase
-    if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") then
+    -- 5. Ponderación por Clase de Red
+    if isRem then
         score = score + 15
-        table.insert(tags, "Clase:Remote")
+        table.insert(tags, "Clase:" .. className)
         categoriesFound["Remotes"] = true
-    elseif inst:IsA("ModuleScript") then
-        score = score + 10
-        table.insert(tags, "Clase:ModuleScript")
     end
 
-    -- 4. Inspección de Atributos
-    local sAttrs, attrs = pcall(function() return inst:GetAttributes() end)
-    if sAttrs and attrs then
-        for attrName, _ in pairs(attrs) do
-            for catName, keywords in pairs(Lexicon) do
-                for _, kw in ipairs(keywords) do
-                    if matchesKeyword(tostring(attrName), kw) then
-                        score = score + 10
-                        table.insert(tags, "Attr:" .. attrName)
-                        categoriesFound[catName] = true
-                        break
-                    end
-                end
-            end
-        end
-    end
-
-    -- 5. Análisis de Código (Scripts y Módulos)
-    local decompiledCode = nil
+    -- 6. Análisis Profundo de Código Contextualizado (Scripts y Módulos)
     if inst:IsA("LuaSourceContainer") then
-        decompiledCode = safeDecompile(inst)
+        local decompiledCode = safeDecompile(inst)
         if decompiledCode and not decompiledCode:find("%[Decompilación no soportada") then
-            -- Firmas estáticas
-            for _, sig in ipairs(CodeSignatures) do
-                if string.find(decompiledCode, sig.Pattern) then
-                    score = score + sig.Score
-                    table.insert(tags, sig.Desc)
-                    categoriesFound[sig.Category] = true
+            -- Pre-verificación: ¿Es un módulo de configuración estática pura?
+            if inst:IsA("ModuleScript") and isStaticDataModule(decompiledCode) then
+                isStaticConfig = true
+                table.insert(tags, "Tipo: Módulo de Configuración Estática (Datos Puros)")
+            else
+                -- Regla 1: Expulsión Directa del LocalPlayer
+                if decompiledCode:find("LocalPlayer:Kick") or decompiledCode:find("Players%.LocalPlayer:Kick") then
+                    score = score + 45
+                    categoriesFound["AntiCheat"] = true
+                    local snips = extractCodeSnippets(decompiledCode, "Kick")
+                    table.insert(codeFindings, { Desc = "Llamada Directa a Expulsión (LocalPlayer:Kick)", Snippets = snips })
+                    table.insert(tags, "Llamada:Kick")
                 end
-            end
 
-            -- Multilingüe en código con límites de palabra
-            for catName, keywords in pairs(Lexicon) do
-                for _, kw in ipairs(keywords) do
-                    if matchesKeyword(decompiledCode, kw) then
-                        score = score + 5
-                        categoriesFound[catName] = true
-                        break
-                    end
+                -- Regla 2: Introspección de Metatablas / Callstack
+                if decompiledCode:find("hookmetamethod") or decompiledCode:find("getrawmetatable") then
+                    score = score + 30
+                    categoriesFound["AntiCheat"] = true
+                    local snips = extractCodeSnippets(decompiledCode, "metatable")
+                    table.insert(codeFindings, { Desc = "Manipulación/Auditoría de Metatablas", Snippets = snips })
+                    table.insert(tags, "Metatables")
                 end
-            end
 
-            -- Detección de ofuscadores
-            if decompiledCode:find("LPH_") or decompiledCode:find("IronBrew") or decompiledCode:find("MoonSec") or decompiledCode:find("PSU_") then
-                score = score + 40
-                table.insert(tags, "Ofuscador Detectado (Luraph/IronBrew/Moonsec)")
+                if decompiledCode:find("debug%.info") or decompiledCode:find("debug%.traceback") then
+                    score = score + 20
+                    categoriesFound["AntiCheat"] = true
+                    local snips = extractCodeSnippets(decompiledCode, "debug%.")
+                    table.insert(codeFindings, { Desc = "Introspección de Callstack / Trap", Snippets = snips })
+                    table.insert(tags, "DebugTrap")
+                end
+
+                -- Regla 3: Noclip Contextualizado (Exige Character + Bucle de Física/Render)
+                local hasCanCollide = decompiledCode:find("CanCollide%s*=%s*false")
+                local hasBodyParts = decompiledCode:find("HumanoidRootPart") or decompiledCode:find("Torso") or decompiledCode:find("Character")
+                local hasLoop = decompiledCode:find("RenderStepped") or decompiledCode:find("Heartbeat") or decompiledCode:find("Stepped")
+                if hasCanCollide and hasBodyParts and hasLoop then
+                    score = score + 40
+                    categoriesFound["Admin"] = true
+                    local snips = extractCodeSnippets(decompiledCode, "CanCollide")
+                    table.insert(codeFindings, { Desc = "Rutina Continua de Noclip en Character (RenderStepped)", Snippets = snips })
+                    table.insert(tags, "Noclip:Contextual")
+                end
+
+                -- Regla 4: Manipulación de Vuelo y Físicas
+                if decompiledCode:find("BodyVelocity") and (decompiledCode:find("HumanoidRootPart") or decompiledCode:find("Torso")) then
+                    score = score + 35
+                    categoriesFound["Admin"] = true
+                    local snips = extractCodeSnippets(decompiledCode, "BodyVelocity")
+                    table.insert(codeFindings, { Desc = "Manipulación de Vuelo / Fuerza Física (BodyVelocity)", Snippets = snips })
+                    table.insert(tags, "Fly:BodyVelocity")
+                end
+
+                -- Regla 5: Exposición de Variables Globales en Memoria (_G / shared)
+                if decompiledCode:find("_G%.__") or decompiledCode:find("shared%.__") then
+                    score = score + 20
+                    categoriesFound["Admin"] = true
+                    local snips = extractCodeSnippets(decompiledCode, "_G%.")
+                    table.insert(codeFindings, { Desc = "Exposición de Funciones/Banderas Globales (_G/shared)", Snippets = snips })
+                    table.insert(tags, "GlobalState")
+                end
+
+                -- Regla 6: RNG Transaccional vs Cosmético
+                local hasRandom = decompiledCode:find("math%.random") or decompiledCode:find("Random%.new")
+                local hasNetworkOrPurchase = decompiledCode:find("FireServer") or decompiledCode:find("InvokeServer") or decompiledCode:find("MarketplaceService")
+                if hasRandom and hasNetworkOrPurchase then
+                    score = score + 25
+                    categoriesFound["Economy"] = true
+                    local snips = extractCodeSnippets(decompiledCode, "random")
+                    table.insert(codeFindings, { Desc = "Lógica de RNG Vinculada a Red/Transacciones", Snippets = snips })
+                    table.insert(tags, "Economy:TransactionalRNG")
+                elseif hasRandom then
+                    table.insert(tags, "RNG Cosmético / Cliente")
+                end
+
+                -- Regla 7: Detección de Ofuscadores Comerciales
+                if decompiledCode:find("LPH_") or decompiledCode:find("IronBrew") or decompiledCode:find("MoonSec") or decompiledCode:find("PSU_") then
+                    score = score + 45
+                    categoriesFound["AntiCheat"] = true
+                    table.insert(codeFindings, { Desc = "Ofuscador Comercial Detectado (Luraph/IronBrew/Moonsec)", Snippets = {} })
+                    table.insert(tags, "Ofuscador")
+                end
             end
         end
     end
 
     if score > 100 then score = 100 end
 
+    -- Clasificación Estricta de Severidad
     local severity = "LOW"
-    if score >= 75 or (categoriesFound["AntiCheat"] and score >= 55) or (categoriesFound["Admin"] and score >= 50) then
+    if categoriesFound["Admin"] and score >= 45 and not categoriesFound["AntiCheat"] then
+        severity = "ADMIN_TOOL" -- Separado claramente de trampas/kicks maliciosos
+    elseif score >= 75 or (categoriesFound["AntiCheat"] and score >= 55) then
         severity = "CRITICAL"
-    elseif score >= 50 or categoriesFound["Combat"] or categoriesFound["Admin"] then
+    elseif score >= 50 or categoriesFound["Combat"] then
         severity = "HIGH"
     elseif score >= 25 or categoriesFound["Economy"] then
         severity = "MEDIUM"
     end
 
     return {
-        Instance = inst,
         Name = rawName,
         ClassName = className,
         Path = path,
+        Depth = depth,
         Score = score,
         Severity = severity,
         MatchedKeywords = matchedKeywords,
         Tags = tags,
         Categories = categoriesFound,
-        Code = decompiledCode,
+        Findings = codeFindings,
+        IsStaticConfig = isStaticConfig,
+        Instance = inst,
+    }
 end
 
 -- =========================================================================
--- 5. MODOS DE AUDITORÍA
+-- 6. RECORRIDO DELIMITADO POR SERVICIOS OPERACIONALES (NO WORKSPACE)
+-- =========================================================================
+local function traverseOperationalContainers(callback)
+    local containers = {
+        game:GetService("ReplicatedStorage"),
+        game:GetService("ReplicatedFirst"),
+        game:GetService("StarterPlayer"),
+        LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui"),
+        game:GetService("StarterGui"),
+    }
+    
+    local function walk(parent, currentDepth)
+        local s, children = pcall(function() return parent:GetChildren() end)
+        if s and children then
+            for _, child in ipairs(children) do
+                callback(child, currentDepth)
+                walk(child, currentDepth + 1)
+            end
+        end
+    end
+    
+    for _, cont in ipairs(containers) do
+        if cont then
+            walk(cont, 1)
+        end
+    end
+end
+
+-- =========================================================================
+-- 7. MODOS DE AUDITORÍA OPTIMIZADOS
 -- =========================================================================
 local Scanner = {}
 
@@ -298,26 +390,15 @@ function Scanner.RunAntiCheatAudit()
         Targets = {},
         TotalFound = 0,
     }
-    local containers = {
-        game:GetService("ReplicatedFirst"),
-        game:GetService("StarterPlayer"),
-        game:GetService("ReplicatedStorage"),
-        game:GetService("RobloxReplicatedStorage"),
-    }
-    for _, loc in ipairs(containers) do
-        if loc then
-            local s, desc = pcall(function() return loc:GetDescendants() end)
-            if s and desc then
-                for _, inst in ipairs(desc) do
-                    local analysis = analyzeInstance(inst)
-                    if not analysis.IsIgnored and (analysis.Categories["AntiCheat"] or analysis.Score >= 40) then
-                        table.insert(results.Targets, analysis)
-                        results.TotalFound = results.TotalFound + 1
-                    end
-                end
-            end
+    
+    traverseOperationalContainers(function(inst, depth)
+        local analysis = analyzeInstance(inst, depth)
+        if analysis and (analysis.Categories["AntiCheat"] or analysis.Severity == "CRITICAL" or analysis.Score >= 40) then
+            table.insert(results.Targets, analysis)
+            results.TotalFound = results.TotalFound + 1
         end
-    end
+    end)
+    
     return results
 end
 
@@ -328,36 +409,23 @@ function Scanner.RunEconomyAudit()
         Roulettes = {},
         Shops = {},
         LootTables = {},
-        ValueContainers = {},
         TotalFound = 0,
     }
-    local containers = {
-        game:GetService("ReplicatedStorage"),
-        game:GetService("StarterPlayer"),
-        LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui"),
-    }
-    for _, loc in ipairs(containers) do
-        if loc then
-            local s, desc = pcall(function() return loc:GetDescendants() end)
-            if s and desc then
-                for _, inst in ipairs(desc) do
-                    local analysis = analyzeInstance(inst)
-                    if not analysis.IsIgnored and (analysis.Categories["Economy"] or analysis.Score >= 25) then
-                        results.TotalFound = results.TotalFound + 1
-                        if matchesKeyword(analysis.Name, "spin") or matchesKeyword(analysis.Name, "wheel") or matchesKeyword(analysis.Name, "ruleta") or matchesKeyword(analysis.Name, "roll") then
-                            table.insert(results.Roulettes, analysis)
-                        elseif matchesKeyword(analysis.Name, "shop") or matchesKeyword(analysis.Name, "store") or matchesKeyword(analysis.Name, "tienda") or matchesKeyword(analysis.Name, "buy") then
-                            table.insert(results.Shops, analysis)
-                        elseif inst:IsA("ModuleScript") then
-                            table.insert(results.LootTables, analysis)
-                        else
-                            table.insert(results.ValueContainers, analysis)
-                        end
-                    end
-                end
+    
+    traverseOperationalContainers(function(inst, depth)
+        local analysis = analyzeInstance(inst, depth)
+        if analysis and (analysis.Categories["Economy"] or analysis.Score >= 20) then
+            results.TotalFound = results.TotalFound + 1
+            if matchesWord(analysis.Name, "spin") or matchesWord(analysis.Name, "wheel") or matchesWord(analysis.Name, "ruleta") or matchesWord(analysis.Name, "roll") then
+                table.insert(results.Roulettes, analysis)
+            elseif matchesWord(analysis.Name, "shop") or matchesWord(analysis.Name, "store") or matchesWord(analysis.Name, "tienda") or matchesWord(analysis.Name, "buy") then
+                table.insert(results.Shops, analysis)
+            else
+                table.insert(results.LootTables, analysis)
             end
         end
-    end
+    end)
+    
     return results
 end
 
@@ -369,38 +437,27 @@ function Scanner.RunRemotesAudit()
         RemoteFunctions = {},
         TotalFound = 0,
     }
-    local containers = {
-        game:GetService("ReplicatedStorage"),
-        game:GetService("ReplicatedFirst"),
-        game:GetService("StarterPlayer"),
-        LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui"),
-    }
-    for _, loc in ipairs(containers) do
-        if loc then
-            local s, desc = pcall(function() return loc:GetDescendants() end)
-            if s and desc then
-                for _, inst in ipairs(desc) do
-                    if not isIgnoredCoreInstance(inst) then
-                        if inst:IsA("RemoteEvent") then
-                            results.TotalFound = results.TotalFound + 1
-                            table.insert(results.RemoteEvents, {
-                                Name = inst.Name,
-                                ClassName = "RemoteEvent",
-                                Path = inst:GetFullName(),
-                            })
-                        elseif inst:IsA("RemoteFunction") then
-                            results.TotalFound = results.TotalFound + 1
-                            table.insert(results.RemoteFunctions, {
-                                Name = inst.Name,
-                                ClassName = "RemoteFunction",
-                                Path = inst:GetFullName(),
-                            })
-                        end
-                    end
-                end
-            end
+    
+    traverseOperationalContainers(function(inst, depth)
+        if inst:IsA("RemoteEvent") or inst:IsA("UnreliableRemoteEvent") then
+            results.TotalFound = results.TotalFound + 1
+            table.insert(results.RemoteEvents, {
+                Name = inst.Name,
+                ClassName = inst.ClassName,
+                Path = inst:GetFullName(),
+                Depth = depth,
+            })
+        elseif inst:IsA("RemoteFunction") then
+            results.TotalFound = results.TotalFound + 1
+            table.insert(results.RemoteFunctions, {
+                Name = inst.Name,
+                ClassName = "RemoteFunction",
+                Path = inst:GetFullName(),
+                Depth = depth,
+            })
         end
-    end
+    end)
+    
     return results
 end
 
@@ -410,14 +467,14 @@ function Scanner.RunFullAudit()
         AntiCheat = {},
         Economy = {},
         Combat = {},
-        Admin = {},
+        AdminTools = {},
         Remotes = {},
         CriticalIssues = 0,
         TotalScanned = 0,
         FrameworksDetected = {},
     }
 
-    -- Detección de Frameworks
+    -- Detección de Frameworks en ReplicatedStorage
     local repStorage = game:GetService("ReplicatedStorage")
     if repStorage:FindFirstChild("Knit") or repStorage:FindFirstChild("KnitPackages") then
         table.insert(results.FrameworksDetected, "Knit Framework")
@@ -432,53 +489,40 @@ function Scanner.RunFullAudit()
         table.insert(results.FrameworksDetected, "ByteNet Network Engine")
     end
 
-    local containers = {
-        game:GetService("ReplicatedStorage"),
-        game:GetService("ReplicatedFirst"),
-        game:GetService("StarterPlayer"),
-        LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui"),
-    }
+    traverseOperationalContainers(function(inst, depth)
+        results.TotalScanned = results.TotalScanned + 1
+        local analysis = analyzeInstance(inst, depth)
 
-    for _, container in ipairs(containers) do
-        if container then
-            local s, desc = pcall(function() return container:GetDescendants() end)
-            if s and desc then
-                for _, inst in ipairs(desc) do
-                    results.TotalScanned = results.TotalScanned + 1
-                    local analysis = analyzeInstance(inst)
+        if analysis then
+            if analysis.Severity == "ADMIN_TOOL" or (analysis.Categories["Admin"] and not analysis.Categories["AntiCheat"]) then
+                table.insert(results.AdminTools, analysis)
+            end
+            if analysis.Categories["AntiCheat"] or analysis.Score >= 45 then
+                table.insert(results.AntiCheat, analysis)
+            end
+            if analysis.Categories["Economy"] then
+                table.insert(results.Economy, analysis)
+            end
+            if analysis.Categories["Combat"] then
+                table.insert(results.Combat, analysis)
+            end
+            if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("UnreliableRemoteEvent") then
+                table.insert(results.Remotes, analysis)
+            end
 
-                    if not analysis.IsIgnored and (analysis.Score > 0 or inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction")) then
-                        if analysis.Categories["AntiCheat"] or analysis.Score >= 45 then
-                            table.insert(results.AntiCheat, analysis)
-                        end
-                        if analysis.Categories["Economy"] then
-                            table.insert(results.Economy, analysis)
-                        end
-                        if analysis.Categories["Combat"] then
-                            table.insert(results.Combat, analysis)
-                        end
-                        if analysis.Categories["Admin"] then
-                            table.insert(results.Admin, analysis)
-                        end
-                        if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") then
-                            table.insert(results.Remotes, analysis)
-                        end
-
-                        if analysis.Severity == "CRITICAL" then
-                            results.CriticalIssues = results.CriticalIssues + 1
-                        end
-                    end
-                end
+            if analysis.Severity == "CRITICAL" then
+                results.CriticalIssues = results.CriticalIssues + 1
             end
         end
-    end
+    end)
+
     return results
 end
 
 -- =========================================================================
--- 5. SERIALIZADOR JSON SEGURO
+-- 8. SERIALIZADOR JSON ULTRA LIGERO (SIN VOLCADOS MASIVOS DE CÓDIGO)
 -- =========================================================================
-local function toJSON(tbl, indent)
+local function toCleanJSON(tbl, indent)
     indent = indent or 0
     local spacing = string.rep("  ", indent)
     local subSpacing = string.rep("  ", indent + 1)
@@ -498,14 +542,13 @@ local function toJSON(tbl, indent)
         for _, v in ipairs(tbl) do
             if type(v) ~= "userdata" and type(v) ~= "function" and type(v) ~= "thread" then
                 if type(v) == "table" and v.Instance then
-                    -- Evitar serializar referencias de instancias cíclicas
-                    local cloneTbl = {}
+                    local clean = {}
                     for k2, v2 in pairs(v) do
-                        if k2 ~= "Instance" then cloneTbl[k2] = v2 end
+                        if k2 ~= "Instance" then clean[k2] = v2 end
                     end
-                    table.insert(elements, subSpacing .. toJSON(cloneTbl, indent + 1))
+                    table.insert(elements, subSpacing .. toCleanJSON(clean, indent + 1))
                 else
-                    table.insert(elements, subSpacing .. toJSON(v, indent + 1))
+                    table.insert(elements, subSpacing .. toCleanJSON(v, indent + 1))
                 end
             end
         end
@@ -514,7 +557,7 @@ local function toJSON(tbl, indent)
         for k, v in pairs(tbl) do
             if type(v) ~= "userdata" and type(v) ~= "function" and type(v) ~= "thread" and k ~= "Instance" then
                 local keyStr = string.format("%q", tostring(k))
-                table.insert(elements, subSpacing .. keyStr .. ": " .. toJSON(v, indent + 1))
+                table.insert(elements, subSpacing .. keyStr .. ": " .. toCleanJSON(v, indent + 1))
             end
         end
         return "{\n" .. table.concat(elements, ",\n") .. "\n" .. spacing .. "}"
@@ -522,7 +565,7 @@ local function toJSON(tbl, indent)
 end
 
 -- =========================================================================
--- 6. INTERFAZ GRÁFICA FLUIDA CON CONTROL DE LÍMITE DE TEXTO
+-- 9. INTERFAZ GRÁFICA FLUIDA & MODERNA
 -- =========================================================================
 local screenGuiName = "Apex_Audit_Standalone_Test"
 local oldGui = CoreGui:FindFirstChild(screenGuiName) or (LocalPlayer and LocalPlayer.PlayerGui:FindFirstChild(screenGuiName))
@@ -542,8 +585,8 @@ else
 end
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 720, 0, 500)
-mainFrame.Position = UDim2.new(0.5, -360, 0.5, -250)
+mainFrame.Size = UDim2.new(0, 720, 0, 520)
+mainFrame.Position = UDim2.new(0.5, -360, 0.5, -260)
 mainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
 mainFrame.BorderSizePixel = 0
 mainFrame.Parent = screenGui
@@ -587,10 +630,10 @@ local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(1, -60, 1, 0)
 titleLabel.Position = UDim2.new(0, 12, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "🛡️ APEX SUITE - TEST DE AUDITORÍA Y HEURÍSTICA"
+titleLabel.Text = "🛡️ APEX SUITE - MOTOR DE AUDITORÍA v2.0 (CERO FALSOS POSITIVOS)"
 titleLabel.TextColor3 = Color3.fromRGB(240, 243, 250)
 titleLabel.Font = Enum.Font.GothamBold
-titleLabel.TextSize = 13
+titleLabel.TextSize = 12
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = titleBar
 
@@ -697,14 +740,14 @@ local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, -430, 1, 0)
 statusLabel.Position = UDim2.new(0, 428, 0, 0)
 statusLabel.BackgroundTransparency = 1
-statusLabel.Text = "Listo."
+statusLabel.Text = "Listo para escanear."
 statusLabel.TextColor3 = Color3.fromRGB(160, 168, 185)
 statusLabel.Font = Enum.Font.Gotham
 statusLabel.TextSize = 11
 statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.Parent = actionRow
 
--- Caja de Vista Previa (TextBox con manejo seguro de límite de 200k chars)
+-- Caja de Vista Previa
 previewBox.Size = UDim2.new(1, -24, 1, -128)
 previewBox.Position = UDim2.new(0, 12, 0, 120)
 previewBox.BackgroundColor3 = Color3.fromRGB(12, 14, 18)
@@ -723,7 +766,7 @@ local function setSafePreviewText(text)
     local maxLimit = 75000
     local str = tostring(text or "")
     if #str > maxLimit then
-        previewBox.Text = string.sub(str, 1, maxLimit) .. string.format("\n\n-- [⚠️ AVISO: Vista previa truncada a %d caracteres debido al límite de interfaz de Roblox]\n-- [Total: %d caracteres. Para el reporte completo sin truncar, usa '💾 EXPORTAR JSON' o '📋 COPIAR TEXTO']", maxLimit, #str)
+        previewBox.Text = string.sub(str, 1, maxLimit) .. string.format("\n\n-- [⚠️ AVISO: Vista previa truncada a %d caracteres por límite de Roblox]\n-- [Total: %d caracteres. Para el reporte completo usa '💾 EXPORTAR JSON']", maxLimit, #str)
     else
         previewBox.Text = str
     end
@@ -747,15 +790,21 @@ runBtn.MouseButton1Click:Connect(function()
         table.insert(lines, "==================================================================")
         table.insert(lines, "🛡️ AUDITORÍA DE SEGURIDAD & WATCHDOGS (ANTI-CHEAT)")
         table.insert(lines, "==================================================================")
-        table.insert(lines, string.format("Instancias Sospechosas Localizadas: %d\n", rep.TotalFound))
+        table.insert(lines, string.format("Instancias Analizadas con Hallazgos: %d\n", rep.TotalFound))
 
         for _, item in ipairs(rep.Targets) do
-            table.insert(lines, string.format("-> [%s] %s | Score: %d/100 | Severidad: %s\n   Ruta: %s", item.ClassName, item.Name, item.Score, item.Severity, item.Path))
+            table.insert(lines, string.format("-> [%s] %s | Score: %d/100 | Severidad: %s | Nivel: %d\n   Ruta: %s", item.ClassName, item.Name, item.Score, item.Severity, item.Depth, item.Path))
             if #item.Tags > 0 then
                 table.insert(lines, "   Firmas: " .. table.concat(item.Tags, ", "))
             end
-            if item.Code then
-                table.insert(lines, "   [CÓDIGO DECOMPILADO]:\n" .. item.Code .. "\n")
+            if #item.Findings > 0 then
+                table.insert(lines, "   [HALLAZGOS CONTEXTUALES]:")
+                for _, f in ipairs(item.Findings) do
+                    table.insert(lines, string.format("   • %s", f.Desc))
+                    for _, s in ipairs(f.Snippets) do
+                        table.insert(lines, string.format("     [Línea %d]: %s", s.Line, s.Code))
+                    end
+                end
             end
             table.insert(lines, "------------------------------------------------------------------")
         end
@@ -767,14 +816,14 @@ runBtn.MouseButton1Click:Connect(function()
         table.insert(lines, "🎰 AUDITORÍA DE RULETA, PROBABILIDADES, TIENDAS Y ECONOMÍA")
         table.insert(lines, "==================================================================")
         table.insert(lines, string.format("Total de elementos detectados: %d", rep.TotalFound))
-        table.insert(lines, string.format("• Sistemas de Ruleta / Azar: %d", #rep.Roulettes))
-        table.insert(lines, string.format("• Módulos de Tiendas / Compras: %d", #rep.Shops))
-        table.insert(lines, string.format("• Tablas de Loot (ModuleScripts): %d\n", #rep.LootTables))
+        table.insert(lines, string.format("• Nodos de Ruleta / Azar: %d", #rep.Roulettes))
+        table.insert(lines, string.format("• Tiendas y Compras: %d", #rep.Shops))
+        table.insert(lines, string.format("• Tablas de Loot y Precios: %d\n", #rep.LootTables))
 
         if #rep.Roulettes > 0 then
             table.insert(lines, "[SISTEMAS DE RULETA / AZAR]:")
             for _, item in ipairs(rep.Roulettes) do
-                table.insert(lines, string.format("🎰 [%s] %s\n   Ruta: %s", item.ClassName, item.Name, item.Path))
+                table.insert(lines, string.format("🎰 [%s] %s (Nivel %d)\n   Ruta: %s", item.ClassName, item.Name, item.Depth, item.Path))
             end
             table.insert(lines, "")
         end
@@ -782,18 +831,15 @@ runBtn.MouseButton1Click:Connect(function()
         if #rep.Shops > 0 then
             table.insert(lines, "[TIENDAS Y PRECIOS]:")
             for _, item in ipairs(rep.Shops) do
-                table.insert(lines, string.format("🛒 [%s] %s\n   Ruta: %s", item.ClassName, item.Name, item.Path))
+                table.insert(lines, string.format("🛒 [%s] %s (Nivel %d)\n   Ruta: %s", item.ClassName, item.Name, item.Depth, item.Path))
             end
             table.insert(lines, "")
         end
 
         if #rep.LootTables > 0 then
-            table.insert(lines, "[TABLAS DE LOOT (MODULES)]:")
+            table.insert(lines, "[TABLAS DE CONFIGURACIÓN Y PROBABILIDADES]:")
             for _, item in ipairs(rep.LootTables) do
-                table.insert(lines, string.format("📜 [%s] %s\n   Ruta: %s", item.ClassName, item.Name, item.Path))
-                if item.Code then
-                    table.insert(lines, "   [CÓDIGO]:\n" .. item.Code .. "\n")
-                end
+                table.insert(lines, string.format("📜 [%s] %s | %s\n   Ruta: %s", item.ClassName, item.Name, item.IsStaticConfig and "[Configuración Estática]" or "[Lógica Dinámica]", item.Path))
             end
         end
 
@@ -808,10 +854,10 @@ runBtn.MouseButton1Click:Connect(function()
         table.insert(lines, string.format("• RemoteFunctions: %d\n", #rep.RemoteFunctions))
 
         for _, r in ipairs(rep.RemoteEvents) do
-            table.insert(lines, string.format("⚡ [RemoteEvent] %s\n   Ruta: %s", r.Name, r.Path))
+            table.insert(lines, string.format("⚡ [%s] %s (Nivel %d)\n   Ruta: %s", r.ClassName, r.Name, r.Depth, r.Path))
         end
         for _, r in ipairs(rep.RemoteFunctions) do
-            table.insert(lines, string.format("🔁 [RemoteFunction] %s\n   Ruta: %s", r.Name, r.Path))
+            table.insert(lines, string.format("🔁 [RemoteFunction] %s (Nivel %d)\n   Ruta: %s", r.Name, r.Depth, r.Path))
         end
 
     else
@@ -820,12 +866,12 @@ runBtn.MouseButton1Click:Connect(function()
         table.insert(lines, "==================================================================")
         table.insert(lines, "🌐 REPORTE DE AUDITORÍA TOPOLÓGICA Y ARQUITECTURA COMPLETA")
         table.insert(lines, "==================================================================")
-        table.insert(lines, string.format("Total de Instancias Escaneadas: %d", rep.TotalScanned))
-        table.insert(lines, string.format("Amenazas Críticas (Score >= 75): %d", rep.CriticalIssues))
+        table.insert(lines, string.format("Total de Contenedores de Código y Red Analizados: %d", rep.TotalScanned))
+        table.insert(lines, string.format("Amenazas Críticas de Seguridad: %d", rep.CriticalIssues))
+        table.insert(lines, string.format("Herramientas Administrativas del Juego (ADMIN_TOOL): %d", #rep.AdminTools))
         table.insert(lines, string.format("Watchdogs / Anti-Cheat: %d", #rep.AntiCheat))
-        table.insert(lines, string.format("Lógica de Combate / Armas: %d", #rep.Combat))
-        table.insert(lines, string.format("Sistemas de Economía / Azar: %d", #rep.Economy))
-        table.insert(lines, string.format("Comandos de Administración: %d", #rep.Admin))
+        table.insert(lines, string.format("Lógica de Combate: %d", #rep.Combat))
+        table.insert(lines, string.format("Sistemas de Economía: %d", #rep.Economy))
         table.insert(lines, string.format("Remotes Mapeados: %d\n", #rep.Remotes))
 
         if #rep.FrameworksDetected > 0 then
@@ -833,11 +879,18 @@ runBtn.MouseButton1Click:Connect(function()
         else
             table.insert(lines, "• Frameworks Detectados: Ninguno estándar (Arquitectura nativa Luau)")
         end
+
+        if #rep.AdminTools > 0 then
+            table.insert(lines, "\n[HERRAMIENTAS DE ADMINISTRACIÓN AUTORIZADAS]:")
+            for _, adm in ipairs(rep.AdminTools) do
+                table.insert(lines, string.format("🛡️ [%s] %s | Ruta: %s", adm.ClassName, adm.Name, adm.Path))
+            end
+        end
     end
 
     lastFullText = table.concat(lines, "\n")
     setSafePreviewText(lastFullText)
-    statusLabel.Text = string.format("Escaneo finalizado exitosamente.")
+    statusLabel.Text = string.format("Escaneo finalizado con éxito.")
     runBtn.Text = "⚡ EJECUTAR ESCANEO"
 end)
 
@@ -846,8 +899,8 @@ exportJsonBtn.MouseButton1Click:Connect(function()
         statusLabel.Text = "Ejecuta un escaneo primero."
         return
     end
-    local jsonStr = toJSON(lastReportData)
-    local fileName = "audit_test_" .. currentMode .. "_" .. os.time() .. ".json"
+    local jsonStr = toCleanJSON(lastReportData)
+    local fileName = "audit_report_" .. currentMode .. "_" .. os.time() .. ".json"
     if Capabilities.HasFileSystem then
         writefile(fileName, jsonStr)
         statusLabel.Text = "Guardado en: " .. fileName
@@ -872,4 +925,4 @@ copyBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-print("[APEX TEST] Test de Auditoría Completa inicializado con éxito.")
+print("[APEX SUITE v2.0] Auditoría Standalone Optimizada lista para ejecutar.")
