@@ -39,7 +39,8 @@ function HookManager:AddRemoteListener(callback)
 end
 
 function HookManager:InstallHooks()
-    if not self.Caps.Capabilities.HasMetatableHooks then
+    local hasHooks = self.Caps and self.Caps.Capabilities and self.Caps.Capabilities.HasMetatableHooks
+    if not hasHooks then
         if self.Logger then
             self.Logger:Warn("HOOKS", "Metatable hooks no disponibles en este nivel de ejecutor (Requiere Nivel 6+).")
         end
@@ -48,9 +49,9 @@ function HookManager:InstallHooks()
     
     if self.IsHooked then return true end
     
-    local checkcaller = self.Caps.APIs.checkcaller
-    local hookmetamethod = self.Caps.APIs.hookmetamethod
-    local newcclosure = self.Caps.APIs.newcclosure
+    local checkcaller = (self.Caps and self.Caps.APIs and self.Caps.APIs.checkcaller) or (type(checkcaller) == "function" and checkcaller) or function() return false end
+    local hookmetamethod = (self.Caps and self.Caps.APIs and self.Caps.APIs.hookmetamethod) or (type(hookmetamethod) == "function" and hookmetamethod)
+    local newcclosure = (self.Caps and self.Caps.APIs and self.Caps.APIs.newcclosure) or (type(newcclosure) == "function" and newcclosure) or function(f) return f end
     
     if hookmetamethod then
         local oldNamecall

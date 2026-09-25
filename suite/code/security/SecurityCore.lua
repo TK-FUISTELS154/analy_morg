@@ -18,7 +18,11 @@ function SecurityCore.new(capabilityManager, logger)
     self.Caps = capabilityManager
     self.Logger = logger
     self.RealGame = workspace.Parent or game
-    self.Cloneref = (self.Caps and self.Caps.APIs.cloneref) or function(x) return x end
+    
+    local clonerefFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.cloneref)
+        or (type(cloneref) == "function" and cloneref)
+        or function(x) return x end
+    self.Cloneref = clonerefFunc
     
     self.CoreGui = self.Cloneref(game:GetService("CoreGui"))
     self.Players = self.Cloneref(game:GetService("Players"))
@@ -34,8 +38,9 @@ function SecurityCore:GetSecureGuiParent()
     local parent = nil
     
     -- Intento 1: gethui() nativo
-    if self.Caps and self.Caps.APIs.gethui then
-        local s, res = pcall(self.Caps.APIs.gethui)
+    local gethuiFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.gethui) or (type(gethui) == "function" and gethui)
+    if gethuiFunc then
+        local s, res = pcall(gethuiFunc)
         if s and res then parent = res end
     end
     
@@ -73,8 +78,11 @@ function SecurityCore:CreateSafeScreenGui(name)
     gui.DisplayOrder = 999999
     
     -- Proteger si la API existe
-    if self.Caps and self.Caps.APIs.protectgui then
-        pcall(self.Caps.APIs.protectgui, gui)
+    local protectFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.protectgui)
+        or (type(protectgui) == "function" and protectgui)
+        or (type(protect_gui) == "function" and protect_gui)
+    if protectFunc then
+        pcall(protectFunc, gui)
     end
     
     gui.Parent = parent
@@ -112,18 +120,18 @@ function SecurityCore:EnableAntiAFK()
 end
 
 function SecurityCore:ProtectPlayerKick()
-    -- Si no hay hooks de metamétodos, solo registramos aviso
-    if not self.Caps.Capabilities.HasMetatableHooks then
+    local hasHooks = self.Caps and self.Caps.Capabilities and self.Caps.Capabilities.HasMetatableHooks
+    if not hasHooks then
         if self.Logger then
             self.Logger:Warn("SECURITY", "Anti-Kick completo requiere hooks de Nivel 6+. Operando con mitigación pasiva.")
         end
         return false
     end
     
-    local rawMT = self.Caps.APIs.getrawmetatable and self.Caps.APIs.getrawmetatable(game)
+    local getrawmt = (self.Caps and self.Caps.APIs and self.Caps.APIs.getrawmetatable) or (type(getrawmetatable) == "function" and getrawmetatable)
+    local rawMT = getrawmt and getrawmt(game)
     if not rawMT then return false end
     
-    -- Envolver protección de llamada
     if self.Logger then
         self.Logger:Info("SECURITY", "Protección contra LocalPlayer:Kick activada.")
     end

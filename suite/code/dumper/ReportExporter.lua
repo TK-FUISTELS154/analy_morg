@@ -27,14 +27,18 @@ function ReportExporter:ToJSON(data)
 end
 
 function ReportExporter:SaveToFile(filename, content)
-    if self.Caps.Capabilities.HasFileSystem and self.Caps.APIs.writefile then
+    local writefileFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.writefile) or (type(writefile) == "function" and writefile)
+    local makefolderFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.makefolder) or (type(makefolder) == "function" and makefolder)
+    local isfolderFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.isfolder) or (type(isfolder) == "function" and isfolder)
+    
+    if writefileFunc then
         local folder = "apex_reports"
-        if self.Caps.APIs.makefolder and self.Caps.APIs.isfolder and not self.Caps.APIs.isfolder(folder) then
-            pcall(self.Caps.APIs.makefolder, folder)
+        if makefolderFunc and isfolderFunc and not isfolderFunc(folder) then
+            pcall(makefolderFunc, folder)
         end
         
         local fullPath = folder .. "/" .. filename
-        local success, err = pcall(self.Caps.APIs.writefile, fullPath, content)
+        local success, err = pcall(writefileFunc, fullPath, content)
         if success then
             if self.Logger then
                 self.Logger:Info("EXPORTER", "Archivo guardado exitosamente en: " .. fullPath)
@@ -52,19 +56,19 @@ end
 
 -- Reconstruye carpetas físicas y archivos .lua en el disco del ejecutor
 function ReportExporter:ExportProjectTreeToDisk(rootFolderName, dumpNode)
-    if not self.Caps.Capabilities.HasFileSystem or not self.Caps.APIs.writefile then
+    local writefileFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.writefile) or (type(writefile) == "function" and writefile)
+    local makefolderFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.makefolder) or (type(makefolder) == "function" and makefolder)
+    local isfolderFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.isfolder) or (type(isfolder) == "function" and isfolder)
+    
+    if not writefileFunc then
         return false, "Sistema de archivos no disponible en este nivel."
     end
-    
-    local makefolder = self.Caps.APIs.makefolder
-    local isfolder = self.Caps.APIs.isfolder
-    local writefile = self.Caps.APIs.writefile
     
     local baseDir = "apex_dumps/" .. (rootFolderName or ("dump_" .. tostring(game.PlaceId) .. "_" .. tostring(tick())))
     
     local function ensureDir(path)
-        if makefolder and isfolder and not isfolder(path) then
-            pcall(makefolder, path)
+        if makefolderFunc and isfolderFunc and not isfolderFunc(path) then
+            pcall(makefolderFunc, path)
         end
     end
     
@@ -74,17 +78,14 @@ function ReportExporter:ExportProjectTreeToDisk(rootFolderName, dumpNode)
     local function writeNode(node, currentPath)
         if not node then return end
         
-        -- Sanitizar nombres de archivo para Windows/OS
         local cleanName = tostring(node.Name):gsub("[\\/:*?\"<>|]", "_")
         local thisPath = currentPath .. "/" .. cleanName
         
-        -- Si es Script o tiene Source, escribir archivo .lua
         if node.Source then
             local scriptFile = thisPath .. ".lua"
-            pcall(writefile, scriptFile, node.Source)
+            pcall(writefileFunc, scriptFile, node.Source)
         end
         
-        -- Si tiene hijos, crear carpeta y recursión
         if node.Children and #node.Children > 0 then
             ensureDir(thisPath)
             for _, child in ipairs(node.Children) do
@@ -97,7 +98,7 @@ function ReportExporter:ExportProjectTreeToDisk(rootFolderName, dumpNode)
     
     -- Escribir manifiesto JSON
     local manifestPath = baseDir .. "/manifest.json"
-    pcall(writefile, manifestPath, self:ToJSON({
+    pcall(writefileFunc, manifestPath, self:ToJSON({
         PlaceId = game.PlaceId,
         JobId = game.JobId,
         Timestamp = tick(),
@@ -114,8 +115,13 @@ function ReportExporter:ExportProjectTreeToDisk(rootFolderName, dumpNode)
 end
 
 function ReportExporter:CopyToClipboard(content)
-    if self.Caps.Capabilities.HasClipboard and self.Caps.APIs.setclipboard then
-        local success = pcall(self.Caps.APIs.setclipboard, content)
+    local setclipFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.setclipboard)
+        or (type(setclipboard) == "function" and setclipboard)
+        or (type(toclipboard) == "function" and toclipboard)
+        or (type(set_clipboard) == "function" and set_clipboard)
+        
+    if setclipFunc then
+        local success = pcall(setclipFunc, content)
         if success then
             if self.Logger then
                 self.Logger:Info("EXPORTER", "Contenido copiado al portapapeles.")

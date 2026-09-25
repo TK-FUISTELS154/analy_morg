@@ -22,7 +22,8 @@ function MemoryGuard.new(capabilityManager, logger)
 end
 
 function MemoryGuard:GetSafeGC(forceRefresh)
-    if not self.Caps.Capabilities.HasGCInspection then
+    local hasGC = self.Caps and self.Caps.Capabilities and self.Caps.Capabilities.HasGCInspection
+    if not hasGC then
         return {}
     end
     
@@ -36,8 +37,11 @@ function MemoryGuard:GetSafeGC(forceRefresh)
     end
     
     self.LastGCTime = tick()
+    local getgcFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.getgc) or (type(getgc) == "function" and getgc)
+    if not getgcFunc then return {} end
+    
     local success, result = pcall(function()
-        return self.Caps.APIs.getgc(true)
+        return getgcFunc(true)
     end)
     
     if success and type(result) == "table" then

@@ -22,6 +22,14 @@ function Class:Extend(subclassName)
         end
     })
     
+    function subclass.new(...)
+        local instance = setmetatable({}, subclass)
+        instance._connections = {}
+        instance._isDestroyed = false
+        instance:Init(...)
+        return instance
+    end
+    
     return subclass
 end
 
