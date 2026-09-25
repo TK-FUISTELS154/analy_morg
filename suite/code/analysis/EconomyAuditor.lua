@@ -31,11 +31,12 @@ function EconomyAuditor:ScanEconomyNodes()
     
     local containers = {
         game:GetService("ReplicatedStorage"),
+        game:GetService("StarterPlayer"),
         game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"),
         game:GetService("StarterGui"),
     }
     
-    local lexicon = self.Heuristic and self.Heuristic.Lexicon.Economy or {
+    local lexicon = (self.Heuristic and self.Heuristic.Lexicon.Economy) or {
         "spin", "wheel", "roll", "luck", "chance", "shop", "item", "purchase", "currency", "gem",
         "抽奖", "抽卡", "轮盘", "扭蛋", "转盘", "概率", "几率", "爆率", "商店", "购买",
         "ガチャ", "ルーレット", "確率", "購入", "ショップ", "рулетка", "шанс", "магазин"
@@ -69,12 +70,16 @@ function EconomyAuditor:ScanEconomyNodes()
         return string.find(lowerText, pattern) ~= nil
     end
 
-    for _, cont in ipairs(containers) do
-        if cont then
-            local s, desc = pcall(function() return cont:GetDescendants() end)
-            if s and desc then
-                for _, inst in ipairs(desc) do
-                    if not isIgnoredCoreInstance(inst) then
+    local function isEconomyCandidate(inst)
+        return inst:IsA("LuaSourceContainer") or inst:IsA("ValueBase") or inst:IsA("Configuration") or inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("GuiButton")
+    end
+
+    local function walk(parent)
+        local s, children = pcall(function() return parent:GetChildren() end)
+        if s and children then
+            for _, inst in ipairs(children) do
+                if not isIgnoredCoreInstance(inst) then
+                    if isEconomyCandidate(inst) then
                         local rawName = inst.Name
                         local path = inst:GetFullName()
                         local isMatch = false
@@ -88,42 +93,51 @@ function EconomyAuditor:ScanEconomyNodes()
                                 break
                             end
                         end
-                    
-                    -- 2. Inspección de Atributos de probabilidad o precio
-                    local sAttrs, attrs = pcall(function() return inst:GetAttributes() end)
-                    if sAttrs and attrs then
-                        for aName, aVal in pairs(attrs) do
-                            local aLower = tostring(aName):lower()
-                            if aLower:find("chance") or aLower:find("price") or aLower:find("cost") or aLower:find("rate") or aLower:find("luck") or aLower:find("概率") or aLower:find("价格") then
-                                isMatch = true
-                                matchedTag = string.format("Attr(%s = %s)", aName, tostring(aVal))
-                                break
+                        
+                        -- 2. Inspección de Atributos de probabilidad o precio
+                        local sAttrs, attrs = pcall(function() return inst:GetAttributes() end)
+                        if sAttrs and attrs then
+                            for aName, aVal in pairs(attrs) do
+                                local aLower = tostring(aName):lower()
+                                if aLower:find("chance") or aLower:find("price") or aLower:find("cost") or aLower:find("rate") or aLower:find("luck") or aLower:find("概率") or aLower:find("价格") then
+                                    isMatch = true
+                                    matchedTag = string.format("Attr(%s = %s)", aName, tostring(aVal))
+                                    break
+                                end
+                            end
+                        end
+                        
+                        if isMatch then
+                            findings.TotalFound = findings.TotalFound + 1
+                            local nodeData = {
+                                Instance = inst,
+                                Name = rawName,
+                                ClassName = inst.ClassName,
+                                Path = path,
+                                Tag = matchedTag,
+                            }
+                            
+                            if inst:IsA("ModuleScript") then
+                                table.insert(findings.LootTables, nodeData)
+                            elseif inst:IsA("ValueBase") or inst:IsA("Configuration") then
+                                table.insert(findings.ValueContainers, nodeData)
+                            elseif matchesWord(rawName, "shop") or matchesWord(rawName, "store") or matchesWord(rawName, "buy") or matchesWord(rawName, "tienda") or string.find(rawName, "商店") or string.find(rawName, "购买") or string.find(rawName, "ショップ") then
+                                table.insert(findings.Shops, nodeData)
+                            else
+                                table.insert(findings.Roulettes, nodeData)
                             end
                         end
                     end
                     
-                    if isMatch then
-                        findings.TotalFound = findings.TotalFound + 1
-                        local nodeData = {
-                            Instance = inst,
-                            Name = rawName,
-                            ClassName = inst.ClassName,
-                            Path = path,
-                            Tag = matchedTag,
-                        }
-                        
-                        if inst:IsA("ModuleScript") then
-                            table.insert(findings.LootTables, nodeData)
-                        elseif inst:IsA("ValueBase") or inst:IsA("Configuration") then
-                            table.insert(findings.ValueContainers, nodeData)
-                        elseif matchesWord(rawName, "shop") or matchesWord(rawName, "store") or matchesWord(rawName, "buy") or matchesWord(rawName, "tienda") or string.find(rawName, "商店") or string.find(rawName, "购买") or string.find(rawName, "ショップ") then
-                            table.insert(findings.Shops, nodeData)
-                        else
-                            table.insert(findings.Roulettes, nodeData)
-                        end
-                    end
+                    walk(inst)
                 end
             end
+        end
+    end
+
+    for _, cont in ipairs(containers) do
+        if cont then
+            walk(cont)
         end
     end
     
