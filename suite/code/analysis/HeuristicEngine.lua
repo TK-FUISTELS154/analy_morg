@@ -198,21 +198,24 @@ end
 
 function HeuristicEngine:IsStaticDataModule(code)
     if not code or #code == 0 then return false end
-    local hasReturn = code:find("return%s+{") or code:find("return%s+setmetatable")
-    local hasLoops = code:find("while%s+") or code:find("for%s+") or code:find("repeat%s+")
-    local hasServices = code:find("GetService") or code:find("FireServer") or code:find("InvokeServer") or code:find("Connect%(")
-    return hasReturn and not hasLoops and not hasServices
+    local firstChunk = code:sub(1, 300):lower()
+    if firstChunk:find("^%s*return%s+{") or firstChunk:find("^%s*return%s+setmetatable") then
+        local hasLoops = code:find("while%s+") or code:find("for%s+") or code:find("repeat%s+")
+        local hasServices = code:find("GetService") or code:find("FireServer") or code:find("InvokeServer") or code:find("Connect%(")
+        if not hasLoops and not hasServices then
+            return true
+        end
+    end
+    return false
 end
 
 function HeuristicEngine:SafeDecompileWithCache(instance)
     if not instance:IsA("LuaSourceContainer") then return nil end
     
-    -- 1. Descarte de scripts desactivados
     if instance:IsA("BaseScript") and instance.Disabled then
         return nil
     end
     
-    -- 2. Verificación en Caché (O(1))
     if self.DecompCache[instance] ~= nil then
         return self.DecompCache[instance]
     end
@@ -222,7 +225,6 @@ function HeuristicEngine:SafeDecompileWithCache(instance)
         return nil
     end
     
-    -- 3. Descompilación protegida con limitador de tamaño
     local s, code = pcall(function()
         return decompile(instance)
     end)
@@ -239,205 +241,195 @@ function HeuristicEngine:SafeDecompileWithCache(instance)
     return nil
 end
 
-function HeuristicEngine:ExtractCodeSnippets(code, pattern, maxSnippets)
-    maxSnippets = maxSnippets or 2
-    if not code or #code == 0 then return {} end
+-- =========================================================================
+-- MOTOR DE ANÁLISIS DE CÓDIGO EN UN SOLO PASO (SINGLE-PASS TOKENIZER & ANALYZER)
+-- =========================================================================
+
+function HeuristicEngine:AnalyzeCodeSinglePass(code, rawName, path)
+    if not code or #code == 0 then
+        return 0, {}, {}, {}, false, false
+    end
     
-    local rawKeyword = pattern:gsub("%%", ""):gsub("%[.-%]", ""):gsub("%(.-%)", "")
-    if #rawKeyword > 2 and not code:find(rawKeyword, 1, true) and not code:find(pattern) then
-        return {}
+    -- 1. Bypass Inmediato por Huella Digital (Fingerprinting / Módulo Estático / Librería)
+    if self:IsStaticDataModule(code) then
+        return 0, { "Tipo: Módulo de Configuración Estática" }, {}, {}, true, false
     end
     
-    local snippets = {}
-    local lineNum = 1
-    for line in code:gmatch("([^\r\n]*)\r?\n?") do
-        if line:find(pattern) then
-            local cleanLine = line:match("^%s*(.-)%s*$")
-            if #cleanLine > 120 then cleanLine = cleanLine:sub(1, 117) .. "..." end
-            table.insert(snippets, { Line = lineNum, Code = cleanLine })
-            if #snippets >= maxSnippets then break end
-        end
-        lineNum = lineNum + 1
-    end
-    return snippets
-end
-
-function HeuristicEngine:AnalyzeInstance(instance, depth)
-    depth = depth or 0
-    -- 1. FILTRADO PREMATURO: Si no es ejecutable ni red, descartar en O(1)
-    if not self:IsExecutableOrNetwork(instance) then
-        return nil
-    end
-
-    local path = instance:GetFullName()
-    -- 2. Descarte de Core Roblox y Paquetes de Terceros
-    if self:IsIgnoredCoreInstance(instance) then
-        return nil
-    end
-
-    local rawName = instance.Name
-    local className = instance.ClassName
     local score = 0
-    local matchedKeywords = {}
     local tags = {}
     local categoriesFound = {}
     local codeFindings = {}
-    local isStaticConfig = false
-    local isRem = instance:IsA("RemoteEvent") or instance:IsA("RemoteFunction") or instance:IsA("UnreliableRemoteEvent")
+    local isLibrary = false
+    
+    local hasRenderLoop = code:find("RenderStepped") or code:find("Heartbeat") or code:find("Stepped")
+    local hasCharacterRef = code:find("HumanoidRootPart") or code:find("Torso") or code:find("UpperTorso") or code:find("Character")
+    local hasNetwork = code:find("FireServer") or code:find("InvokeServer") or code:find("MarketplaceService")
+    
+    local lineNum = 1
+    local maxFindingsPerRule = 3
+    local counts = {
+        Kick = 0, Metatable = 0, DebugTrap = 0, Noclip = 0,
+        Fly = 0, GlobalState = 0, RNG = 0, Obfuscator = 0
+    }
+    
+    -- Recorrido Lineal en un Solo Paso O(N)
+    for line in code:gmatch("([^\r\n]*)\r?\n?") do
+        local lLower = line:lower()
+        local cleanLine = nil
+        local function getCleanLine()
+            if not cleanLine then
+                cleanLine = line:match("^%s*(.-)%s*$") or ""
+                if #cleanLine > 120 then cleanLine = cleanLine:sub(1, 117) .. "..." end
+            end
+            return cleanLine
+        end
+        
+        -- Regla 1: Llamadas a Expulsión (LocalPlayer:Kick)
+        if (line:find("LocalPlayer:Kick") or line:find("Players%.LocalPlayer:Kick")) and counts.Kick < maxFindingsPerRule then
+            counts.Kick = counts.Kick + 1
+            score = score + 45
+            categoriesFound["AntiCheat"] = true
+            table.insert(codeFindings, { Desc = "Llamada Directa a Expulsión (LocalPlayer:Kick)", Line = lineNum, Code = getCleanLine() })
+            if counts.Kick == 1 then table.insert(tags, "Kick") end
+        end
+        
+        -- Regla 2: Metatablas / Hooking
+        if (line:find("hookmetamethod") or line:find("getrawmetatable") or line:find("hookfunction")) and counts.Metatable < maxFindingsPerRule then
+            counts.Metatable = counts.Metatable + 1
+            score = score + 30
+            categoriesFound["AntiCheat"] = true
+            table.insert(codeFindings, { Desc = "Manipulación/Auditoría de Metatablas", Line = lineNum, Code = getCleanLine() })
+            if counts.Metatable == 1 then table.insert(tags, "Metatables") end
+        end
+        
+        -- Regla 3: Introspección Maliciosa de Callstack (Excluye debug.traceback)
+        if (line:find("debug%.info%s*%(%s*%d") or line:find("debug%.getinfo%s*%(%s*%d") or line:find("getfenv%s*%(%s*%d")) and counts.DebugTrap < maxFindingsPerRule then
+            counts.DebugTrap = counts.DebugTrap + 1
+            score = score + 25
+            categoriesFound["AntiCheat"] = true
+            table.insert(codeFindings, { Desc = "Introspección Maliciosa de Callstack / Trap (debug.info)", Line = lineNum, Code = getCleanLine() })
+            if counts.DebugTrap == 1 then table.insert(tags, "DebugTrap") end
+        end
+        
+        -- Regla 4: Noclip con Seguimiento de Ámbito Léxico (Descarta confeti, selección, partículas)
+        if line:find("CanCollide%s*=%s*false") and hasRenderLoop and hasCharacterRef and counts.Noclip < maxFindingsPerRule then
+            local isCosmetic = lLower:find("confetti") or lLower:find("selectpart") or lLower:find("particle")
+                or lLower:find("ring") or lLower:find("effect") or lLower:find("marker")
+                or lLower:find("fishball") or lLower:find("debris") or lLower:find("drop")
+                or lLower:find("coin") or lLower:find("visual") or lLower:find("trail")
+                or lLower:find("circle") or lLower:find("highlight") or lLower:find("water") or lLower:find("splash")
+            
+            if not isCosmetic then
+                counts.Noclip = counts.Noclip + 1
+                score = score + 40
+                categoriesFound["Admin"] = true
+                table.insert(codeFindings, { Desc = "Rutina Continua de Noclip en Character (RenderStepped)", Line = lineNum, Code = getCleanLine() })
+                if counts.Noclip == 1 then table.insert(tags, "Noclip:Contextual") end
+            end
+        end
+        
+        -- Regla 5: Manipulación de Vuelo / BodyVelocity
+        if line:find("BodyVelocity") and hasCharacterRef and counts.Fly < maxFindingsPerRule then
+            counts.Fly = counts.Fly + 1
+            score = score + 35
+            categoriesFound["Admin"] = true
+            table.insert(codeFindings, { Desc = "Manipulación de Vuelo / Fuerza Física (BodyVelocity)", Line = lineNum, Code = getCleanLine() })
+            if counts.Fly == 1 then table.insert(tags, "Fly:BodyVelocity") end
+        end
+        
+        -- Regla 6: Exposición de Estado Global (_G / shared)
+        if (line:find("_G%.__") or line:find("shared%.__")) and counts.GlobalState < maxFindingsPerRule then
+            counts.GlobalState = counts.GlobalState + 1
+            score = score + 20
+            categoriesFound["Admin"] = true
+            table.insert(codeFindings, { Desc = "Exposición de Funciones/Banderas Globales (_G/shared)", Line = lineNum, Code = getCleanLine() })
+            if counts.GlobalState == 1 then table.insert(tags, "GlobalState") end
+        end
+        
+        -- Regla 7: Azar Transaccional vs Cosmético (Descarta modulación de audio, pitch, rotación y diálogos)
+        if (line:find("math%.random") or line:find("Random%.new")) and hasNetwork and counts.RNG < maxFindingsPerRule then
+            local isCosmetic = lLower:find("playbackspeed") or lLower:find("pitch") or lLower:find("volume")
+                or lLower:find("rotation") or lLower:find("offset") or lLower:find("color")
+                or lLower:find("angles") or lLower:find("dialogue") or lLower:find("greeting")
+                or line:find("%[%s*math%.random") or line:find("#%a+%)") or line:find("npc") or line:find("sound")
+            
+            if not isCosmetic then
+                counts.RNG = counts.RNG + 1
+                score = score + 25
+                categoriesFound["Economy"] = true
+                table.insert(codeFindings, { Desc = "Lógica de RNG Vinculada a Red/Transacciones", Line = lineNum, Code = getCleanLine() })
+                if counts.RNG == 1 then table.insert(tags, "Economy:TransactionalRNG") end
+            end
+        end
+        
+        -- Regla 8: Ofuscadores Comerciales
+        if (line:find("LPH_") or line:find("IronBrew") or line:find("MoonSec") or line:find("PSU_")) and counts.Obfuscator < maxFindingsPerRule then
+            counts.Obfuscator = counts.Obfuscator + 1
+            score = score + 45
+            categoriesFound["AntiCheat"] = true
+            table.insert(codeFindings, { Desc = "Ofuscador Comercial Detectado", Line = lineNum, Code = getCleanLine() })
+            if counts.Obfuscator == 1 then table.insert(tags, "Ofuscador") end
+        end
+        
+        lineNum = lineNum + 1
+    end
+    
+    return score, tags, categoriesFound, codeFindings, false, isLibrary
+end
 
-    -- 3. Análisis de Nombres con límites de palabra estrictos
+-- Análisis directo y focalizado de un script individual (sin recorrido global)
+function HeuristicEngine:AnalyzeScript(instanceOrCode, optionalName)
+    local code = nil
+    local rawName = optionalName or "UnknownScript"
+    local path = rawName
+    local instance = nil
+    
+    if typeof(instanceOrCode) == "Instance" then
+        instance = instanceOrCode
+        rawName = instance.Name
+        path = instance:GetFullName()
+        if self:IsIgnoredCoreInstance(instance) then
+            return nil
+        end
+        code = self:SafeDecompileWithCache(instance)
+    elseif type(instanceOrCode) == "string" then
+        code = instanceOrCode
+    end
+    
+    if not code or #code == 0 then return nil end
+    
+    local score, tags, categoriesFound, findings, isStaticConfig, isLibrary = self:AnalyzeCodeSinglePass(code, rawName, path)
+    
+    -- Análisis de Nombres de Léxico
     for catName, keywords in pairs(self.Lexicon) do
         for _, kw in ipairs(keywords) do
             if self:MatchesKeyword(rawName, kw) then
-                local weight = (catName == "AntiCheat" and 25) or (catName == "Admin" and 20) or 15
+                local weight = (catName == "AntiCheat" and 20) or (catName == "Admin" and 15) or 10
                 score = score + weight
-                table.insert(matchedKeywords, string.format("[%s]: %s", catName, kw))
                 table.insert(tags, catName)
                 categoriesFound[catName] = true
                 break
             end
         end
     end
-
-    -- 4. Ponderación Topológica de Ubicación
-    if string.find(path, "ReplicatedFirst") then
-        score = score + 30
-        table.insert(tags, "Topología: ReplicatedFirst (Early Boot)")
-        categoriesFound["AntiCheat"] = true
-    elseif string.find(path, "PlayerScripts") or string.find(path, "StarterPlayer") then
-        score = score + 10
-    end
-
-    -- 5. Ponderación por Clase de Red
-    if isRem then
-        score = score + 15
-        table.insert(tags, "Clase: " .. className)
-        categoriesFound["Remotes"] = true
-    end
-
-    -- 6. Análisis Profundo de Código con Descompilación Perezosa y Caché
-    if instance:IsA("LuaSourceContainer") then
-        local decompiledCode = self:SafeDecompileWithCache(instance)
-        if decompiledCode then
-            if instance:IsA("ModuleScript") and self:IsStaticDataModule(decompiledCode) then
-                isStaticConfig = true
-                table.insert(tags, "Tipo: Módulo de Configuración Estática")
-            else
-                -- Regla 1: Kick
-                if decompiledCode:find("LocalPlayer:Kick") or decompiledCode:find("Players%.LocalPlayer:Kick") then
-                    score = score + 45
-                    categoriesFound["AntiCheat"] = true
-                    local snips = self:ExtractCodeSnippets(decompiledCode, "Kick")
-                    table.insert(codeFindings, { Desc = "Llamada Directa a Expulsión (LocalPlayer:Kick)", Snippets = snips })
-                    table.insert(tags, "Kick")
-                end
-
-                -- Regla 2: Metatables / Debug
-                if decompiledCode:find("hookmetamethod") or decompiledCode:find("getrawmetatable") then
-                    score = score + 30
-                    categoriesFound["AntiCheat"] = true
-                    local snips = self:ExtractCodeSnippets(decompiledCode, "metatable")
-                    table.insert(codeFindings, { Desc = "Manipulación/Auditoría de Metatablas", Snippets = snips })
-                    table.insert(tags, "Metatables")
-                end
-
-                -- Introspección maliciosa de Callstack / Debug (Excluye debug.traceback)
-                if decompiledCode:find("debug%.info%s*%(%s*%d") or decompiledCode:find("debug%.getinfo%s*%(%s*%d") then
-                    score = score + 25
-                    categoriesFound["AntiCheat"] = true
-                    local snips = self:ExtractCodeSnippets(decompiledCode, "debug%.info")
-                    table.insert(codeFindings, { Desc = "Introspección Maliciosa de Callstack / Trap (debug.info)", Snippets = snips })
-                    table.insert(tags, "DebugTrap")
-                end
-
-                -- Regla 3: Noclip Contextualizado (Filtra partículas, confeti, selección de pesca)
-                local hasCanCollide = decompiledCode:find("CanCollide%s*=%s*false")
-                if hasCanCollide then
-                    local isFalsePositive = false
-                    for line in decompiledCode:gmatch("([^\r\n]*CanCollide%s*=%s*false[^\r\n]*)") do
-                        local lLower = line:lower()
-                        if lLower:find("confetti") or lLower:find("selectpart") or lLower:find("particle")
-                           or lLower:find("ring") or lLower:find("effect") or lLower:find("marker")
-                           or lLower:find("fishball") or lLower:find("debris") or lLower:find("drop")
-                           or lLower:find("coin") or lLower:find("visual") or lLower:find("trail")
-                           or lLower:find("circle") or lLower:find("highlight") then
-                            isFalsePositive = true
-                        end
-                    end
-                    
-                    if not isFalsePositive then
-                        local hasBodyParts = decompiledCode:find("HumanoidRootPart") or decompiledCode:find("Torso") or decompiledCode:find("UpperTorso") or decompiledCode:find("LowerTorso")
-                        local hasLoop = decompiledCode:find("RenderStepped") or decompiledCode:find("Heartbeat") or decompiledCode:find("Stepped")
-                        if hasBodyParts and hasLoop then
-                            score = score + 40
-                            categoriesFound["Admin"] = true
-                            local snips = self:ExtractCodeSnippets(decompiledCode, "CanCollide")
-                            table.insert(codeFindings, { Desc = "Rutina Continua de Noclip en Character (RenderStepped)", Snippets = snips })
-                            table.insert(tags, "Noclip:Contextual")
-                        end
-                    end
-                end
-
-                -- Regla 4: Fly / BodyVelocity
-                if decompiledCode:find("BodyVelocity") and (decompiledCode:find("HumanoidRootPart") or decompiledCode:find("Torso") or decompiledCode:find("UpperTorso")) then
-                    score = score + 35
-                    categoriesFound["Admin"] = true
-                    local snips = self:ExtractCodeSnippets(decompiledCode, "BodyVelocity")
-                    table.insert(codeFindings, { Desc = "Manipulación de Vuelo / Fuerza Física (BodyVelocity)", Snippets = snips })
-                    table.insert(tags, "Fly:BodyVelocity")
-                end
-
-                -- Regla 5: Estado Global (_G / shared)
-                if decompiledCode:find("_G%.__") or decompiledCode:find("shared%.__") then
-                    score = score + 20
-                    categoriesFound["Admin"] = true
-                    local snips = self:ExtractCodeSnippets(decompiledCode, "_G%.")
-                    table.insert(codeFindings, { Desc = "Exposición de Funciones/Banderas Globales (_G/shared)", Snippets = snips })
-                    table.insert(tags, "GlobalState")
-                end
-
-                -- Regla 6: RNG Transaccional vs Cosmético (Filtra modulación de audio y diálogos)
-                local hasRandom = decompiledCode:find("math%.random") or decompiledCode:find("Random%.new")
-                if hasRandom then
-                    local hasNetworkOrPurchase = decompiledCode:find("FireServer") or decompiledCode:find("InvokeServer") or decompiledCode:find("MarketplaceService")
-                    local isCosmeticAudioOrDialogue = true
-                    for line in decompiledCode:gmatch("([^\r\n]*math%.random[^\r\n]*)") do
-                        local lLower = line:lower()
-                        if not (lLower:find("playbackspeed") or lLower:find("pitch") or lLower:find("volume")
-                                or lLower:find("rotation") or lLower:find("offset") or lLower:find("color")
-                                or lLower:find("angles") or lLower:find("dialogue") or lLower:find("greeting")
-                                or line:find("%[%s*math%.random") or line:find("#%a+%)") or line:find("npc") or line:find("sound")) then
-                            isCosmeticAudioOrDialogue = false
-                        end
-                    end
-                    
-                    if hasNetworkOrPurchase and not isCosmeticAudioOrDialogue then
-                        score = score + 25
-                        categoriesFound["Economy"] = true
-                        local snips = self:ExtractCodeSnippets(decompiledCode, "random")
-                        table.insert(codeFindings, { Desc = "Lógica de RNG Vinculada a Red/Transacciones", Snippets = snips })
-                        table.insert(tags, "Economy:TransactionalRNG")
-                    else
-                        table.insert(tags, "RNG Cosmético / Cliente")
-                    end
-                end
-
-                -- Regla 7: Ofuscadores Comerciales
-                if decompiledCode:find("LPH_") or decompiledCode:find("IronBrew") or decompiledCode:find("MoonSec") or decompiledCode:find("PSU_") then
-                    score = score + 45
-                    categoriesFound["AntiCheat"] = true
-                    table.insert(codeFindings, { Desc = "Ofuscador Comercial Detectado (Luraph/IronBrew/Moonsec)", Snippets = {} })
-                    table.insert(tags, "Ofuscador")
-                end
-            end
-        end
-    end
-
+    
     if score > 100 then score = 100 end
-
-    -- Determinar Severidad y Categoría de Herramienta Administrativa
+    
+    -- Ponderación por Confianza (Herramienta de Administración Autorizada vs Inyectada)
+    local isAuthorizedAdmin = false
+    local lowerPath = path:lower()
+    if categoriesFound["Admin"] and not categoriesFound["AntiCheat"] and (lowerPath:find("admin") or rawName:lower():find("admin")) then
+        isAuthorizedAdmin = true
+        table.insert(tags, "Herramienta de Administración Autorizada")
+    end
+    
+    -- Atenuación de Score en Componentes de UI
+    if lowerPath:find("playergui") and not categoriesFound["AntiCheat"] and score < 50 then
+        score = math.floor(score * 0.6)
+    end
+    
     local severity = HeuristicEngine.Severity.LOW
-    if categoriesFound["Admin"] and score >= 45 and not categoriesFound["AntiCheat"] then
+    if isAuthorizedAdmin then
         severity = 5 -- ADMIN_TOOL
     elseif score >= 75 or (categoriesFound["AntiCheat"] and score >= 55) then
         severity = HeuristicEngine.Severity.CRITICAL
@@ -446,21 +438,61 @@ function HeuristicEngine:AnalyzeInstance(instance, depth)
     elseif score >= 25 or categoriesFound["Economy"] then
         severity = HeuristicEngine.Severity.MEDIUM
     end
-
+    
     return {
         Instance = instance,
         Name = rawName,
-        ClassName = className,
         Path = path,
-        Depth = depth,
         Score = score,
         Severity = severity,
-        MatchedKeywords = matchedKeywords,
         Tags = tags,
         Categories = categoriesFound,
-        Findings = codeFindings,
+        Findings = findings,
         IsStaticConfig = isStaticConfig,
+        IsLibrary = isLibrary,
+        IsAuthorizedAdmin = isAuthorizedAdmin,
     }
+end
+
+function HeuristicEngine:AnalyzeInstance(instance, depth)
+    depth = depth or 0
+    if not self:IsExecutableOrNetwork(instance) then return nil end
+    if self:IsIgnoredCoreInstance(instance) then return nil end
+    
+    local path = instance:GetFullName()
+    local rawName = instance.Name
+    local className = instance.ClassName
+    local isRem = instance:IsA("RemoteEvent") or instance:IsA("RemoteFunction") or instance:IsA("UnreliableRemoteEvent")
+    
+    -- Delegación al analizador focalizado de código
+    local analysis = self:AnalyzeScript(instance)
+    if not analysis and isRem then
+        analysis = {
+            Instance = instance,
+            Name = rawName,
+            Path = path,
+            Score = 15,
+            Severity = HeuristicEngine.Severity.LOW,
+            Tags = { "Clase: " .. className },
+            Categories = { Remotes = true },
+            Findings = {},
+            IsStaticConfig = false,
+        }
+    end
+    
+    if analysis then
+        analysis.Depth = depth
+        analysis.ClassName = className
+        
+        -- Ponderación Topológica de Ubicación
+        if string.find(path, "ReplicatedFirst") then
+            analysis.Score = math.min(analysis.Score + 30, 100)
+            table.insert(analysis.Tags, "Topología: ReplicatedFirst (Early Boot)")
+            analysis.Categories["AntiCheat"] = true
+        end
+    end
+    
+    return analysis
 end
 
 -- =========================================================================
