@@ -117,7 +117,7 @@ if registry and logger and eventBus then
     local sandbox = SafeSandbox and SafeSandbox.new(logger)
     if sandbox then registry:Register("SafeSandbox", sandbox) end
     
-    local structural = StructuralProfiler and StructuralProfiler.new(logger)
+    local structural = StructuralProfiler and StructuralProfiler.new(logger, caps)
     if structural then registry:Register("StructuralProfiler", structural) end
     
     local heuristic = HeuristicEngine and HeuristicEngine.new(caps, logger, structural)

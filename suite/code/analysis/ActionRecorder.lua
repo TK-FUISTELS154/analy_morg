@@ -2,9 +2,11 @@
     =============================================================================
     APEX SUITE - ADVANCED ACTION RECORDER & SMART EXTRACTION PIPELINE
     =============================================================================
-    Rastrea todas las interacciones del usuario (teclado, ratón, UI, 3D ProximityPrompts,
-    Tools, estados del Humanoid) y las correlaciona en tiempo real con los Remotes
-    disparados para generar paquetes de extracción inteligente por tipos.
+    Rastrea interacciones del usuario mediante escucha centralizada delegada
+    (UserInputService + GetGuiObjectsAtPosition), correlaciona causalmente las
+    acciones con los remotes disparados mediante comparación de argumentos,
+    evita descompilaciones redundantes con caché y genera scripts de reproducción
+    parametrizados y modulares.
 --]]
 
 local UserInputService = game:GetService("UserInputService")
@@ -32,8 +34,9 @@ function ActionRecorder.new(eventBus, logger, capabilityManager)
     self.IsRecording = false
     self.RecordedTimeline = {}
     self.RecentAction = nil
-    self.CorrelationWindow = 0.6 -- Ventana de tiempo (segundos) para correlacionar Remotes
+    self.CorrelationWindow = 0.6 -- Ventana de tiempo (segundos)
     self.PathCache = setmetatable({}, { __mode = "k" }) -- Weak-key cache para instancias
+    self.DecompilationCache = {} -- [fullName] = sourceText
     
     self.Connections = {}
     self.LocalPlayer = Players.LocalPlayer
@@ -51,6 +54,19 @@ function ActionRecorder:GetCachedPath(inst)
         return full
     end
     return nil
+end
+
+function ActionRecorder:IsIgnoredLibraryScript(inst)
+    if not inst then return true end
+    local path = self:GetCachedPath(inst) or ""
+    if path:find("Packages") or path:find("_Index") or path:find("Janitor")
+       or path:find("Promise") or path:find("Vendor") or path:find("Roact")
+       or path:find("Rodux") or path:find("Fusion") or path:find("Flipper")
+       or path:find("TopbarPlus") or path:find("GoodSignal") or path:find("Signal")
+       or path:find("%.spec") or path:find("%.test") then
+        return true
+    end
+    return false
 end
 
 function ActionRecorder:GetCurrentPlayerSnapshot()
@@ -94,7 +110,7 @@ function ActionRecorder:RegisterAction(actionType, details, relatedInstance)
         Id = string.format("ACT_%d_%d", math.floor(now), math.random(100, 999)),
         Timestamp = now,
         Type = actionType, -- "Input", "Prompt", "Tool", "StateChange", "UIClick"
-        Details = details,
+        Details = details or {},
         Instance = relatedInstance,
         InstancePath = relatedInstance and self:GetCachedPath(relatedInstance) or nil,
         Snapshot = snapshot,
@@ -115,6 +131,55 @@ function ActionRecorder:RegisterAction(actionType, details, relatedInstance)
     return actionEntry
 end
 
+-- =========================================================================
+-- CORRELACIÓN CONTEXTUAL Y CAUSAL DE ARGUMENTOS
+-- =========================================================================
+function ActionRecorder:CalculateCausalConfidence(action, remoteEntry)
+    local confidence = 0.5 -- Base temporal
+    local matchReason = "Temporal Proximity"
+    
+    local actDetails = action.Details or {}
+    local keywords = {}
+    
+    if actDetails.ButtonName then table.insert(keywords, tostring(actDetails.ButtonName):lower()) end
+    if actDetails.TextOrImage and #actDetails.TextOrImage > 0 then table.insert(keywords, tostring(actDetails.TextOrImage):lower()) end
+    if actDetails.ActionText then table.insert(keywords, tostring(actDetails.ActionText):lower()) end
+    if actDetails.ObjectText then table.insert(keywords, tostring(actDetails.ObjectText):lower()) end
+    if actDetails.ToolName then table.insert(keywords, tostring(actDetails.ToolName):lower()) end
+    if actDetails.Key then table.insert(keywords, tostring(actDetails.Key):lower()) end
+    
+    local remName = (remoteEntry.Name or ""):lower()
+    local remArgs = remoteEntry.Args or {}
+    
+    -- Comparar palabras clave de la acción con el nombre del remote y sus argumentos
+    for _, kw in ipairs(keywords) do
+        if #kw >= 3 then
+            if remName:find(kw, 1, true) then
+                confidence = 0.9
+                matchReason = string.format("Remote name matches action keyword '%s'", kw)
+                break
+            end
+            
+            for _, arg in ipairs(remArgs) do
+                local argStr = tostring(arg):lower()
+                if argStr:find(kw, 1, true) or kw:find(argStr, 1, true) then
+                    confidence = 1.0
+                    matchReason = string.format("Remote payload argument '%s' matches action context '%s'", argStr, kw)
+                    break
+                end
+            end
+        end
+    end
+    
+    -- Si los argumentos son solo posiciones físicas o ticks y la acción fue un click de UI, reducir confianza
+    if action.Type == "UIClick" and #remArgs == 1 and typeof(remArgs[1]) == "Vector3" then
+        confidence = 0.2
+        matchReason = "Likely background physics update"
+    end
+    
+    return confidence, matchReason
+end
+
 function ActionRecorder:CorrelateRemoteCall(remoteEntry)
     if not self.IsRecording or not self.RecentAction then return end
     
@@ -122,29 +187,84 @@ function ActionRecorder:CorrelateRemoteCall(remoteEntry)
     local delta = now - self.RecentAction.Timestamp
     
     if delta <= self.CorrelationWindow then
-        table.insert(self.RecentAction.CorrelatedRemotes, {
-            DeltaTime = delta,
-            Remote = remoteEntry.Remote,
-            Path = remoteEntry.Path,
-            Method = remoteEntry.Method,
-            Args = remoteEntry.Args,
-            Snippet = remoteEntry.Snippet,
-        })
+        local confidence, reason = self:CalculateCausalConfidence(self.RecentAction, remoteEntry)
         
-        if self.Logger then
-            self.Logger:Info("CORRELATION", string.format("Acción [%s] disparó Remote [%s] tras %.3fs", self.RecentAction.Type, remoteEntry.Name, delta))
-        end
-        
-        if self.EventBus then
-            self.EventBus:Publish("ActionCorrelated", self.RecentAction)
+        -- Solo vincular si la confianza es razonable (descartar ruido obvio)
+        if confidence >= 0.3 then
+            table.insert(self.RecentAction.CorrelatedRemotes, {
+                DeltaTime = delta,
+                Remote = remoteEntry.Remote,
+                Name = remoteEntry.Name,
+                Path = remoteEntry.Path,
+                Method = remoteEntry.Method,
+                Args = remoteEntry.Args,
+                Snippet = remoteEntry.Snippet,
+                Confidence = confidence,
+                CausalMatch = reason,
+            })
+            
+            if self.Logger then
+                self.Logger:Info("CORRELATION", string.format("Acción [%s] -> Remote [%s] (Confianza: %d%% - %s)", self.RecentAction.Type, remoteEntry.Name, math.floor(confidence * 100), reason))
+            end
+            
+            if self.EventBus then
+                self.EventBus:Publish("ActionCorrelated", self.RecentAction)
+            end
         end
     end
 end
 
 -- =========================================================================
+-- GENERADOR DE SCRIPTS DE REPRODUCCIÓN PARAMETRIZADOS
+-- =========================================================================
+function ActionRecorder:GenerateParametrizedScript(targetAction, correlatedRemotes)
+    local lines = {
+        "-- ============================================================================",
+        "-- [APEX SUITE] PARAMETRIZED REPLAY SCRIPT",
+        string.format("-- Acción: %s | ID: %s | Generado: %s", targetAction.Type, targetAction.Id, os.date("%X")),
+        "-- ============================================================================",
+        "",
+        "local function ExecuteRecordedAction(options)",
+        "    options = options or {}",
+        "    local repeatCount = options.RepeatCount or 1",
+        "    local delayBetween = options.DelayBetween or 0.1",
+        "    local customArgs = options.CustomArgs",
+        "",
+        "    for iteration = 1, repeatCount do",
+    }
+    
+    for idx, rem in ipairs(correlatedRemotes) do
+        local snippet = rem.Snippet or string.format("%s:%s()", rem.Path, rem.Method or "FireServer")
+        table.insert(lines, string.format("        -- Invocación %d [Confianza: %d%% - %s]", idx, math.floor((rem.Confidence or 1) * 100), rem.CausalMatch or "Direct"))
+        table.insert(lines, string.format("        if customArgs and customArgs[%d] then", idx))
+        table.insert(lines, string.format("            -- Llamada con argumentos personalizados"))
+        table.insert(lines, string.format("            local targetRemote = %s", rem.Path))
+        table.insert(lines, string.format("            targetRemote:%s(table.unpack(customArgs[%d]))", rem.Method or "FireServer", idx))
+        table.insert(lines, string.format("        else"))
+        table.insert(lines, string.format("            %s", snippet))
+        table.insert(lines, string.format("        end"))
+        if idx < #correlatedRemotes then
+            table.insert(lines, "        task.wait(0.05)")
+        end
+    end
+    
+    table.insert(lines, "")
+    table.insert(lines, "        if iteration < repeatCount then")
+    table.insert(lines, "            task.wait(delayBetween)")
+    table.insert(lines, "        end")
+    table.insert(lines, "    end")
+    table.insert(lines, "end")
+    table.insert(lines, "")
+    table.insert(lines, "-- Ejemplo de uso:")
+    table.insert(lines, "-- ExecuteRecordedAction({ RepeatCount = 5, DelayBetween = 0.2 })")
+    table.insert(lines, "return ExecuteRecordedAction")
+    
+    return table.concat(lines, "\n")
+end
+
+-- =========================================================================
 -- SISTEMA DE EXTRACCIÓN INTELIGENTE POR TIPOS
 -- =========================================================================
-
 function ActionRecorder:ExtractBundle(actionId, extractionType)
     local targetAction = nil
     for _, act in ipairs(self.RecordedTimeline) do
@@ -175,9 +295,15 @@ function ActionRecorder:ExtractBundle(actionId, extractionType)
     }
     
     local function extractScriptSource(inst)
-        if inst and inst:IsA("LuaSourceContainer") and self.Caps then
-            local src = self.Caps:SafeDecompile(inst)
-            bundle.ExtractedScripts[inst:GetFullName()] = src
+        if inst and inst:IsA("LuaSourceContainer") and not self:IsIgnoredLibraryScript(inst) and self.Caps then
+            local fullName = inst:GetFullName()
+            if self.DecompilationCache[fullName] then
+                bundle.ExtractedScripts[fullName] = self.DecompilationCache[fullName]
+            else
+                local src = self.Caps:SafeDecompile(inst)
+                self.DecompilationCache[fullName] = src
+                bundle.ExtractedScripts[fullName] = src
+            end
         end
     end
     
@@ -229,45 +355,67 @@ function ActionRecorder:ExtractBundle(actionId, extractionType)
         end
     end
     
-    -- Generar Script de Automatización
-    local generatedLines = {
-        "-- [AUTO-GENERATED EXPLOITATION / AUDIT REPRODUCTION SCRIPT]",
-        string.format("-- Acción Origen: %s | Timestamp: %s", targetAction.Type, tostring(targetAction.Timestamp)),
-    }
-    for _, rem in ipairs(targetAction.CorrelatedRemotes) do
-        table.insert(generatedLines, rem.Snippet or string.format("%s:%s()", rem.Path, rem.Method))
-    end
-    bundle.GeneratedScript = table.concat(generatedLines, "\n")
+    -- Generar Script Parametrizado
+    bundle.GeneratedScript = self:GenerateParametrizedScript(targetAction, targetAction.CorrelatedRemotes)
     
     if self.Logger then
-        self.Logger:Info("RECORDER", string.format("Paquete inteligente [%s] generado con éxito (%d remotes, %d scripts extraídos).", bundle.BundleType, #bundle.CapturedRemotes, #bundle.ExtractedScripts))
+        self.Logger:Info("RECORDER", string.format("Paquete inteligente [%s] generado (%d remotes, %d scripts extraídos).", bundle.BundleType, #bundle.CapturedRemotes, #bundle.ExtractedScripts))
     end
     
     return bundle
 end
 
 -- =========================================================================
--- CONTROL DE GRABACIÓN Y LISTENERS
+-- CONTROL DE GRABACIÓN Y LISTENERS CENTRALIZADOS (DELEGATED LISTENING)
 -- =========================================================================
-
 function ActionRecorder:Start()
     if self.IsRecording then return end
     self.IsRecording = true
     self:StopConnections()
     
-    -- 1. Listener de Entradas del Teclado y Ratón
+    -- 1. Listener Delegado Centralizado (Teclado, Ratón y Clicks en UI)
     table.insert(self.Connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if not self.IsRecording then return end
         
-        local inputType = input.UserInputType.Name
-        local key = (input.KeyCode.Name ~= "Unknown") and input.KeyCode.Name or inputType
+        local inputType = input.UserInputType
+        local isClick = (inputType == Enum.UserInputType.MouseButton1 or inputType == Enum.UserInputType.Touch)
         
+        -- Si es un click, determinar qué elemento de UI fue presionado mediante delegación
+        if isClick then
+            local playerGui = self.LocalPlayer:FindFirstChild("PlayerGui")
+            if playerGui then
+                local s, guiObjects = pcall(function()
+                    return playerGui:GetGuiObjectsAtPosition(input.Position.X, input.Position.Y)
+                end)
+                
+                if s and guiObjects and #guiObjects > 0 then
+                    for _, obj in ipairs(guiObjects) do
+                        if obj:IsA("GuiButton") or obj:IsA("TextBox") then
+                            local btnText = obj:IsA("TextButton") and obj.Text or (obj:IsA("ImageButton") and obj.Image or (obj:IsA("TextBox") and obj.Text or ""))
+                            local screenGui = obj:FindFirstAncestorOfClass("ScreenGui")
+                            
+                            self:RegisterAction("UIClick", {
+                                ButtonName = obj.Name,
+                                ButtonClass = obj.ClassName,
+                                TextOrImage = btnText,
+                                ScreenGui = screenGui and screenGui.Name or "Unknown",
+                                Hierarchy = obj:GetFullName(),
+                            }, obj)
+                            return
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- Si no fue click en UI, registrar como entrada de juego o ratón en el mundo 3D
+        local key = (input.KeyCode.Name ~= "Unknown") and input.KeyCode.Name or inputType.Name
         local mouse = self.LocalPlayer:GetMouse()
         local target = mouse and mouse.Target or nil
         
         self:RegisterAction("InputBegan", {
             Key = key,
-            UserInputType = inputType,
+            UserInputType = inputType.Name,
             GameProcessed = gameProcessed,
             Target = target and target.Name or "None",
         }, target)
@@ -302,71 +450,8 @@ function ActionRecorder:Start()
     if self.LocalPlayer.Character then hookCharacter(self.LocalPlayer.Character) end
     table.insert(self.Connections, self.LocalPlayer.CharacterAdded:Connect(hookCharacter))
     
-    -- 4. Listener Profundo de Interacciones de Interfaz (PlayerGui y UI Buttons)
-    local hookedGuiElements = setmetatable({}, { __mode = "k" })
-    local function hookGuiElement(element)
-        if not element or hookedGuiElements[element] then return end
-        
-        if element:IsA("GuiButton") then -- TextButton, ImageButton
-            hookedGuiElements[element] = true
-            table.insert(self.Connections, element.MouseButton1Click:Connect(function()
-                if not self.IsRecording then return end
-                local btnText = element:IsA("TextButton") and element.Text or (element:IsA("ImageButton") and element.Image or "")
-                local screenGui = element:FindFirstAncestorOfClass("ScreenGui")
-                
-                self:RegisterAction("UIClick", {
-                    ButtonName = element.Name,
-                    ButtonClass = element.ClassName,
-                    TextOrImage = btnText,
-                    ScreenGui = screenGui and screenGui.Name or "Unknown",
-                    Hierarchy = element:GetFullName(),
-                }, element)
-            end))
-            
-        elseif element:IsA("TextBox") then
-            hookedGuiElements[element] = true
-            table.insert(self.Connections, element.FocusLost:Connect(function(enterPressed)
-                if not self.IsRecording then return end
-                local screenGui = element:FindFirstAncestorOfClass("ScreenGui")
-                
-                self:RegisterAction("UIInputSubmitted", {
-                    TextBoxName = element.Name,
-                    SubmittedText = element.Text,
-                    EnterPressed = enterPressed,
-                    ScreenGui = screenGui and screenGui.Name or "Unknown",
-                }, element)
-            end))
-        end
-    end
-    
-    local playerGui = self.LocalPlayer:FindFirstChild("PlayerGui")
-    if playerGui then
-        task.spawn(function()
-            local s, desc = pcall(function() return playerGui:GetDescendants() end)
-            if s and desc then
-                local lastYield = tick()
-                for _, inst in ipairs(desc) do
-                    if tick() - lastYield > 0.012 then
-                        task.wait()
-                        lastYield = tick()
-                    end
-                    if not self.IsRecording then break end
-                    if inst:IsA("GuiButton") or inst:IsA("TextBox") then
-                        hookGuiElement(inst)
-                    end
-                end
-            end
-        end)
-        
-        table.insert(self.Connections, playerGui.DescendantAdded:Connect(function(newDesc)
-            if newDesc:IsA("GuiButton") or newDesc:IsA("TextBox") then
-                hookGuiElement(newDesc)
-            end
-        end))
-    end
-    
     if self.Logger then
-        self.Logger:Info("RECORDER", "Motor de Rastreo Total (Inputs, Prompts, Tools & GUI Clicks) iniciado.")
+        self.Logger:Info("RECORDER", "Motor de Rastreo Delegado (Zero-Overhead Delegated Listening) iniciado.")
     end
 end
 

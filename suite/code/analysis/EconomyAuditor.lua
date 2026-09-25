@@ -1,10 +1,12 @@
 --[[
     =============================================================================
-    APEX SUITE - ECONOMY & RNG AUDITOR (SYNCHRONIZED WITH REMOTES & HEURISTICS)
+    APEX SUITE - ECONOMY & RNG AUDITOR (DEEP TABLE PARSING & LOOT VALIDATOR)
     =============================================================================
-    Inspecciona profundamente la lógica de economía, ruletas, gachas, drops,
-    tablas de probabilidad y precios en múltiples idiomas (Chino, Japonés, Ruso, etc.),
-    con poda de ramas no funcionales y time-slicing de 12ms para evitar bloqueos.
+    Inspecciona la lógica económica real analizando tablas de módulos exportadas,
+    valida matemáticamente tablas de probabilidad/loot (suma de pesos y sesgos),
+    ejecuta análisis secuencial cooperativo sin sobrecarga de hilos y realiza
+    correlación semántica cruzada con remotes para detectar vulnerabilidades
+    críticas de validación de precios en el cliente.
 --]]
 
 local EconomyAuditor = {}
@@ -50,7 +52,7 @@ function EconomyAuditor:IsPrunedBranch(instance)
     }
     
     if visualAssets[name] then
-        if not (name:find("script") or name:find("module") or name:find("controller") or name:find("network") or name:find("shop") or name:find("store") or name:find("client") or name:find("service")) then
+        if not (name:find("script") or name:find("module") or name:find("controller") or name:find("network") or name:find("shop") or name:find("store") or name:find("client") or name:find("service") or name:find("economy")) then
             return true
         end
     end
@@ -58,6 +60,178 @@ function EconomyAuditor:IsPrunedBranch(instance)
     return false
 end
 
+function EconomyAuditor:IsIgnoredCoreInstance(instance)
+    local fullName = instance:GetFullName()
+    if fullName:find("StarterPlayer%.StarterPlayerScripts%.PlayerModule")
+       or fullName:find("StarterPlayer%.StarterPlayerScripts%.RbxCharacterSounds")
+       or fullName:find("PlayerScriptsLoader")
+       or fullName:find("ChatScript")
+       or fullName:find("BubbleChat")
+       or fullName:find("RobloxGui")
+       or fullName:find("%.spec")
+       or fullName:find("%.test")
+       or fullName:find("Jest")
+       or fullName:find("TestEZ")
+       or fullName:find("TopbarPlus")
+       or fullName:find("Packages")
+       or fullName:find("_Index")
+       or fullName:find("Janitor")
+       or fullName:find("Promise")
+       or fullName:find("Vendor")
+       or fullName:find("pkg")
+       or fullName:find("Roact")
+       or fullName:find("Rodux")
+       or fullName:find("Fusion")
+       or fullName:find("Flipper")
+       or fullName:find("GoodSignal")
+       or fullName:find("Signal") then
+        return true
+    end
+    return false
+end
+
+-- =========================================================================
+-- EXTRACTOR Y VALIDADOR MATEMÁTICO DE TABLAS DE PROBABILIDAD (LOOT TABLES)
+-- =========================================================================
+function EconomyAuditor:ValidateLootTable(tableName, tbl)
+    if type(tbl) ~= "table" then return nil end
+    
+    local totalWeight = 0
+    local itemCount = 0
+    local items = {}
+    local hasProbabilityKeys = false
+    
+    local probKeys = {
+        weight = true, chance = true, probability = true, rate = true,
+        droprate = true, percentage = true, odds = true, luck = true,
+        ["概率"] = true, ["几率"] = true, ["爆率"] = true, ["確率"] = true, ["шанс"] = true
+    }
+    
+    for key, val in pairs(tbl) do
+        if type(val) == "number" and probKeys[tostring(key):lower()] then
+            hasProbabilityKeys = true
+            totalWeight = totalWeight + val
+            itemCount = itemCount + 1
+            table.insert(items, { Name = tostring(key), Weight = val })
+        elseif type(val) == "table" then
+            local entryWeight = nil
+            local entryName = tostring(key)
+            
+            for subK, subV in pairs(val) do
+                local subKLower = tostring(subK):lower()
+                if probKeys[subKLower] and type(subV) == "number" then
+                    entryWeight = subV
+                    hasProbabilityKeys = true
+                elseif subKLower == "name" or subKLower == "item" or subKLower == "id" or subKLower == "reward" then
+                    entryName = tostring(subV)
+                end
+            end
+            
+            if entryWeight then
+                totalWeight = totalWeight + entryWeight
+                itemCount = itemCount + 1
+                table.insert(items, { Name = entryName, Weight = entryWeight })
+            end
+        end
+    end
+    
+    if hasProbabilityKeys and itemCount >= 2 then
+        local isImbalanced = false
+        local imbalanceReason = nil
+        
+        -- Verificación matemática de consistencia
+        -- Escala 100%: tolerancia [99.0, 101.0]
+        -- Escala 1.0: tolerancia [0.99, 1.01]
+        local isPercentageScale = (totalWeight > 5.0 and totalWeight < 200.0)
+        local isNormalizedScale = (totalWeight > 0.5 and totalWeight < 2.0)
+        
+        if isPercentageScale and (totalWeight < 99.0 or totalWeight > 101.0) then
+            isImbalanced = true
+            imbalanceReason = string.format("Suma de probabilidades es %.2f%% (esperado 100%%)", totalWeight)
+        elseif isNormalizedScale and (totalWeight < 0.99 or totalWeight > 1.01) then
+            isImbalanced = true
+            imbalanceReason = string.format("Suma de probabilidades normalizada es %.4f (esperado 1.0)", totalWeight)
+        end
+        
+        return {
+            TableName = tableName,
+            ItemCount = itemCount,
+            TotalWeight = totalWeight,
+            Items = items,
+            IsImbalanced = isImbalanced,
+            ImbalanceReason = imbalanceReason,
+        }
+    end
+    
+    return nil
+end
+
+-- =========================================================================
+-- INSPECCIÓN PROFUNDA DE TABLAS EN MODULESCRIPTS (TABLE PARSING)
+-- =========================================================================
+function EconomyAuditor:InspectModuleEconomyTable(mod)
+    if not mod:IsA("ModuleScript") then return nil end
+    
+    local s, data = pcall(function() return require(mod) end)
+    if not s or type(data) ~= "table" then return nil end
+    
+    local analysis = {
+        IsEconomyModule = false,
+        LootTables = {},
+        Prices = {},
+        Products = {},
+        Multipliers = {},
+        KeywordsFound = {},
+    }
+    
+    local econKeys = {
+        price = "Prices", cost = "Prices", gem = "Prices", coin = "Prices",
+        gold = "Prices", diamond = "Prices", robux = "Prices", currency = "Prices",
+        rebirthcost = "Prices", upgradecost = "Prices",
+        productid = "Products", devproductid = "Products", gamepassid = "Products",
+        multiplier = "Multipliers", boost = "Multipliers", luckmultiplier = "Multipliers",
+        ["价格"] = "Prices", ["花费"] = "Prices", ["金币"] = "Prices", ["钻石"] = "Prices",
+    }
+    
+    local function parseTableRecursively(t, prefix, depth)
+        if depth > 4 then return end
+        
+        -- Comprobar si esta tabla es una tabla de loot
+        local lootCheck = self:ValidateLootTable(prefix, t)
+        if lootCheck then
+            table.insert(analysis.LootTables, lootCheck)
+            analysis.IsEconomyModule = true
+        end
+        
+        for k, v in pairs(t) do
+            local kStr = tostring(k)
+            local kLower = kStr:lower()
+            local currentPath = (prefix == "") and kStr or (prefix .. "." .. kStr)
+            
+            local category = econKeys[kLower]
+            if category and (type(v) == "number" or type(v) == "string") then
+                analysis.IsEconomyModule = true
+                table.insert(analysis[category], { Key = currentPath, Value = v })
+            end
+            
+            if type(v) == "table" then
+                parseTableRecursively(v, currentPath, depth + 1)
+            end
+        end
+    end
+    
+    parseTableRecursively(data, mod.Name, 1)
+    
+    if analysis.IsEconomyModule then
+        return analysis
+    end
+    
+    return nil
+end
+
+-- =========================================================================
+-- AUDITORÍA PRINCIPAL SECUENCIAL COOPERATIVA
+-- =========================================================================
 function EconomyAuditor:ScanEconomyNodes(onProgress)
     local findings = {
         Roulettes = {},
@@ -65,6 +239,7 @@ function EconomyAuditor:ScanEconomyNodes(onProgress)
         LootTables = {},
         ValueContainers = {},
         CorrelatedPurchaseRemotes = {},
+        Vulnerabilities = {},
         TotalFound = 0,
     }
     
@@ -74,42 +249,6 @@ function EconomyAuditor:ScanEconomyNodes(onProgress)
         game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"),
     }
     
-    local lexicon = (self.Heuristic and self.Heuristic.Lexicon.Economy) or {
-        "spin", "wheel", "roll", "luck", "chance", "shop", "purchase", "currency", "gem", "crate", "unbox", "gacha", "rebirth", "multiplier", "diamond",
-        "抽奖", "抽卡", "轮盘", "扭蛋", "转盘", "概率", "几率", "爆率", "商店", "购买", "金币", "钻石", "充值",
-        "ガチャ", "ルーレット", "確率", "購入", "ショップ", "рулетка", "шанс", "магазин", "покупка", "донат"
-    }
-    
-    local function isIgnoredCoreInstance(instance)
-        local fullName = instance:GetFullName()
-        if fullName:find("StarterPlayer%.StarterPlayerScripts%.PlayerModule")
-           or fullName:find("StarterPlayer%.StarterPlayerScripts%.RbxCharacterSounds")
-           or fullName:find("PlayerScriptsLoader")
-           or fullName:find("ChatScript")
-           or fullName:find("BubbleChat")
-           or fullName:find("RobloxGui")
-           or fullName:find("%.spec")
-           or fullName:find("%.test")
-           or fullName:find("Jest")
-           or fullName:find("TestEZ")
-           or fullName:find("TopbarPlus")
-           or fullName:find("Packages")
-           or fullName:find("_Index")
-           or fullName:find("Janitor")
-           or fullName:find("Promise")
-           or fullName:find("Vendor")
-           or fullName:find("pkg")
-           or fullName:find("Roact")
-           or fullName:find("Rodux")
-           or fullName:find("Fusion")
-           or fullName:find("Flipper")
-           or fullName:find("GoodSignal")
-           or fullName:find("Signal") then
-            return true
-        end
-        return false
-    end
-
     local function matchesWord(targetText, keyword)
         if not targetText or not keyword then return false end
         local lowerText = targetText:lower()
@@ -120,17 +259,17 @@ function EconomyAuditor:ScanEconomyNodes(onProgress)
         local pattern = "%f[%w]" .. lowerKw .. "%f[%W]"
         return string.find(lowerText, pattern) ~= nil
     end
-
-    local function isEconomyCandidate(inst)
-        return inst:IsA("LuaSourceContainer") or inst:IsA("ValueBase") or inst:IsA("Configuration") or inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("GuiButton")
+    
+    local function isCandidate(inst)
+        return inst:IsA("ModuleScript") or inst:IsA("ValueBase") or inst:IsA("Configuration") or inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("GuiButton")
     end
-
-    -- Fase 1: Colectar candidatos rápidamente con poda de ramas
+    
+    -- Fase 1: Colectar candidatos con poda estricta
     local candidateQueue = {}
     local lastYield = tick()
-
+    
     local function walk(parent)
-        if self:IsPrunedBranch(parent) or isIgnoredCoreInstance(parent) then return end
+        if self:IsPrunedBranch(parent) or self:IsIgnoredCoreInstance(parent) then return end
         
         local s, children = pcall(function() return parent:GetChildren() end)
         if s and children then
@@ -140,8 +279,8 @@ function EconomyAuditor:ScanEconomyNodes(onProgress)
                     lastYield = tick()
                 end
                 
-                if not isIgnoredCoreInstance(inst) then
-                    if isEconomyCandidate(inst) then
+                if not self:IsIgnoredCoreInstance(inst) then
+                    if isCandidate(inst) then
                         table.insert(candidateQueue, inst)
                     end
                     if not self:IsPrunedBranch(inst) then
@@ -151,129 +290,159 @@ function EconomyAuditor:ScanEconomyNodes(onProgress)
             end
         end
     end
-
+    
     for _, cont in ipairs(containers) do
-        if cont then
-            walk(cont)
-        end
+        if cont then walk(cont) end
     end
     
-    -- Fase 2: Procesamiento multihilo concurrente
+    -- Fase 2: Inspección Secuencial Cooperativa (Sin contención de workers)
     local total = #candidateQueue
-    local nextIndex = 1
-    local completed = 0
-    local activeWorkers = 6
     local startTime = tick()
     local lastProgressUpdate = 0
+    local knownItemPrices = {}
     
-    local function notifyProgress(currentInstName)
-        local now = tick()
-        if now - lastProgressUpdate >= 0.03 or completed == total then
-            lastProgressUpdate = now
-            local elapsed = math.max(now - startTime, 0.001)
-            local speed = completed / elapsed
-            local eta = (speed > 0) and ((total - completed) / speed) or 0
-            if onProgress then
-                pcall(onProgress, completed, total, currentInstName or "Finalizando...", elapsed, eta, speed)
-            end
-        end
-    end
-    
-    local function workerLoop()
-        local workerYield = tick()
-        while true do
-            local myIdx = nextIndex
-            nextIndex = nextIndex + 1
-            if myIdx > total then break end
-            
-            local inst = candidateQueue[myIdx]
-            if inst then
-                local rawName = inst.Name
-                local path = inst:GetFullName()
-                local isMatch = false
-                local matchedTag = ""
+    for idx = 1, total do
+        local inst = candidateQueue[idx]
+        local rawName = inst.Name
+        local path = inst:GetFullName()
+        local isMatch = false
+        local matchedTag = ""
+        local nodeData = {
+            Instance = inst,
+            Name = rawName,
+            ClassName = inst.ClassName,
+            Path = path,
+        }
+        
+        -- 2.1 Inspección Profunda de Módulos (Table Parsing)
+        if inst:IsA("ModuleScript") then
+            local modAnalysis = self:InspectModuleEconomyTable(inst)
+            if modAnalysis then
+                isMatch = true
+                matchedTag = "ModuleTable(Parsed)"
+                nodeData.Details = modAnalysis
                 
-                for _, kw in ipairs(lexicon) do
-                    if matchesWord(rawName, kw) then
-                        isMatch = true
-                        matchedTag = kw
-                        break
+                -- Almacenar precios conocidos para correlación cruzada con remotes
+                for _, p in ipairs(modAnalysis.Prices) do
+                    knownItemPrices[p.Key:lower()] = p.Value
+                end
+                
+                -- Detectar tablas de probabilidad desbalanceadas
+                for _, lt in ipairs(modAnalysis.LootTables) do
+                    if lt.IsImbalanced then
+                        table.insert(findings.Vulnerabilities, {
+                            Type = "LootMathImbalance",
+                            Severity = "MEDIUM",
+                            Module = path,
+                            TableName = lt.TableName,
+                            Details = lt.ImbalanceReason,
+                        })
                     end
                 end
                 
-                if not isMatch and not inst:IsA("GuiButton") then
-                    local sAttrs, attrs = pcall(function() return inst:GetAttributes() end)
-                    if sAttrs and attrs then
-                        for aName, aVal in pairs(attrs) do
-                            local aLower = tostring(aName):lower()
-                            if aLower:find("chance") or aLower:find("price") or aLower:find("cost") or aLower:find("rate") or aLower:find("luck") or aLower:find("概率") or aLower:find("价格") then
-                                isMatch = true
-                                matchedTag = string.format("Attr(%s = %s)", aName, tostring(aVal))
-                                break
+                table.insert(findings.LootTables, nodeData)
+            end
+        end
+        
+        -- 2.2 Inspección de Atributos Financieros Directos
+        if not isMatch and not inst:IsA("GuiButton") then
+            local sAttrs, attrs = pcall(function() return inst:GetAttributes() end)
+            if sAttrs and attrs then
+                for aName, aVal in pairs(attrs) do
+                    local aLower = tostring(aName):lower()
+                    if aLower:find("chance") or aLower:find("price") or aLower:find("cost") or aLower:find("rate") or aLower:find("luck") or aLower:find("概率") or aLower:find("价格") then
+                        isMatch = true
+                        matchedTag = string.format("Attr(%s = %s)", aName, tostring(aVal))
+                        nodeData.Tag = matchedTag
+                        if inst:IsA("ValueBase") or inst:IsA("Configuration") then
+                            table.insert(findings.ValueContainers, nodeData)
+                        else
+                            table.insert(findings.Shops, nodeData)
+                        end
+                        break
+                    end
+                end
+            end
+        end
+        
+        -- 2.3 Coincidencias Léxicas Contextuales (Sin falsos positivos cosméticos)
+        if not isMatch then
+            local lowerName = rawName:lower()
+            if matchesWord(lowerName, "roulette") or matchesWord(lowerName, "gacha") or matchesWord(lowerName, "wheel") or matchesWord(lowerName, "spin") or lowerName:find("抽奖") or lowerName:find("转盘") or lowerName:find("ルーレット") then
+                isMatch = true
+                nodeData.Tag = "Lexical(Roulette)"
+                table.insert(findings.Roulettes, nodeData)
+            elseif matchesWord(lowerName, "shop") or matchesWord(lowerName, "store") or matchesWord(lowerName, "tienda") or matchesWord(lowerName, "market") or lowerName:find("商店") or lowerName:find("ショップ") then
+                isMatch = true
+                nodeData.Tag = "Lexical(Shop)"
+                table.insert(findings.Shops, nodeData)
+            end
+        end
+        
+        if isMatch then
+            findings.TotalFound = findings.TotalFound + 1
+        end
+        
+        -- Control cooperativo de presupuesto de tiempo (12ms)
+        local now = tick()
+        if now - lastYield > 0.012 then
+            task.wait()
+            lastYield = tick()
+        end
+        
+        if onProgress and (now - lastProgressUpdate >= 0.03 or idx == total) then
+            lastProgressUpdate = now
+            local elapsed = math.max(now - startTime, 0.001)
+            local speed = idx / elapsed
+            local eta = (speed > 0) and ((total - idx) / speed) or 0
+            pcall(onProgress, idx, total, rawName, elapsed, eta, speed)
+        end
+    end
+    
+    -- =========================================================================
+    -- FASE 3: CORRELACIÓN SEMÁNTICA CRUZADA CON ANALIZADOR DE RED
+    -- =========================================================================
+    if self.RemoteAnalyzer and self.RemoteAnalyzer.Logs then
+        for _, remLog in ipairs(self.RemoteAnalyzer.Logs) do
+            local remName = remLog.Name:lower()
+            local isPurchaseRemote = remName:find("buy") or remName:find("purchase") or remName:find("shop") or remName:find("comprar") or remName:find("购买") or remName:find("pay")
+            
+            if isPurchaseRemote or remLog.RiskLevel == "HIGH" then
+                table.insert(findings.CorrelatedPurchaseRemotes, {
+                    RemoteName = remLog.Name,
+                    Path = remLog.Path,
+                    Snippet = remLog.Snippet or (self.RemoteAnalyzer.GenerateCodeSnippet and self.RemoteAnalyzer:GenerateCodeSnippet(remLog.Remote, remLog.Method, remLog.Args)) or "N/A",
+                    ArgsCount = remLog.ArgsCount,
+                })
+                
+                -- Verificación de Vulnerabilidad: ¿El cliente envía precio o cantidad arbitraria?
+                if remLog.Args and #remLog.Args > 0 then
+                    for argIdx, argVal in ipairs(remLog.Args) do
+                        if type(argVal) == "number" and argVal > 0 then
+                            -- Comprobar si coincide con un precio conocido o si parece un precio enviado por el cliente
+                            for pName, pVal in pairs(knownItemPrices) do
+                                if type(pVal) == "number" and pVal == argVal then
+                                    table.insert(findings.Vulnerabilities, {
+                                        Type = "ClientControlledPriceVulnerability",
+                                        Severity = "CRITICAL",
+                                        Remote = remLog.Path,
+                                        ArgIndex = argIdx,
+                                        SuspectedPrice = argVal,
+                                        MatchedItem = pName,
+                                        Details = string.format("El cliente envía el precio (%s) en el argumento %d al llamar a %s. Vulnerable a manipulación de precios si no se valida en el servidor.", tostring(argVal), argIdx, remLog.Name),
+                                    })
+                                    break
+                                end
                             end
                         end
                     end
                 end
-                
-                if isMatch then
-                    findings.TotalFound = findings.TotalFound + 1
-                    local nodeData = {
-                        Instance = inst,
-                        Name = rawName,
-                        ClassName = inst.ClassName,
-                        Path = path,
-                        Tag = matchedTag,
-                    }
-                    
-                    if inst:IsA("ModuleScript") then
-                        table.insert(findings.LootTables, nodeData)
-                    elseif inst:IsA("ValueBase") or inst:IsA("Configuration") then
-                        table.insert(findings.ValueContainers, nodeData)
-                    elseif matchesWord(rawName, "shop") or matchesWord(rawName, "store") or matchesWord(rawName, "buy") or matchesWord(rawName, "tienda") or string.find(rawName, "商店") or string.find(rawName, "购买") or string.find(rawName, "ショップ") then
-                        table.insert(findings.Shops, nodeData)
-                    else
-                        table.insert(findings.Roulettes, nodeData)
-                    end
-                end
-                
-                completed = completed + 1
-                notifyProgress(rawName)
-            end
-            
-            if tick() - workerYield > 0.012 then
-                task.wait()
-                workerYield = tick()
-            end
-        end
-        activeWorkers = activeWorkers - 1
-    end
-    
-    for w = 1, activeWorkers do
-        task.spawn(workerLoop)
-    end
-    
-    while activeWorkers > 0 do
-        task.wait()
-    end
-    
-    notifyProgress("Completado")
-    
-    -- Fase 3: Sincronización con Remotes de Compra/Economía
-    if self.RemoteAnalyzer and self.RemoteAnalyzer.Logs then
-        for _, remLog in ipairs(self.RemoteAnalyzer.Logs) do
-            if remLog.RiskLevel == "HIGH" or remLog.Name:lower():find("buy") or remLog.Name:lower():find("purchase") or remLog.Name:lower():find("spin") or remLog.Name:lower():find("gacha") then
-                table.insert(findings.CorrelatedPurchaseRemotes, {
-                    RemoteName = remLog.Name,
-                    Path = remLog.Path,
-                    Snippet = remLog.Snippet,
-                    ArgsCount = remLog.ArgsCount,
-                })
             end
         end
     end
     
     if self.Logger then
-        self.Logger:Info("ECONOMY", string.format("Auditoría Multihilo de Economía: %d elementos y %d remotes vinculados.", findings.TotalFound, #findings.CorrelatedPurchaseRemotes))
+        self.Logger:Info("ECONOMY", string.format("Auditoría de Economía completada: %d nodos, %d tablas de loot, %d vulnerabilidades encontradas.", findings.TotalFound, #findings.LootTables, #findings.Vulnerabilities))
     end
     
     return findings

@@ -1,20 +1,22 @@
 --[[
     =============================================================================
-    APEX SUITE - STRUCTURAL & STATISTICAL PROFILER
+    APEX SUITE - STRUCTURAL & ARCHITECTURAL PROFILER (DUCK TYPING & DEPENDENCY MAPPER)
     =============================================================================
-    Analiza la topología del juego, identifica frameworks estándar de Roblox
-    (Knit, Flamework, ReplicaService, ByteNet) y genera métricas estadísticas
-    de distribución, densidad y complejidad arquitectónica con poda de ramas
-    y time-slicing para evitar congelamientos de hilo.
+    Identifica arquitecturas y frameworks modernos mediante firmas de código
+    (Duck Typing de Knit, Flamework, ByteNet, BridgeNet2, ReplicaService),
+    mapea el grafo de dependencias de inicialización (require tree) para aislar
+    el script Controlador Maestro del juego y computa estadísticas topológicas
+    en un solo paso cooperativo con presupuesto de 12ms.
 --]]
 
 local StructuralProfiler = {}
 StructuralProfiler.__index = StructuralProfiler
 StructuralProfiler.ClassName = "StructuralProfiler"
 
-function StructuralProfiler.new(logger)
+function StructuralProfiler.new(logger, capabilityManager)
     local self = setmetatable({}, StructuralProfiler)
     self.Logger = logger
+    self.Caps = capabilityManager
     return self
 end
 
@@ -84,22 +86,75 @@ function StructuralProfiler:IsIgnoredCoreInstance(instance)
     return false
 end
 
--- Generador de Perfil Topológico y Estadístico en PASE ÚNICO (Single-Pass Pipeline)
+-- =========================================================================
+-- DUCK TYPING DE FRAMEWORKS POR FIRMAS DE CÓDIGO
+-- =========================================================================
+function StructuralProfiler:DetectFrameworkSignatures(scriptObj, src)
+    local detected = {}
+    if not src or #src == 0 then return detected end
+    
+    -- Knit Framework
+    if src:find("CreateController") or src:find("CreateService") or src:find("KnitClient") or src:find("KnitServer") then
+        detected["Knit"] = "Knit Framework (CreateController / KnitClient API)"
+    end
+    
+    -- Flamework Framework
+    if src:find("@Controller") or src:find("@Service") or src:find("Flamework%.addPaths") or src:find("Flamework%.ignite") then
+        detected["Flamework"] = "Flamework Framework (Decorators / Dependency Injection)"
+    end
+    
+    -- ByteNet Optimized Networking
+    if src:find("ByteNet%.defineNamespace") or src:find("ByteNet%.definePacket") or src:find("bytenet") then
+        detected["ByteNet"] = "ByteNet (High-Performance Binary Buffer Serialization)"
+    end
+    
+    -- BridgeNet2 Networking
+    if src:find("BridgeNet2") or src:find("ReferenceIdentifier") or src:find("CreateBridge") then
+        detected["BridgeNet2"] = "BridgeNet2 (Lightweight Replicated Communication)"
+    end
+    
+    -- ReplicaService / ReplicaController State Sync
+    if src:find("ReplicaService") or src:find("ReplicaController") or src:find("NewClassToken") then
+        detected["ReplicaService"] = "ReplicaService (Server-to-Client State Replication)"
+    end
+    
+    -- Red Networking
+    if src:find("Red%.Server") or src:find("Red%.Client") then
+        detected["Red"] = "Red Networking (Type-Safe RPC)"
+    end
+    
+    return detected
+end
+
+-- =========================================================================
+-- MAPEO DE DEPENDENCIAS DE INICIALIZACIÓN (REQUIRE GRAPH & MASTER CONTROLLER)
+-- =========================================================================
+function StructuralProfiler:ExtractRequires(src)
+    local requires = {}
+    if not src or #src == 0 then return requires end
+    
+    for reqTarget in src:gmatch("require%s*%(%s*([^%)]+)%s*%)") do
+        local cleaned = reqTarget:gsub('"', ''):gsub("'", ""):gsub("%s+", "")
+        table.insert(requires, cleaned)
+    end
+    
+    return requires
+end
+
+-- =========================================================================
+-- GENERADOR DE REPORTE TOPOLÓGICO Y ESTRUCTURAL
+-- =========================================================================
 function StructuralProfiler:GenerateReport()
-    local frameworks = {
-        Knit = false,
-        Flamework = false,
-        ReplicaService = false,
-        ByteNet = false,
-        BridgeNet = false,
-        RoactRodux = false,
-    }
+    local detectedFrameworks = {}
+    local masterControllers = {}
+    local dependencyGraph = {}
     
     local topology = {
         ReplicatedFirst = { Count = 0, LocalScripts = 0, ModuleScripts = 0, Role = "Bootloader / Early Init" },
         ReplicatedStorage = { Count = 0, Remotes = 0, ModuleScripts = 0, Role = "Shared Network & Data" },
         StarterPlayerScripts = { Count = 0, LocalScripts = 0, ModuleScripts = 0, Role = "Client Controllers" },
         StarterCharacterScripts = { Count = 0, LocalScripts = 0, ModuleScripts = 0, Role = "Character Logic" },
+        PlayerGui = { Count = 0, LocalScripts = 0, ModuleScripts = 0, Role = "Interface Controllers" },
     }
     
     local stats = {
@@ -117,11 +172,21 @@ function StructuralProfiler:GenerateReport()
     local lastYield = tick()
     
     local containers = {
-        { Service = game:GetService("ReplicatedStorage"), Key = "ReplicatedStorage" },
         { Service = game:GetService("ReplicatedFirst"), Key = "ReplicatedFirst" },
+        { Service = game:GetService("ReplicatedStorage"), Key = "ReplicatedStorage" },
         { Service = game:GetService("StarterPlayer"), Key = "StarterPlayer" },
         { Service = game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"), Key = "PlayerGui" },
     }
+    
+    local function getScriptSource(inst)
+        if self.Caps then
+            local s, src = pcall(function() return self.Caps:SafeDecompile(inst) end)
+            if s and src then return src end
+        end
+        local s2, src2 = pcall(function() return inst.Source end)
+        if s2 and src2 then return src2 end
+        return ""
+    end
     
     local function processNode(inst, currentDepth, topKey)
         stats.TotalInstances = stats.TotalInstances + 1
@@ -142,32 +207,59 @@ function StructuralProfiler:GenerateReport()
             stats.MaxDepth = currentDepth
         end
         
-        -- Detección de Frameworks en ReplicatedStorage
-        if topKey == "ReplicatedStorage" then
-            local name = inst.Name:lower()
-            if name == "knit" or name == "knitclient" then
-                frameworks.Knit = true
-            elseif name == "flamework" or name == "_flamework" then
-                frameworks.Flamework = true
-            elseif name:find("replicaservice") or name:find("replicacontroller") then
-                frameworks.ReplicaService = true
-            elseif name == "bytenet" then
-                frameworks.ByteNet = true
-            elseif name == "bridgenet" or name == "bridgenet2" then
-                frameworks.BridgeNet = true
-            elseif name == "roact" or name == "rodux" or name == "fusion" then
-                frameworks.RoactRodux = true
+        -- Detección por Nombre
+        local nameLower = inst.Name:lower()
+        if nameLower:find("knit") then detectedFrameworks["Knit"] = "Knit Framework" end
+        if nameLower:find("flamework") then detectedFrameworks["Flamework"] = "Flamework Framework" end
+        if nameLower:find("bytenet") then detectedFrameworks["ByteNet"] = "ByteNet Binary Protocol" end
+        if nameLower:find("bridgenet") then detectedFrameworks["BridgeNet2"] = "BridgeNet2 Networking" end
+        if nameLower:find("replicaservice") or nameLower:find("replicacontroller") then detectedFrameworks["ReplicaService"] = "ReplicaService State Sync" end
+        
+        -- Mapeo de Controladores de Entrada y Dependencias
+        if inst:IsA("LocalScript") and (topKey == "StarterPlayer" or topKey == "ReplicatedFirst") then
+            local path = inst:GetFullName()
+            local src = getScriptSource(inst)
+            
+            -- Duck Typing de Firmas de Código
+            local fwSigns = self:DetectFrameworkSignatures(inst, src)
+            for fwK, fwDesc in pairs(fwSigns) do
+                detectedFrameworks[fwK] = fwDesc
+            end
+            
+            -- Mapeo de Sentencias require(...)
+            local requires = self:ExtractRequires(src)
+            if #requires > 0 then
+                dependencyGraph[path] = requires
+            end
+            
+            -- Identificación de Master Controller / Bootstrapper
+            if nameLower:find("init") or nameLower:find("main") or nameLower:find("client") or nameLower:find("boot") or nameLower:find("loader") or nameLower:find("controller") or #requires >= 3 then
+                table.insert(masterControllers, {
+                    Path = path,
+                    Name = inst.Name,
+                    RequiredModulesCount = #requires,
+                    Dependencies = requires,
+                })
+            end
+        elseif inst:IsA("ModuleScript") then
+            -- Muestreo rápido de firmas en módulos clave
+            if nameLower:find("network") or nameLower:find("controller") or nameLower:find("service") or nameLower:find("manager") then
+                local src = getScriptSource(inst)
+                local fwSigns = self:DetectFrameworkSignatures(inst, src)
+                for fwK, fwDesc in pairs(fwSigns) do
+                    detectedFrameworks[fwK] = fwDesc
+                end
             end
         end
         
         -- Mapeo Topológico por Servicio
-        if topKey == "ReplicatedFirst" or topKey == "ReplicatedStorage" then
+        if topKey == "ReplicatedFirst" or topKey == "ReplicatedStorage" or topKey == "PlayerGui" then
             topology[topKey].Count = topology[topKey].Count + 1
             if inst:IsA("LocalScript") then
                 topology[topKey].LocalScripts = (topology[topKey].LocalScripts or 0) + 1
             elseif inst:IsA("ModuleScript") then
                 topology[topKey].ModuleScripts = (topology[topKey].ModuleScripts or 0) + 1
-            elseif isRemote then
+            elseif isRemote and topKey == "ReplicatedStorage" then
                 topology[topKey].Remotes = (topology[topKey].Remotes or 0) + 1
             end
         elseif topKey == "StarterPlayer" then
@@ -217,14 +309,18 @@ function StructuralProfiler:GenerateReport()
         stats.ScriptRatio = (stats.TotalScripts / stats.TotalInstances) * 100
     end
     
-    local activeFrameworks = {}
-    for fName, active in pairs(frameworks) do
-        if active then table.insert(activeFrameworks, fName) end
+    local activeFrameworkList = {}
+    for fwK, fwDesc in pairs(detectedFrameworks) do
+        table.insert(activeFrameworkList, fwDesc)
     end
-    if #activeFrameworks == 0 then table.insert(activeFrameworks, "Custom / Vanilla Engine Architecture") end
+    if #activeFrameworkList == 0 then
+        table.insert(activeFrameworkList, "Custom / Vanilla Engine Architecture")
+    end
     
     return {
-        Frameworks = activeFrameworks,
+        Frameworks = activeFrameworkList,
+        MasterControllers = masterControllers,
+        DependencyGraph = dependencyGraph,
         Topology = topology,
         Statistics = stats,
     }
