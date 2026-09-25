@@ -123,7 +123,7 @@ if registry and logger and eventBus then
     local heuristic = HeuristicEngine and HeuristicEngine.new(caps, logger, structural)
     if heuristic then registry:Register("HeuristicEngine", heuristic) end
     
-    local remoteAnalyzer = RemoteAnalyzer and RemoteAnalyzer.new(eventBus, logger)
+    local remoteAnalyzer = RemoteAnalyzer and RemoteAnalyzer.new(eventBus, logger, heuristic)
     if remoteAnalyzer then
         registry:Register("RemoteAnalyzer", remoteAnalyzer)
         if hooks then

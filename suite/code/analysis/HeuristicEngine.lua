@@ -337,13 +337,13 @@ function HeuristicEngine:AnalyzeCodeSinglePass(code, rawName, path)
             if counts.Fly == 1 then table.insert(tags, "Fly:BodyVelocity") end
         end
         
-        -- Regla 6: Exposición de Estado Global (_G / shared)
-        if (line:find("_G%.__") or line:find("shared%.__")) and counts.GlobalState < maxFindingsPerRule then
+        -- Regla 6: Exposición de Estado Global / Hooks de Memoria (Categoría Arquitectura / No penaliza AntiCheat)
+        if (line:find("_G%.") or line:find("shared%.")) and counts.GlobalState < maxFindingsPerRule then
             counts.GlobalState = counts.GlobalState + 1
-            score = score + 20
-            categoriesFound["Admin"] = true
-            table.insert(codeFindings, { Desc = "Exposición de Funciones/Banderas Globales (_G/shared)", Line = lineNum, Code = getCleanLine() })
-            if counts.GlobalState == 1 then table.insert(tags, "GlobalState") end
+            score = score + 5 -- Ponderación mínima informativa (no infla el score de amenaza)
+            categoriesFound["Architecture"] = true
+            table.insert(codeFindings, { Desc = "Hook de Memoria / Estado Global Compartido (_G / shared)", Line = lineNum, Code = getCleanLine() })
+            if counts.GlobalState == 1 then table.insert(tags, "Architecture:GlobalMemoryHook") end
         end
         
         -- Regla 7: Azar Transaccional vs Cosmético (Descarta modulación de audio, pitch, rotación y diálogos)
@@ -377,6 +377,53 @@ function HeuristicEngine:AnalyzeCodeSinglePass(code, rawName, path)
     return score, tags, categoriesFound, codeFindings, false, isLibrary
 end
 
+function HeuristicEngine:ExtractRemoteInvocations(code, scriptPath)
+    local invocations = {}
+    if not code or #code == 0 then return invocations end
+    
+    local lineNum = 1
+    for line in code:gmatch("([^\r\n]*)\r?\n?") do
+        -- Buscar invocaciones a FireServer o InvokeServer
+        for remExpr, method, args in line:gmatch("([%w_%.:]+)%s*:%s*([Ff]ire[Ss]erver|[Ii]nvoke[Ss]erver)%s*%((.-)%)") do
+            local cleanRem = remExpr:match("([%w_]+)$") or remExpr
+            local cleanArgs = args:match("^%s*(.-)%s*$") or ""
+            
+            -- Inferir tipos aproximados de los argumentos pasados
+            local argTypes = {}
+            if #cleanArgs > 0 then
+                for argToken in cleanArgs:gmatch("([^,]+)") do
+                    local tToken = argToken:match("^%s*(.-)%s*$")
+                    if tToken:find('^"') or tToken:find("^'") then
+                        table.insert(argTypes, "string(" .. tToken .. ")")
+                    elseif tonumber(tToken) then
+                        table.insert(argTypes, "number(" .. tToken .. ")")
+                    elseif tToken == "true" or tToken == "false" then
+                        table.insert(argTypes, "boolean(" .. tToken .. ")")
+                    elseif tToken:find("Vector3") or tToken:find("CFrame") then
+                        table.insert(argTypes, "Vector/CFrame")
+                    else
+                        table.insert(argTypes, "var(" .. tToken .. ")")
+                    end
+                end
+            end
+            
+            table.insert(invocations, {
+                RemoteName = cleanRem,
+                FullExpression = remExpr,
+                Method = method,
+                ArgumentsRaw = cleanArgs,
+                InferredTypes = #argTypes > 0 and ("(" .. table.concat(argTypes, ", ") .. ")") or "()",
+                LineNumber = lineNum,
+                ScriptPath = scriptPath,
+                Snippet = line:match("^%s*(.-)%s*$") or line,
+            })
+        end
+        lineNum = lineNum + 1
+    end
+    
+    return invocations
+end
+
 -- Análisis directo y focalizado de un script individual (sin recorrido global)
 function HeuristicEngine:AnalyzeScript(instanceOrCode, optionalName)
     local code = nil
@@ -399,6 +446,7 @@ function HeuristicEngine:AnalyzeScript(instanceOrCode, optionalName)
     if not code or #code == 0 then return nil end
     
     local score, tags, categoriesFound, findings, isStaticConfig, isLibrary = self:AnalyzeCodeSinglePass(code, rawName, path)
+    local remoteInvocations = self:ExtractRemoteInvocations(code, path)
     
     -- Análisis de Nombres de Léxico
     for catName, keywords in pairs(self.Lexicon) do
@@ -448,6 +496,7 @@ function HeuristicEngine:AnalyzeScript(instanceOrCode, optionalName)
         Tags = tags,
         Categories = categoriesFound,
         Findings = findings,
+        RemoteInvocations = remoteInvocations,
         IsStaticConfig = isStaticConfig,
         IsLibrary = isLibrary,
         IsAuthorizedAdmin = isAuthorizedAdmin,
@@ -609,7 +658,12 @@ function HeuristicEngine:RunFullAudit(targetContainers, onProgress)
         Combat = {},
         AdminTools = {},
         Admin = {},
+        Architecture = {},
         Remotes = {},
+        CrossReferenceMatrix = {
+            RemotesToCallers = {},
+            ScriptsToRemotes = {},
+        },
         CriticalIssues = 0,
         TotalScanned = 0,
         StructuralProfile = nil,
@@ -628,7 +682,7 @@ function HeuristicEngine:RunFullAudit(targetContainers, onProgress)
             if analysis.Severity == 5 or (analysis.Categories["Admin"] and not analysis.Categories["AntiCheat"]) then
                 table.insert(results.AdminTools, analysis)
             end
-            if analysis.Categories["AntiCheat"] or analysis.Score >= 45 then
+            if analysis.Categories["AntiCheat"] or (analysis.Score >= 55 and not analysis.Categories["Architecture"]) then
                 table.insert(results.AntiCheat, analysis)
             end
             if analysis.Categories["Economy"] then
@@ -640,19 +694,42 @@ function HeuristicEngine:RunFullAudit(targetContainers, onProgress)
             if analysis.Categories["Admin"] then
                 table.insert(results.Admin, analysis)
             end
+            if analysis.Categories["Architecture"] then
+                table.insert(results.Architecture, analysis)
+            end
             if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("UnreliableRemoteEvent") then
                 table.insert(results.Remotes, analysis)
             end
             if analysis.Severity == HeuristicEngine.Severity.CRITICAL then
                 results.CriticalIssues = results.CriticalIssues + 1
             end
+            
+            -- Compilar Matriz de Trazabilidad Código-a-Red (Cross-Reference Matrix)
+            if analysis.RemoteInvocations and #analysis.RemoteInvocations > 0 then
+                results.CrossReferenceMatrix.ScriptsToRemotes[analysis.Path] = analysis.RemoteInvocations
+                for _, inv in ipairs(analysis.RemoteInvocations) do
+                    local rName = inv.RemoteName
+                    if not results.CrossReferenceMatrix.RemotesToCallers[rName] then
+                        results.CrossReferenceMatrix.RemotesToCallers[rName] = {}
+                    end
+                    table.insert(results.CrossReferenceMatrix.RemotesToCallers[rName], {
+                        Script = analysis.Path,
+                        Line = inv.LineNumber,
+                        Method = inv.Method,
+                        ArgumentsRaw = inv.ArgumentsRaw,
+                        InferredTypes = inv.InferredTypes,
+                        Snippet = inv.Snippet,
+                    })
+                end
+            end
         end
     end, onProgress, 6)
     
     self.LastFullAudit = results
+    self.CrossReferenceMatrix = results.CrossReferenceMatrix
     
     if self.Logger then
-        self.Logger:Info("AUDIT", string.format("Escaneo Heurístico Multihilo Completado: %d analizados, %d remotes, %d amenazas críticas.", results.TotalScanned, #results.Remotes, results.CriticalIssues))
+        self.Logger:Info("AUDIT", string.format("Escaneo Heurístico Multihilo Completado: %d analizados, %d remotes, %d referencias de red mapeadas, %d amenazas críticas.", results.TotalScanned, #results.Remotes, #results.CrossReferenceMatrix.RemotesToCallers, results.CriticalIssues))
     end
     
     return results

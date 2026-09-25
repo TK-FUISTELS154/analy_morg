@@ -19,10 +19,11 @@ RemoteAnalyzer.RiskLevel = {
     LOW      = "LOW",      -- Cosméticos, Sonidos, Efectos
 }
 
-function RemoteAnalyzer.new(eventBus, logger)
+function RemoteAnalyzer.new(eventBus, logger, heuristicEngine)
     local self = setmetatable({}, RemoteAnalyzer)
     self.EventBus = eventBus
     self.Logger = logger
+    self.Heuristic = heuristicEngine
     self.Logs = {}
     self.FrequencyMap = {}
     self.SchemaProfiles = {} -- [remoteName] = { Signatures = {}, CallCount = 0, HasVulnerabilities = false }
@@ -36,6 +37,20 @@ function RemoteAnalyzer.new(eventBus, logger)
     self.SpamThreshold = 10
     self.LastCleanupTime = tick()
     return self
+end
+
+function RemoteAnalyzer:SetHeuristicEngine(heuristicEngine)
+    self.Heuristic = heuristicEngine
+end
+
+function RemoteAnalyzer:GetStaticCallers(remoteName)
+    if self.Heuristic and self.Heuristic.CrossReferenceMatrix then
+        local matrix = self.Heuristic.CrossReferenceMatrix.RemotesToCallers
+        if matrix and matrix[remoteName] then
+            return matrix[remoteName]
+        end
+    end
+    return nil
 end
 
 -- =========================================================================
@@ -273,6 +288,7 @@ function RemoteAnalyzer:ProcessRemoteCall(remoteObj, method, args, isScriptCalle
         RiskLevel = risk,
         Callsite = callsite,
         CallingScript = callsite.ScriptPath,
+        StaticCallers = self:GetStaticCallers(remoteName),
         IsScriptCaller = isScriptCaller,
         _cachedSnippet = nil,
     }

@@ -181,25 +181,67 @@ function EconomyAuditor:InspectModuleEconomyTable(mod)
         Prices = {},
         Products = {},
         Multipliers = {},
+        BusinessCatalogs = {}, -- Catálogos de Cañas, Armas, Mascotas, Mejoras con precios y stats
         KeywordsFound = {},
     }
     
     local econKeys = {
         price = "Prices", cost = "Prices", gem = "Prices", coin = "Prices",
         gold = "Prices", diamond = "Prices", robux = "Prices", currency = "Prices",
-        rebirthcost = "Prices", upgradecost = "Prices",
+        rebirthcost = "Prices", upgradecost = "Prices", baseprice = "Prices",
         productid = "Products", devproductid = "Products", gamepassid = "Products",
         multiplier = "Multipliers", boost = "Multipliers", luckmultiplier = "Multipliers",
+        luck = "Multipliers", strength = "Multipliers", speed = "Multipliers",
         ["价格"] = "Prices", ["花费"] = "Prices", ["金币"] = "Prices", ["钻石"] = "Prices",
     }
+    
+    local function extractItemDetails(itemName, itemTable)
+        if type(itemTable) ~= "table" then return nil end
+        local itemInfo = { Name = tostring(itemName), Price = nil, Rarity = nil, Multipliers = {}, OtherStats = {} }
+        local isItem = false
+        
+        for k, v in pairs(itemTable) do
+            local kLower = tostring(k):lower()
+            if (kLower:find("price") or kLower:find("cost") or kLower:find("gem") or kLower:find("coin") or kLower:find("gold")) and type(v) == "number" then
+                itemInfo.Price = v
+                isItem = true
+            elseif kLower:find("rarity") or kLower:find("tier") then
+                itemInfo.Rarity = tostring(v)
+                isItem = true
+            elseif (kLower:find("mult") or kLower:find("luck") or kLower:find("strength") or kLower:find("power") or kLower:find("speed")) and type(v) == "number" then
+                itemInfo.Multipliers[tostring(k)] = v
+                isItem = true
+            elseif type(v) == "number" or type(v) == "string" then
+                itemInfo.OtherStats[tostring(k)] = v
+            end
+        end
+        
+        return isItem and itemInfo or nil
+    end
     
     local function parseTableRecursively(t, prefix, depth)
         if depth > 4 then return end
         
-        -- Comprobar si esta tabla es una tabla de loot
+        -- 1. Comprobar si esta tabla es una tabla de loot / probabilidades
         local lootCheck = self:ValidateLootTable(prefix, t)
         if lootCheck then
             table.insert(analysis.LootTables, lootCheck)
+            analysis.IsEconomyModule = true
+        end
+        
+        -- 2. Comprobar si esta tabla es un catálogo de items de negocio (ej. Cañas, Armas, Mejoras)
+        local detectedCatalog = { Name = prefix, Items = {} }
+        for k, v in pairs(t) do
+            if type(v) == "table" then
+                local item = extractItemDetails(k, v)
+                if item then
+                    table.insert(detectedCatalog.Items, item)
+                end
+            end
+        end
+        
+        if #detectedCatalog.Items >= 2 then
+            table.insert(analysis.BusinessCatalogs, detectedCatalog)
             analysis.IsEconomyModule = true
         end
         
@@ -237,6 +279,7 @@ function EconomyAuditor:ScanEconomyNodes(onProgress)
         Roulettes = {},
         Shops = {},
         LootTables = {},
+        BusinessCatalogs = {}, -- Catálogos de Cañas, Armas, Mascotas, Mejoras
         ValueContainers = {},
         CorrelatedPurchaseRemotes = {},
         Vulnerabilities = {},
@@ -338,6 +381,15 @@ function EconomyAuditor:ScanEconomyNodes(onProgress)
                             Details = lt.ImbalanceReason,
                         })
                     end
+                end
+                
+                for _, cat in ipairs(modAnalysis.BusinessCatalogs) do
+                    table.insert(findings.BusinessCatalogs, {
+                        Module = path,
+                        CatalogName = cat.Name,
+                        Items = cat.Items,
+                        ItemCount = #cat.Items,
+                    })
                 end
                 
                 table.insert(findings.LootTables, nodeData)
