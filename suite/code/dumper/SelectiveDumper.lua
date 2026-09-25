@@ -107,6 +107,7 @@ function SelectiveDumper:DumpInstance(instance, scriptsOnly, depthLimit, current
         Name = instance.Name,
         ClassName = instance.ClassName,
         Path = instance:GetFullName(),
+        Tags = {},
         Attributes = {},
         Properties = {},
         Children = {},
@@ -114,21 +115,50 @@ function SelectiveDumper:DumpInstance(instance, scriptsOnly, depthLimit, current
         BytecodeSize = 0,
     }
     
-    -- 1. Atributos
+    -- 1. Tags de CollectionService
+    pcall(function()
+        local tags = game:GetService("CollectionService"):GetTags(instance)
+        if tags and #tags > 0 then dump.Tags = tags end
+    end)
+    
+    -- 2. Atributos
     local sAttr, attrs = pcall(function() return instance:GetAttributes() end)
     if sAttr and attrs and next(attrs) then dump.Attributes = attrs end
     
-    -- 2. Código Fuente de Scripts
+    -- 3. Propiedades Relevantes según ClassName
+    pcall(function()
+        if instance:IsA("ValueBase") then
+            local sVal, v = pcall(function() return instance.Value end)
+            if sVal then dump.Properties["Value"] = tostring(v) end
+        elseif instance:IsA("ProximityPrompt") then
+            dump.Properties["ActionText"] = instance.ActionText
+            dump.Properties["ObjectText"] = instance.ObjectText
+            dump.Properties["HoldDuration"] = instance.HoldDuration
+            dump.Properties["MaxActivationDistance"] = instance.MaxActivationDistance
+            dump.Properties["Enabled"] = instance.Enabled
+            if instance.KeyboardKeyCode then dump.Properties["KeyCode"] = instance.KeyboardKeyCode.Name end
+        elseif instance:IsA("ClickDetector") then
+            dump.Properties["MaxActivationDistance"] = instance.MaxActivationDistance
+        elseif instance:IsA("TextLabel") or instance:IsA("TextButton") or instance:IsA("TextBox") then
+            dump.Properties["Text"] = instance.Text
+            dump.Properties["Visible"] = instance.Visible
+        elseif instance:IsA("ImageLabel") or instance:IsA("ImageButton") then
+            dump.Properties["Image"] = instance.Image
+            dump.Properties["Visible"] = instance.Visible
+        elseif instance:IsA("Tool") then
+            dump.Properties["RequiresHandle"] = instance.RequiresHandle
+            dump.Properties["CanBeDropped"] = instance.CanBeDropped
+            dump.Properties["ToolTip"] = instance.ToolTip
+        elseif instance:IsA("BaseScript") then
+            dump.Properties["Enabled"] = instance.Enabled
+        end
+    end)
+    
+    -- 4. Código Fuente de Scripts
     if isScript then
         local src = self:SafeDecompile(instance)
         dump.Source = src
         if src then dump.BytecodeSize = #src end
-    end
-    
-    -- 3. Valores
-    if isValue and instance:IsA("ValueBase") then
-        local sVal, v = pcall(function() return instance.Value end)
-        if sVal then dump.Properties["Value"] = tostring(v) end
     end
     
     -- 4. Hijos recursivos con poda
