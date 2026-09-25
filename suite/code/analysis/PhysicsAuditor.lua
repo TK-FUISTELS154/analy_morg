@@ -323,7 +323,7 @@ function PhysicsAuditor:AuditPhysicsRemotes()
 end
 
 -- =============================================================================
--- 4. AUDITORÍA QUIRÚRGICA ENFOCADA EN SCRIPTS DEL JUGADOR
+-- 4. AUDITORÍA QUIRÚRGICA MULTIHILO ENFOCADA EN SCRIPTS DEL JUGADOR
 -- =============================================================================
 
 function PhysicsAuditor:RunFullPhysicsAudit(onProgress)
@@ -384,51 +384,106 @@ function PhysicsAuditor:RunFullPhysicsAudit(onProgress)
 
     report.TotalScriptsScanned = #queue
     local total = #queue
-    local lastYield = tick()
+    if total == 0 then return report end
 
-    for idx, scriptInst in ipairs(queue) do
-        if onProgress then
-            pcall(onProgress, idx, total, "Analizando físicas en " .. scriptInst.Name)
-        end
+    -- =========================================================================
+    -- MOTOR CONCURRENTE MULTIHILO (WORKER POOL CON 8 HILOS PARALELOS)
+    -- =========================================================================
+    local workerCount = math.min(8, math.max(2, #queue))
+    local nextIndex = 1
+    local completed = 0
+    local activeWorkers = workerCount
+    local startTime = tick()
+    local lastProgressUpdate = 0
+    local resultsLock = {}
 
-        local code = nil
-        if self.Caps then
-            code = self.Caps:SafeDecompile(scriptInst)
-        else
-            pcall(function() code = scriptInst.Source end)
-        end
-
-        if code and #code > 0 then
-            local summary, findings = self:AnalyzeScriptPhysicsRules(code, scriptInst:GetFullName())
-            if #findings > 0 or summary.PhysicsScore > 0 then
-                local scriptEntry = {
-                    Instance = scriptInst,
-                    Name = scriptInst.Name,
-                    ClassName = scriptInst.ClassName,
-                    Path = scriptInst:GetFullName(),
-                    Summary = summary,
-                    Findings = findings,
-                }
-                table.insert(report.PhysicsScripts, scriptEntry)
-
-                for _, f in ipairs(findings) do
-                    if f.Severity == "CRITICAL" then
-                        report.CriticalVulnerabilities = report.CriticalVulnerabilities + 1
-                    end
-                    if f.Type:find("WATCHDOG") or f.Type:find("DETECTOR") or f.Type:find("LOCK") then
-                        table.insert(report.WatchdogsDetected, {
-                            Script = scriptInst:GetFullName(),
-                            Finding = f,
-                        })
-                    end
-                end
+    local function notifyProgress(currentInstName)
+        local now = tick()
+        if now - lastProgressUpdate >= 0.02 or completed == total then
+            lastProgressUpdate = now
+            local elapsed = math.max(now - startTime, 0.001)
+            local speed = completed / elapsed
+            local eta = (speed > 0) and ((total - completed) / speed) or 0
+            if onProgress then
+                pcall(onProgress, completed, total, currentInstName or "Finalizando...", elapsed, eta, speed)
             end
         end
+    end
 
-        if tick() - lastYield > 0.012 then
-            task.wait()
-            lastYield = tick()
+    local function workerLoop()
+        local workerYield = tick()
+        while true do
+            local myIdx = nextIndex
+            nextIndex = nextIndex + 1
+            if myIdx > total then break end
+
+            local scriptInst = queue[myIdx]
+            if scriptInst then
+                local code = nil
+                if self.Caps then
+                    code = self.Caps:SafeDecompile(scriptInst)
+                else
+                    pcall(function() code = scriptInst.Source end)
+                end
+
+                if code and #code > 0 then
+                    local summary, findings = self:AnalyzeScriptPhysicsRules(code, scriptInst:GetFullName())
+                    if #findings > 0 or summary.PhysicsScore > 0 then
+                        local scriptEntry = {
+                            Instance = scriptInst,
+                            Name = scriptInst.Name,
+                            ClassName = scriptInst.ClassName,
+                            Path = scriptInst:GetFullName(),
+                            Summary = summary,
+                            Findings = findings,
+                        }
+                        table.insert(resultsLock, scriptEntry)
+                    end
+                end
+
+                completed = completed + 1
+                notifyProgress(scriptInst.Name)
+            end
+
+            if tick() - workerYield > 0.010 then
+                task.wait()
+                workerYield = tick()
+            end
         end
+        activeWorkers = activeWorkers - 1
+    end
+
+    for w = 1, workerCount do
+        task.spawn(workerLoop)
+    end
+
+    while activeWorkers > 0 do
+        task.wait()
+    end
+
+    notifyProgress("Completado")
+
+    -- Consolidar resultados en el reporte
+    for _, scriptEntry in ipairs(resultsLock) do
+        table.insert(report.PhysicsScripts, scriptEntry)
+        for _, f in ipairs(scriptEntry.Findings) do
+            if f.Severity == "CRITICAL" then
+                report.CriticalVulnerabilities = report.CriticalVulnerabilities + 1
+            end
+            if f.Type:find("WATCHDOG") or f.Type:find("DETECTOR") or f.Type:find("LOCK") then
+                table.insert(report.WatchdogsDetected, {
+                    Script = scriptEntry.Path,
+                    Finding = f,
+                })
+            end
+        end
+    end
+
+    if self.Logger then
+        self.Logger:Info("PHYSICS", string.format(
+            "Auditoría Multihilo de Físicas finalizada en %.2fs: %d scripts procesados, %d watchdogs encontrados.",
+            tick() - startTime, total, #report.WatchdogsDetected
+        ))
     end
 
     return report
