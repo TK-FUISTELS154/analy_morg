@@ -40,6 +40,7 @@ function AuditView:Render()
     local modes = {
         { Id = "AntiCheat", Label = "🛡️ Anti-Cheat & Kicks" },
         { Id = "Economy",   Label = "🎰 Lógica & Ruleta" },
+        { Id = "Physics",   Label = "🏃 Físicas & Movimiento" },
         { Id = "Remotes",   Label = "📡 Todos los Remotes" },
         { Id = "FullAudit", Label = "🌐 Auditoría Completa" },
     }
@@ -241,7 +242,19 @@ function AuditView:Render()
                     end
                 end
                 
-            -- MODO 3: Todos los Remotes
+            -- MODO 3: Físicas & Movimiento
+            elseif self.CurrentMode == "Physics" then
+                local physicsAuditor = self.Registry:Get("PhysicsAuditor")
+                if physicsAuditor then
+                    local rep = physicsAuditor:RunFullPhysicsAudit(updateProgressUI)
+                    lastAuditData = rep
+                    local textReport = physicsAuditor:FormatTextReport(rep)
+                    table.insert(lines, textReport)
+                else
+                    table.insert(lines, "-- [Error]: Módulo PhysicsAuditor no encontrado en Registry.")
+                end
+                
+            -- MODO 4: Todos los Remotes
             elseif self.CurrentMode == "Remotes" then
                 local rep = heuristic:RunRemotesAudit(nil, updateProgressUI)
                 lastAuditData = rep

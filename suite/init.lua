@@ -73,6 +73,7 @@ local HeuristicEngine   = ApexImport("code/analysis/HeuristicEngine.lua")
 local RemoteAnalyzer    = ApexImport("code/analysis/RemoteAnalyzer.lua")
 local ActionRecorder    = ApexImport("code/analysis/ActionRecorder.lua")
 local EconomyAuditor    = ApexImport("code/analysis/EconomyAuditor.lua")
+local PhysicsAuditor    = ApexImport("code/analysis/PhysicsAuditor.lua")
 
 -- 4. Cargar Dumper y Exportador (Dumper)
 local VirtualTree       = ApexImport("code/dumper/VirtualTree.lua")
@@ -145,6 +146,9 @@ if registry and logger and eventBus then
     
     local economy = EconomyAuditor and EconomyAuditor.new(heuristic, logger, remoteAnalyzer)
     if economy then registry:Register("EconomyAuditor", economy) end
+    
+    local physics = PhysicsAuditor and PhysicsAuditor.new(heuristic, logger, caps, remoteAnalyzer)
+    if physics then registry:Register("PhysicsAuditor", physics) end
     
     local dumper = SelectiveDumper and SelectiveDumper.new(caps, logger)
     if dumper then registry:Register("SelectiveDumper", dumper) end
