@@ -212,7 +212,17 @@ function AuditView:Render()
             end
         end
         
-        previewBox.Text = table.concat(lines, "\n")
+        local function setSafeText(targetBox, text)
+            local maxLimit = 75000
+            local str = tostring(text or "")
+            if #str > maxLimit then
+                targetBox.Text = string.sub(str, 1, maxLimit) .. string.format("\n\n-- [⚠️ AVISO: Vista previa truncada a %d caracteres por límite de interfaz de Roblox]\n-- [Total: %d caracteres. El reporte completo e intacto se puede exportar con '💾 EXPORTAR JSON']", maxLimit, #str)
+            else
+                targetBox.Text = str
+            end
+        end
+        
+        setSafeText(previewBox, table.concat(lines, "\n"))
         statusLabel.Text = string.format("Escaneo de '%s' finalizado con éxito.", self.CurrentMode)
         runBtn.Text = "⚡ EJECUTAR ESCANEO"
     end)

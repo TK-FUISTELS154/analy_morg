@@ -112,4 +112,19 @@ function Components.CreateTextBox(props)
     return box
 end
 
+function Components.SetSafeText(targetGuiObject, text, maxLimit)
+    maxLimit = maxLimit or 70000
+    if not text then
+        targetGuiObject.Text = ""
+        return
+    end
+    local str = tostring(text)
+    if #str > maxLimit then
+        targetGuiObject.Text = string.sub(str, 1, maxLimit) .. string.format("\n\n-- [⚠️ AVISO: Vista previa truncada a %d caracteres debido al límite de interfaz de Roblox]\n-- [Total: %d caracteres. Para el archivo completo sin truncar, usa 'EXPORTAR JSON' o 'PROYECTO A DISCO']", maxLimit, #str)
+    else
+        targetGuiObject.Text = str
+    end
+end
+
 return Components
+

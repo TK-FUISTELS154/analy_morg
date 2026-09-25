@@ -181,7 +181,16 @@ function DumperView:Render()
         end
         
         local jsonStr = exporter:ToJSON(package)
-        previewBox.Text = jsonStr
+        local function setSafeText(targetBox, text)
+            local maxLimit = 75000
+            local str = tostring(text or "")
+            if #str > maxLimit then
+                targetBox.Text = string.sub(str, 1, maxLimit) .. string.format("\n\n-- [⚠️ AVISO: Vista previa truncada a %d caracteres por límite de interfaz de Roblox]\n-- [Total: %d caracteres. El proyecto completo e intacto se ha guardado en disco / archivo JSON]", maxLimit, #str)
+            else
+                targetBox.Text = str
+            end
+        end
+        setSafeText(previewBox, jsonStr)
         
         if exportToDisk then
             local rootNode = (package.Services and package.Services[1]) or (package.Nodes and package.Nodes[1]) or { Name = "Dump_" .. self.CurrentMode, Children = {} }

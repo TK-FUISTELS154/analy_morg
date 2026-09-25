@@ -157,8 +157,17 @@ function RemoteSpyView:Render()
         end
         
         self.LastBundle = bundle
-        local jsonStr = exporter and exporter:ToJSON(bundle) or "-- [No exporter]"
-        logBox.Text = string.format("==================================================================\n📦 PAQUETE DE EXTRACCIÓN INTELIGENTE: %s\n==================================================================\n%s\n\n[SCRIPT GENERADO]:\n%s", extType, jsonStr, bundle.GeneratedScript or "None")
+        local function setSafeText(targetBox, text)
+            local maxLimit = 75000
+            local str = tostring(text or "")
+            if #str > maxLimit then
+                targetBox.Text = string.sub(str, 1, maxLimit) .. string.format("\n\n-- [⚠️ AVISO: Vista previa truncada a %d caracteres por límite de Roblox]\n-- [Total: %d caracteres. Archivo guardado íntegro en JSON]", maxLimit, #str)
+            else
+                targetBox.Text = str
+            end
+        end
+        
+        setSafeText(logBox, string.format("==================================================================\n📦 PAQUETE DE EXTRACCIÓN INTELIGENTE: %s\n==================================================================\n%s\n\n[SCRIPT GENERADO]:\n%s", extType, jsonStr, bundle.GeneratedScript or "None"))
         
         if exporter then
             exporter:SaveToFile("smart_bundle_" .. extType .. "_" .. tick() .. ".json", jsonStr)
@@ -171,10 +180,18 @@ function RemoteSpyView:Render()
     btnTrace.MouseButton1Click:Connect(function() handleExtraction("FULL_EXECUTION_TRACE") end)
     
     if eventBus then
+        local function appendToLog(lineText)
+            local current = logBox.Text or ""
+            local combined = lineText .. "\n" .. current
+            if #combined > 60000 then
+                combined = string.sub(combined, 1, 60000)
+            end
+            logBox.Text = combined
+        end
+        
         eventBus:Subscribe("RemoteFired", function(entry)
-            local current = logBox.Text
             local riskEmoji = (entry.RiskLevel == "CRITICAL" and "🚨") or (entry.RiskLevel == "HIGH" and "⚔️") or (entry.RiskLevel == "MEDIUM" and "⚠️") or "📡"
-            local line = string.format("%s [%s][%s] %s\n   ▶ Snippet: %s%s",
+            local line = string.format("%s [%s][%s] %s\n   ▶ Snippet: %s%s\n------------------------------------------------------------------",
                 riskEmoji,
                 entry.RiskLevel or "INFO",
                 entry.Method,
@@ -182,13 +199,12 @@ function RemoteSpyView:Render()
                 entry.Snippet or "N/A",
                 entry.CallingScript and ("\n   📍 Emisor: " .. entry.CallingScript) or ""
             )
-            logBox.Text = line .. "\n------------------------------------------------------------------\n" .. current
+            appendToLog(line)
         end)
         
         eventBus:Subscribe("ActionCorrelated", function(act)
-            local current = logBox.Text
-            local line = string.format("🎯 [CORRELACIÓN DETECTADA] Acción: %s | Remotes Vinculados: %d", act.Type, #act.CorrelatedRemotes)
-            logBox.Text = line .. "\n" .. current
+            local line = string.format("🎯 [CORRELACIÓN DETECTADA] Acción: %s | Remotes Vinculados: %d\n------------------------------------------------------------------", act.Type, #act.CorrelatedRemotes)
+            appendToLog(line)
         end)
     end
 end
