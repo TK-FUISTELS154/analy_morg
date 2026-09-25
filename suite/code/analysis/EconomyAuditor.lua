@@ -20,23 +20,39 @@ function EconomyAuditor.new(heuristicEngine, logger, remoteAnalyzer)
 end
 
 function EconomyAuditor:IsPrunedBranch(instance)
+    if instance:IsA("BasePart") or instance:IsA("MeshPart") or instance:IsA("Decal") or instance:IsA("Texture")
+       or instance:IsA("Sound") or instance:IsA("ParticleEmitter") or instance:IsA("Beam") or instance:IsA("Trail")
+       or instance:IsA("Highlight") or instance:IsA("Light") or instance:IsA("SurfaceAppearance")
+       or instance:IsA("SpecialMesh") or instance:IsA("BlockMesh") or instance:IsA("CylinderMesh")
+       or instance:IsA("UIComponent") or instance:IsA("UILayout") or instance:IsA("UIConstraint")
+       or instance:IsA("UICorner") or instance:IsA("UIStroke") or instance:IsA("UIGradient") or instance:IsA("UIPadding")
+       or instance:IsA("UIListLayout") or instance:IsA("UIGridLayout") or instance:IsA("UITableLayout")
+       or instance:IsA("UIPageLayout") or instance:IsA("UIAspectRatioConstraint") or instance:IsA("UISizeConstraint")
+       or instance:IsA("UIScale") or instance:IsA("JointInstance") or instance:IsA("WeldConstraint")
+       or instance:IsA("Attachment") or instance:IsA("Constraint") or instance:IsA("Animation")
+       or instance:IsA("Keyframe") or instance:IsA("KeyframeSequence") or instance:IsA("Pose") or instance:IsA("Bone")
+       or instance:IsA("Clothing") or instance:IsA("BodyColors") or instance:IsA("CharacterMesh")
+       or instance:IsA("Accessory") or instance:IsA("Accoutrement") or instance:IsA("PackageLink")
+       or instance:IsA("HumanoidDescription") or instance:IsA("LocalizationTable") or instance:IsA("Terrain")
+       or instance:IsA("Smoke") or instance:IsA("Fire") or instance:IsA("Sparkles") then
+        return true
+    end
+    
     local name = instance.Name:lower()
     local visualAssets = {
         assets = true, models = true, sounds = true, audio = true,
-        animations = true, textures = true, meshes = true, fx = true,
-        worldfx = true, map = true, vfx = true, lighting = true,
-        decals = true, particles = true, npcs = true, terrain = true,
-        camera = true, props = true, effects = true, visual = true,
+        animations = true, anim = true, anims = true, textures = true,
+        meshes = true, mesh = true, fx = true, worldfx = true, map = true,
+        vfx = true, lighting = true, decals = true, particles = true,
+        npcs = true, terrain = true, camera = true, props = true,
+        effects = true, visual = true, materials = true, clothing = true,
+        accessories = true, rigs = true, characters = true, prefabs = true,
     }
     
     if visualAssets[name] then
-        if not (name:find("script") or name:find("module") or name:find("controller") or name:find("network") or name:find("shop") or name:find("store")) then
+        if not (name:find("script") or name:find("module") or name:find("controller") or name:find("network") or name:find("shop") or name:find("store") or name:find("client") or name:find("service")) then
             return true
         end
-    end
-    
-    if instance:IsA("BasePart") or instance:IsA("MeshPart") or instance:IsA("Decal") or instance:IsA("Texture") or instance:IsA("Sound") or instance:IsA("ParticleEmitter") or instance:IsA("Beam") or instance:IsA("Trail") then
-        return true
     end
     
     return false
