@@ -124,7 +124,7 @@ if registry and logger and eventBus then
     local heuristic = HeuristicEngine and HeuristicEngine.new(caps, logger, structural)
     if heuristic then registry:Register("HeuristicEngine", heuristic) end
     
-    local remoteAnalyzer = RemoteAnalyzer and RemoteAnalyzer.new(eventBus, logger, heuristic)
+    local remoteAnalyzer = RemoteAnalyzer and RemoteAnalyzer.new(eventBus, logger, heuristic, caps, registry)
     if remoteAnalyzer then
         registry:Register("RemoteAnalyzer", remoteAnalyzer)
         if hooks then
@@ -134,7 +134,7 @@ if registry and logger and eventBus then
         end
     end
     
-    local actionRecorder = ActionRecorder and ActionRecorder.new(eventBus, logger, caps)
+    local actionRecorder = ActionRecorder and ActionRecorder.new(eventBus, logger, caps, registry)
     if actionRecorder then
         registry:Register("ActionRecorder", actionRecorder)
         if eventBus then
@@ -148,7 +148,12 @@ if registry and logger and eventBus then
     if economy then registry:Register("EconomyAuditor", economy) end
     
     local physics = PhysicsAuditor and PhysicsAuditor.new(heuristic, logger, caps, remoteAnalyzer)
-    if physics then registry:Register("PhysicsAuditor", physics) end
+    if physics then
+        registry:Register("PhysicsAuditor", physics)
+        if getgenv then
+            getgenv()._APEX_PHYSICS_AUDITOR = physics
+        end
+    end
     
     local dumper = SelectiveDumper and SelectiveDumper.new(caps, logger, registry)
     if dumper then registry:Register("SelectiveDumper", dumper) end

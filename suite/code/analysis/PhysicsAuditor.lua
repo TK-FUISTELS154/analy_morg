@@ -39,6 +39,9 @@ function PhysicsAuditor.new(heuristicEngine, logger, capabilityManager, remoteAn
     self.Caps = capabilityManager
     self.RemoteAnalyzer = remoteAnalyzer
     self.LocalPlayer = Players.LocalPlayer
+    self.RuntimeWatchdogs = {}
+    self.RuntimeWatcherConnections = {}
+    self.IsRuntimeWatcherActive = false
     return self
 end
 
@@ -212,7 +215,117 @@ function PhysicsAuditor:CapturePlayerPhysicsSnapshot()
 end
 
 -- =============================================================================
--- 2. AUDITORÍA ESTÁTICA EXCLUSIVA DE ANTI-CHEATS Y FÍSICAS DEL JUGADOR
+-- 2. DETECCIÓN DINÁMICA DE WATCHDOGS EN TIEMPO REAL (RUNTIME PROBING)
+-- =============================================================================
+
+function PhysicsAuditor:StartRuntimePhysicsWatcher()
+    if self.IsRuntimeWatcherActive then return end
+    self.IsRuntimeWatcherActive = true
+    self:StopRuntimePhysicsWatcher()
+
+    local char = self.LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+    local function registerRuntimeWatchdog(watchdogType, sourceScript, desc, severity)
+        local entry = {
+            Type = watchdogType,
+            Script = sourceScript and (pcall(function() return sourceScript:GetFullName() end) and sourceScript:GetFullName() or tostring(sourceScript)) or "DynamicHook",
+            Description = desc,
+            Severity = severity or "HIGH",
+            Timestamp = tick(),
+        }
+        table.insert(self.RuntimeWatchdogs, 1, entry)
+        if #self.RuntimeWatchdogs > 50 then table.remove(self.RuntimeWatchdogs) end
+
+        -- Inyección inmediata de sospechoso a CapabilityManager
+        if self.Caps and sourceScript and typeof(sourceScript) == "Instance" then
+            self.Caps:RegisterSuspect(sourceScript, "ActiveRuntimePhysicsWatchdog", 95, {
+                WatchdogType = watchdogType,
+                Description = desc,
+                Severity = severity or "HIGH",
+            })
+        end
+
+        if self.Logger then
+            self.Logger:Warn("PHYSICS_WATCHER", string.format("🚨 Watchdog en vivo detectado: [%s] en %s (%s)", watchdogType, entry.Script, desc))
+        end
+    end
+
+    -- 1. Introspección de Conexiones a Propiedades Críticas del Humanoid
+    local getconn = (type(getconnections) == "function" and getconnections)
+        or (self.Caps and self.Caps.APIs and self.Caps.APIs.getconnections)
+
+    if hum and getconn then
+        local criticalProps = { "WalkSpeed", "JumpPower", "JumpHeight", "HipHeight", "PlatformStand" }
+        for _, prop in ipairs(criticalProps) do
+            local sSignal, signal = pcall(function() return hum:GetPropertyChangedSignal(prop) end)
+            if sSignal and signal then
+                local sConn, conns = pcall(getconn, signal)
+                if sConn and type(conns) == "table" then
+                    for _, c in ipairs(conns) do
+                        local fn = c.Function
+                        if fn and type(fn) == "function" then
+                            local scriptObj = nil
+                            pcall(function()
+                                local env = getfenv(fn)
+                                if env and env.script and typeof(env.script) == "Instance" then
+                                    scriptObj = env.script
+                                end
+                            end)
+                            if not scriptObj and debug and debug.getinfo then
+                                pcall(function()
+                                    local info = debug.getinfo(fn)
+                                    if info and info.source then
+                                        local clean = info.source:gsub("^@", "")
+                                        for _, sInst in ipairs(game:GetDescendants()) do
+                                            if sInst:IsA("LuaSourceContainer") and (sInst:GetFullName() == clean or sInst.Name == clean) then
+                                                scriptObj = sInst
+                                                break
+                                            end
+                                        end
+                                    end
+                                end)
+                            end
+
+                            if scriptObj and not self:IsIgnoredCoreInstance(scriptObj) then
+                                registerRuntimeWatchdog("HUMANOID_PROPERTY_LISTENER", scriptObj, "Script escuchando cambios en " .. prop .. " vía conexión en vivo", "HIGH")
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- 2. Monitoreo de Fuerzas Forzadas o Restricciones Instanciadas en Tiempo Real
+    if char then
+        table.insert(self.RuntimeWatcherConnections, char.DescendantAdded:Connect(function(descendant)
+            if descendant:IsA("VectorForce") or descendant:IsA("LinearVelocity") or descendant:IsA("BodyVelocity")
+               or descendant:IsA("BodyPosition") or descendant:IsA("AlignPosition") or descendant:IsA("BodyGyro") then
+                local parentPart = descendant.Parent
+                if parentPart and (parentPart == hrp or parentPart.Name:find("Torso") or parentPart.Name:find("Root")) then
+                    registerRuntimeWatchdog("UNAUTHORIZED_PHYSICS_FORCE", descendant, string.format("Fuerza física forzada '%s' (%s) acoplada a %s", descendant.Name, descendant.ClassName, parentPart.Name), "MEDIUM")
+                end
+            end
+        end))
+    end
+
+    if self.Logger then
+        self.Logger:Info("PHYSICS_WATCHER", "Vigilante Dinámico de Físicas en Tiempo Real activado (Runtime Probing).")
+    end
+end
+
+function PhysicsAuditor:StopRuntimePhysicsWatcher()
+    for _, conn in ipairs(self.RuntimeWatcherConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(self.RuntimeWatcherConnections)
+    self.IsRuntimeWatcherActive = false
+end
+
+-- =============================================================================
+-- 3. AUDITORÍA ESTÁTICA EXCLUSIVA DE ANTI-CHEATS Y FÍSICAS DEL JUGADOR
 -- =============================================================================
 
 function PhysicsAuditor:AnalyzeScriptPhysicsRules(code, scriptPath)
@@ -327,7 +440,7 @@ function PhysicsAuditor:AnalyzeScriptPhysicsRules(code, scriptPath)
 end
 
 -- =============================================================================
--- 3. AUDITORÍA DE RED: REMOTES DE MOVIMIENTO CON FRONTERAS LÉXICAS
+-- 4. AUDITORÍA DE RED: REMOTES DE MOVIMIENTO CON MATRIZ CRUZADA Y FIRMAS
 -- =============================================================================
 
 function PhysicsAuditor:AuditPhysicsRemotes()
@@ -337,7 +450,6 @@ function PhysicsAuditor:AuditPhysicsRemotes()
         "dash", "sprint", "velocity", "flight", "fly", "jump", "slide", "roll", "position"
     }
 
-    -- Escanear únicamente contenedores estándar de comunicación de red
     local searchContainers = {
         ReplicatedStorage,
         self.LocalPlayer and self.LocalPlayer:FindFirstChild("PlayerScripts"),
@@ -364,14 +476,26 @@ function PhysicsAuditor:AuditPhysicsRemotes()
                             end
                         end
 
-                        -- 2. Delimitación léxica para "move": descartar prefijos como "remove" (ej: PotionRemove)
-                        if not isMatch and not lowerName:find("remove") and not lowerName:find("unmove") then
+                        -- 2. Delimitación léxica para "move": descartar prefijos como "remove"
+                        if not isMatch and not lowerName:find("remove") and not lowerName:find("unmove") and not lowerName:find("clear") then
                             if lowerName:match("%f[%a]move%f[%A]") or lowerName:find("movement") then
                                 isMatch = true
                             end
                         end
 
-                        if isMatch then
+                        -- 3. Validación Cruzada con Perfiles de Esquema de RemoteAnalyzer
+                        local schemaProfile = self.RemoteAnalyzer and self.RemoteAnalyzer.SchemaProfiles and self.RemoteAnalyzer.SchemaProfiles[inst.Name]
+                        local hasVectorOrCFrame = false
+                        if schemaProfile and schemaProfile.Signatures then
+                            for sig, _ in pairs(schemaProfile.Signatures) do
+                                if sig:find("Vector3") or sig:find("CFrame") then
+                                    hasVectorOrCFrame = true
+                                    break
+                                end
+                            end
+                        end
+
+                        if isMatch or hasVectorOrCFrame then
                             local risk = PhysicsAuditor.RiskLevel.MEDIUM
                             local reco = "Revisar si este remoto valida la posición en el servidor."
                             if lowerName:find("teleport") or lowerName:find("setcframe") or lowerName:find("setpos") or lowerName:find("setposition") then
@@ -380,6 +504,9 @@ function PhysicsAuditor:AuditPhysicsRemotes()
                             elseif lowerName:find("dash") or lowerName:find("velocity") or lowerName:find("sprint") or lowerName:find("speed") then
                                 risk = PhysicsAuditor.RiskLevel.HIGH
                                 reco = "⚔️ Alto: Control de velocidad/impulso de movimiento."
+                            elseif hasVectorOrCFrame then
+                                risk = PhysicsAuditor.RiskLevel.HIGH
+                                reco = "📡 Alto: Transmisión confirmada de Vector3/CFrame en red."
                             end
 
                             table.insert(physicsRemotes, {
@@ -389,6 +516,7 @@ function PhysicsAuditor:AuditPhysicsRemotes()
                                 Path = inst:GetFullName(),
                                 Risk = risk,
                                 Recommendation = reco,
+                                TransmitsCoordinates = hasVectorOrCFrame,
                             })
                         end
                     end
@@ -652,10 +780,11 @@ end
 function PhysicsAuditor:GenerateMovementTestScript()
     return [=[--[[
     =============================================================================
-    APEX SUITE - STANDALONE PLAYER PHYSICS & MOVEMENT TESTER
+    APEX SUITE - STANDALONE PLAYER PHYSICS & MOVEMENT TOLERANCE TESTER
     =============================================================================
     Script de prueba parametrizado para validar respuesta a cambios de física
-    del jugador (WalkSpeed, Vuelo, Noclip, Teleport).
+    del jugador (WalkSpeed, Vuelo, Noclip, Teleport) y medir tolerancia del servidor
+    a desincronizaciones y rebobinados de red (Rollback / Rubberband Testing).
 --]]
 
 local Players = game:GetService("Players")
@@ -668,6 +797,7 @@ local Tester = {
     IsFlying = false,
     IsNoclipping = false,
     Connections = {},
+    Results = {},
 }
 
 function Tester.SetSpeed(newSpeed)
@@ -726,6 +856,136 @@ function Tester.ToggleFly(enable, speed)
         if att then att:Destroy() end
         print("[APEX PHYSICS] Vuelo Desactivado.")
     end
+end
+
+--[[
+    Auditoría de Tolerancia de Velocidad (Speed Threshold & Rollback Testing)
+    Evalúa desplazamientos incrementales (20, 30, 50, 100 studs/s) y detecta
+    si el servidor fuerza un rebobinado de posición (Rubberbanding).
+--]]
+function Tester.RunSpeedThresholdAudit(onComplete)
+    task.spawn(function()
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not hrp or not hum then
+            warn("[APEX PHYSICS] No se pudo encontrar HumanoidRootPart para el test de rollback.")
+            return
+        end
+
+        local speedSteps = { 20, 30, 50, 75, 100, 150 }
+        local auditResults = {}
+        local initialSpeed = hum.WalkSpeed
+
+        print("---------------------------------------------------------")
+        print("  INICIANDO TEST DE TOLERANCIA Y ROLLBACK DE VELOCIDAD")
+        print("---------------------------------------------------------")
+
+        for _, testSpeed in ipairs(speedSteps) do
+            hum.WalkSpeed = testSpeed
+            local startPos = hrp.Position
+            local sampleDuration = 1.0 -- Segundos de muestreo por velocidad
+            local startTime = tick()
+            local maxDisplacement = 0
+            local rollbackDetected = false
+            local lastPos = startPos
+
+            while (tick() - startTime) < sampleDuration do
+                task.wait(0.1)
+                local curPos = hrp.Position
+                local currentDelta = (curPos - lastPos).Magnitude
+                -- Si la posición vuelve abruptamente hacia atrás mientras se mueve
+                if (curPos - startPos).Magnitude < (lastPos - startPos).Magnitude - 5 and currentDelta > 4 then
+                    rollbackDetected = true
+                end
+                lastPos = curPos
+                local totalMoved = (curPos - startPos).Magnitude
+                if totalMoved > maxDisplacement then
+                    maxDisplacement = totalMoved
+                end
+            end
+
+            local theoreticalDist = testSpeed * sampleDuration
+            local efficiencyRatio = theoreticalDist > 0 and (maxDisplacement / theoreticalDist) or 0
+
+            local stepResult = {
+                SpeedTested = testSpeed,
+                Displacement = maxDisplacement,
+                Theoretical = theoreticalDist,
+                Efficiency = efficiencyRatio,
+                RollbackDetected = rollbackDetected or (efficiencyRatio < 0.35 and testSpeed > 25),
+                Passed = not rollbackDetected and (efficiencyRatio >= 0.5 or maxDisplacement < 1)
+            }
+            table.insert(auditResults, stepResult)
+
+            local statusStr = stepResult.RollbackDetected and "🚨 ROLLBACK / RECHAZO DETECTADO" or "✅ TOLERADO"
+            print(string.format("  [VELOCIDAD %d studs/s] Desplazamiento: %.1f / %.1f studs | Estado: %s",
+                testSpeed, maxDisplacement, theoreticalDist, statusStr))
+            
+            task.wait(0.5)
+        end
+
+        hum.WalkSpeed = initialSpeed
+        Tester.Results.SpeedAudit = auditResults
+        print("---------------------------------------------------------")
+        print("  TEST DE TOLERANCIA COMPLETADO CON ÉXITO")
+        print("---------------------------------------------------------")
+
+        if onComplete then
+            onComplete(auditResults)
+        end
+    end)
+end
+
+--[[
+    Auditoría de Tolerancia de Teletransporte Milimétrico / Rango
+--]]
+function Tester.RunTeleportToleranceAudit(onComplete)
+    task.spawn(function()
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        local distSteps = { 5, 10, 20, 50, 100, 250, 500 }
+        local tpResults = {}
+
+        print("---------------------------------------------------------")
+        print("  INICIANDO TEST DE TOLERANCIA DE TELETRANSPORTE")
+        print("---------------------------------------------------------")
+
+        for _, dist in ipairs(distSteps) do
+            local startCFrame = hrp.CFrame
+            local targetCFrame = startCFrame * CFrame.new(0, 0, -dist)
+            
+            hrp.CFrame = targetCFrame
+            task.wait(0.25)
+            
+            local finalPos = hrp.Position
+            local actualDist = (finalPos - startCFrame.Position).Magnitude
+            local rollbackDist = (finalPos - targetCFrame.Position).Magnitude
+            local isRollback = rollbackDist > 3
+
+            local tpRes = {
+                RequestedDistance = dist,
+                ActualDistance = actualDist,
+                RollbackDetected = isRollback,
+                Passed = not isRollback
+            }
+            table.insert(tpResults, tpRes)
+
+            local statusStr = isRollback and string.format("🚨 RECHAZADO (Rebobinado %.1f studs)", rollbackDist) or "✅ ACEPTADO"
+            print(string.format("  [DISTANCIA %d studs] Desplazamiento Real: %.1f | Estado: %s",
+                dist, actualDist, statusStr))
+
+            -- Restaurar posición segura
+            hrp.CFrame = startCFrame
+            task.wait(0.3)
+        end
+
+        Tester.Results.TeleportAudit = tpResults
+        print("---------------------------------------------------------")
+        if onComplete then onComplete(tpResults) end
+    end)
 end
 
 return Tester

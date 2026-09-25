@@ -15,10 +15,11 @@ SelectiveDumper.__index = SelectiveDumper
 SelectiveDumper.ClassName = "SelectiveDumper"
 
 SelectiveDumper.DumpModes = {
-    HEURISTIC_FINDINGS = "HEURISTIC_FINDINGS", -- Solo donde hubo detección
-    DEPENDENCY_CHAIN   = "DEPENDENCY_CHAIN",   -- Cadena de código emisor + remotes + módulos
-    MANUAL_TREE        = "MANUAL_TREE",        -- Nodos seleccionados en el árbol
-    FULL_ENVIRONMENT   = "FULL_ENVIRONMENT",   -- Todos los scripts del juego
+    HEURISTIC_FINDINGS    = "HEURISTIC_FINDINGS",    -- Solo donde hubo detección
+    DEPENDENCY_CHAIN      = "DEPENDENCY_CHAIN",      -- Cadena de código emisor + remotes + módulos
+    MANUAL_TREE           = "MANUAL_TREE",           -- Nodos seleccionados en el árbol
+    FULL_ENVIRONMENT      = "FULL_ENVIRONMENT",      -- Todos los scripts del juego
+    RUNTIME_INTERACTIONS  = "RUNTIME_INTERACTIONS",  -- Exclusivamente carpetas/scripts interactuados en vivo y sus remotes
 }
 
 function SelectiveDumper.new(capabilityManager, logger, registry)
@@ -501,6 +502,146 @@ function SelectiveDumper:DumpFullEnvironment(onProgress)
     
     if self.Logger then
         self.Logger:Info("DUMPER", string.format("Volcado Total Multihilo completado: %d scripts y %d remotes extraídos de %d servicios.", dumpPackage.TotalScriptsDumped, dumpPackage.TotalRemotesDumped, #dumpPackage.Services))
+    end
+    
+    return dumpPackage
+end
+
+-- =============================================================================
+-- MODO 5: Extracción de Interacciones en Vivo (RUNTIME_INTERACTIONS)
+-- =============================================================================
+-- Extrae exclusivamente las carpetas, scripts locales y módulos con los que interactuaste
+-- físicamente, junto con los remotos que dispararon, descompilando su código e ignorando el resto.
+function SelectiveDumper:DumpRuntimeInteractions(onProgress)
+    local dumpPackage = {
+        Mode = SelectiveDumper.DumpModes.RUNTIME_INTERACTIONS,
+        Timestamp = tick(),
+        TotalExtracted = 0,
+        ExtractedContainers = {},
+        ExtractedScripts = {},
+        CorrelatedRemotes = {},
+    }
+    
+    local extractedMap = {}
+    local scriptMap = {}
+    local remoteMap = {}
+    local liveSuspects = {}
+    
+    -- 1. Desde CapabilityManager:GetRuntimeSuspects()
+    if self.Caps and self.Caps.GetRuntimeSuspects then
+        local suspects = self.Caps:GetRuntimeSuspects()
+        for _, s in ipairs(suspects) do
+            table.insert(liveSuspects, s)
+        end
+    end
+    
+    -- 2. Desde ActionRecorder
+    local actionRecorder = self.Registry and self.Registry:Get("ActionRecorder")
+    if actionRecorder then
+        if actionRecorder.GetCorrelatedSuspects then
+            local recSuspects = actionRecorder:GetCorrelatedSuspects()
+            for _, s in ipairs(recSuspects) do
+                table.insert(liveSuspects, s)
+            end
+        end
+        for _, act in ipairs(actionRecorder:GetTimeline() or {}) do
+            for _, ctrl in ipairs(act.ControllingScripts or {}) do
+                if ctrl.Instance and not scriptMap[ctrl.Path] then
+                    scriptMap[ctrl.Path] = true
+                    local code = self:SafeDecompile(ctrl.Instance)
+                    table.insert(dumpPackage.ExtractedScripts, {
+                        Name = ctrl.Name,
+                        Path = ctrl.Path,
+                        ClassName = ctrl.ClassName,
+                        ActionType = act.Type,
+                        Code = code,
+                    })
+                end
+            end
+            for _, rem in ipairs(act.CorrelatedRemotes or {}) do
+                if rem.Path and not remoteMap[rem.Path] then
+                    remoteMap[rem.Path] = true
+                    table.insert(dumpPackage.CorrelatedRemotes, {
+                        Name = rem.Name,
+                        Path = rem.Path,
+                        Method = rem.Method,
+                        RiskLevel = rem.RiskLevel,
+                        Confidence = rem.Confidence,
+                        TypeSignature = rem.TypeSignature,
+                        Snippet = rem.Snippet,
+                    })
+                end
+            end
+        end
+    end
+    
+    -- 3. Desde RemoteAnalyzer
+    local remoteAnalyzer = self.Registry and self.Registry:Get("RemoteAnalyzer")
+    if remoteAnalyzer and remoteAnalyzer.GetHighRiskCallers then
+        for _, caller in ipairs(remoteAnalyzer:GetHighRiskCallers()) do
+            table.insert(liveSuspects, {
+                Path = caller.Path,
+                Score = caller.Score,
+                Tags = { "ActiveRemoteCaller", caller.RiskLevel },
+            })
+        end
+    end
+    
+    -- 4. Procesar sospechosos y volcar instancias
+    local totalSuspects = #liveSuspects
+    for idx, susp in ipairs(liveSuspects) do
+        local inst = susp.Instance
+        if not inst and susp.Path then
+            pcall(function()
+                local parts = string.split(susp.Path, ".")
+                local curr = game
+                for _, p in ipairs(parts) do
+                    curr = curr:FindFirstChild(p)
+                    if not curr then break end
+                end
+                inst = curr
+            end)
+        end
+        
+        if inst then
+            if inst:IsA("LuaSourceContainer") then
+                local fullName = inst:GetFullName()
+                if not scriptMap[fullName] then
+                    scriptMap[fullName] = true
+                    table.insert(dumpPackage.ExtractedScripts, {
+                        Name = inst.Name,
+                        Path = fullName,
+                        ClassName = inst.ClassName,
+                        Reason = susp.Tags and table.concat(susp.Tags, ", ") or "RuntimeSuspect",
+                        Code = self:SafeDecompile(inst),
+                    })
+                end
+            end
+            
+            local parentFolder = inst.Parent or inst
+            if not extractedMap[parentFolder] then
+                extractedMap[parentFolder] = true
+                local containerDump = self:DumpInstance(parentFolder, true, 4)
+                if containerDump then
+                    table.insert(dumpPackage.ExtractedContainers, {
+                        Tags = susp.Tags or { "LiveInteraction" },
+                        Score = susp.Score or 100,
+                        Path = parentFolder:GetFullName(),
+                        Data = containerDump,
+                    })
+                    dumpPackage.TotalExtracted = dumpPackage.TotalExtracted + 1
+                end
+            end
+        end
+
+        if onProgress and totalSuspects > 0 then
+            pcall(onProgress, idx, totalSuspects, susp.Path or (inst and inst.Name) or "Suspect")
+        end
+    end
+    
+    if self.Logger then
+        self.Logger:Info("DUMPER", string.format("Modo RUNTIME_INTERACTIONS: %d contenedores, %d scripts interactuados y %d remotes extraídos.",
+            dumpPackage.TotalExtracted, #dumpPackage.ExtractedScripts, #dumpPackage.CorrelatedRemotes))
     end
     
     return dumpPackage

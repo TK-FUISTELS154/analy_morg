@@ -114,17 +114,82 @@ end
 -- =============================================================================
 
 function ActionRecorder:GetCurrentPlayerSnapshot()
-    local snap = {
-        Timestamp = tick(),
-        CFrame = nil,
-        Health = 100,
-        MaxHealth = 100,
-        EquippedTool = nil,
-        MouseTarget = nil,
-        MouseHit = nil,
-        IsAlive = true,
-    }
+    -- 1. Intentar obtener el snapshot oficial de 24 parámetros desde PhysicsAuditor
+    local physicsAuditor = (self.Registry and self.Registry:Get("PhysicsAuditor"))
+        or (self.Caps and self.Caps.PhysicsAuditor)
+        or (getgenv and getgenv()._APEX_PHYSICS_AUDITOR)
+    
+    local snap = nil
+    if physicsAuditor and type(physicsAuditor.CapturePlayerPhysicsSnapshot) == "function" then
+        local s, res = pcall(function() return physicsAuditor:CapturePlayerPhysicsSnapshot() end)
+        if s and type(res) == "table" then
+            snap = res
+        end
+    end
 
+    -- 2. Estructura fallback si PhysicsAuditor aún no está inicializado
+    if not snap then
+        snap = {
+            Timestamp = tick(),
+            IsAlive = true,
+            Gravity = Workspace.Gravity,
+            FallenPartsDestroyHeight = Workspace.FallenPartsDestroyHeight,
+            WalkSpeed = 16,
+            JumpPower = 50,
+            JumpHeight = 7.2,
+            UseJumpPower = true,
+            HipHeight = 0,
+            MaxSlopeAngle = 89,
+            AutoRotate = true,
+            PlatformStand = false,
+            Sit = false,
+            HumanoidState = "None",
+            MoveDirection = Vector3.zero,
+            MoveDirectionMagnitude = 0,
+            Position = Vector3.zero,
+            CFrame = nil,
+            LinearVelocity = Vector3.zero,
+            AngularVelocity = Vector3.zero,
+            HorizontalSpeed = 0,
+            VerticalSpeed = 0,
+            AssemblyMass = 0,
+            CanCollide = true,
+            TorsoCanCollide = nil,
+            UpperTorsoCanCollide = nil,
+            LowerTorsoCanCollide = nil,
+            AnatomicalCollisions = {},
+            FloorMaterial = "None",
+            FloorDistance = nil,
+            ForcesDetected = {},
+            NetworkOwnership = "Client",
+            Health = 100,
+            MaxHealth = 100,
+        }
+
+        pcall(function()
+            local char = self.LocalPlayer.Character
+            if char then
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    snap.Position = hrp.Position
+                    snap.CFrame = tostring(hrp.CFrame)
+                    snap.AssemblyMass = hrp.AssemblyMass
+                end
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    snap.WalkSpeed = hum.WalkSpeed
+                    snap.Health = hum.Health
+                    snap.MaxHealth = hum.MaxHealth
+                    snap.IsAlive = hum.Health > 0
+                    snap.UseJumpPower = hum.UseJumpPower
+                    snap.MoveDirection = hum.MoveDirection
+                    snap.MoveDirectionMagnitude = hum.MoveDirection.Magnitude
+                end
+            end
+        end)
+    end
+
+    -- 3. Enriquecer con telemetría de interacción del cursor y herramientas
     pcall(function()
         local mouse = self.LocalPlayer:GetMouse()
         if mouse then
@@ -134,18 +199,10 @@ function ActionRecorder:GetCurrentPlayerSnapshot()
 
         local char = self.LocalPlayer.Character
         if char then
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if hrp then snap.CFrame = tostring(hrp.Position) end
-
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum then
-                snap.Health = hum.Health
-                snap.MaxHealth = hum.MaxHealth
-                snap.IsAlive = hum.Health > 0
-            end
-
             local tool = char:FindFirstChildOfClass("Tool")
-            if tool then snap.EquippedTool = self:GetCachedPath(tool) end
+            if tool then
+                snap.EquippedTool = self:GetCachedPath(tool)
+            end
         end
     end)
 

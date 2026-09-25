@@ -304,10 +304,11 @@ function DumperView:Render()
     modeBar.Parent = frame
 
     local modes = {
-        { Id = "MANUAL_TREE",        Label = "🌲 Árbol Manual Quirúrgico" },
-        { Id = "HEURISTIC_FINDINGS", Label = "🎯 Hallazgos Heurísticos" },
-        { Id = "DEPENDENCY_CHAIN",   Label = "🔗 Cadena de Dependencias" },
-        { Id = "FULL_ENVIRONMENT",   Label = "🌐 Entorno Total Podado" },
+        { Id = "MANUAL_TREE",          Label = "🌲 Árbol Manual" },
+        { Id = "RUNTIME_INTERACTIONS", Label = "🎯 Interacciones en Vivo" },
+        { Id = "HEURISTIC_FINDINGS",   Label = "🛡️ Hallazgos Heurísticos" },
+        { Id = "DEPENDENCY_CHAIN",     Label = "🔗 Dependencias" },
+        { Id = "FULL_ENVIRONMENT",     Label = "🌐 Entorno Total" },
     }
     local modeBtns = {}
     local modeWidth = 1 / #modes
@@ -1593,7 +1594,9 @@ function DumperView:Render()
                 treeStatus.Text = string.format("⏳ [%d/%d] %s | ETA: ~%.1fs", curr, total, tostring(name or ""):sub(1, 20), eta)
             end
 
-            if self.CurrentMode == "HEURISTIC_FINDINGS" then
+            if self.CurrentMode == "RUNTIME_INTERACTIONS" then
+                package = dumper:DumpRuntimeInteractions(onProgress)
+            elseif self.CurrentMode == "HEURISTIC_FINDINGS" then
                 local audit = heuristic and heuristic:RunFullAudit(nil, onProgress)
                 package = dumper:DumpHeuristicFindings(audit, onProgress)
             elseif self.CurrentMode == "DEPENDENCY_CHAIN" then

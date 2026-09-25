@@ -19,14 +19,16 @@ RemoteAnalyzer.RiskLevel = {
     LOW      = "LOW",      -- Cosméticos, Sonidos, Efectos
 }
 
-function RemoteAnalyzer.new(eventBus, logger, heuristicEngine)
+function RemoteAnalyzer.new(eventBus, logger, heuristicEngine, capabilityManager, registry)
     local self = setmetatable({}, RemoteAnalyzer)
     self.EventBus = eventBus
     self.Logger = logger
     self.Heuristic = heuristicEngine
+    self.Caps = capabilityManager or (heuristicEngine and heuristicEngine.Caps)
+    self.Registry = registry
     self.Logs = {}
     self.FrequencyMap = {}
-    self.SchemaProfiles = {} -- [remoteName] = { Signatures = {}, CallCount = 0, HasVulnerabilities = false }
+    self.SchemaProfiles = {} -- [remoteName] = { Signatures = {}, CallCount = 0, HasVariadicSignature = false, SuspiciousClientArgs = false }
     self.IgnoredRemotes = {
         ["characteranims"] = true,
         ["sounddispatcher"] = true,
@@ -37,6 +39,13 @@ function RemoteAnalyzer.new(eventBus, logger, heuristicEngine)
     self.SpamThreshold = 10
     self.LastCleanupTime = tick()
     return self
+end
+
+function RemoteAnalyzer:SetRegistry(registry)
+    self.Registry = registry
+    if registry and not self.Caps then
+        self.Caps = registry:Get("CapabilityManager")
+    end
 end
 
 function RemoteAnalyzer:SetHeuristicEngine(heuristicEngine)
@@ -322,21 +331,51 @@ function RemoteAnalyzer:ProcessRemoteCall(remoteObj, method, args, isScriptCalle
         table.remove(self.Logs)
     end
     
-    -- Inyección dinámica de sospechosos de alto riesgo hacia el RuntimeSuspectRegistry
-    local caps = self.Caps or (self.Heuristic and self.Heuristic.Caps)
-    if caps and (risk == RemoteAnalyzer.RiskLevel.CRITICAL or risk == RemoteAnalyzer.RiskLevel.HIGH) then
-        local targetInst = callsite.ScriptInstance or remoteObj
-        caps:RegisterSuspect(targetInst, "ActiveRemoteCaller", (risk == RemoteAnalyzer.RiskLevel.CRITICAL) and 100 or 85, {
-            RemotePath = logEntry.Path,
-            Method = logEntry.Method,
-            RiskLevel = risk,
-            CallingScript = callsite.ScriptPath,
-            Signature = signature,
-        })
+    -- Inyección dinámica de sospechosos de alto riesgo / parámetros manipulables hacia el RuntimeSuspectRegistry
+    local caps = self.Caps or (self.Heuristic and self.Heuristic.Caps) or (self.Registry and self.Registry:Get("CapabilityManager"))
+    if caps then
+        -- 1. Si el remoto es de riesgo ALTO o CRÍTICO
+        if risk == RemoteAnalyzer.RiskLevel.CRITICAL or risk == RemoteAnalyzer.RiskLevel.HIGH then
+            local targetInst = callsite.ScriptInstance or remoteObj
+            caps:RegisterSuspect(targetInst, "ActiveRemoteCaller", (risk == RemoteAnalyzer.RiskLevel.CRITICAL) and 100 or 85, {
+                RemotePath = logEntry.Path,
+                Method = logEntry.Method,
+                RiskLevel = risk,
+                CallingScript = callsite.ScriptPath,
+                Signature = signature,
+            })
+            if remoteObj and remoteObj ~= targetInst then
+                caps:RegisterSuspect(remoteObj, "HighPriorityTargetRemote", (risk == RemoteAnalyzer.RiskLevel.CRITICAL) and 100 or 85, {
+                    RemotePath = logEntry.Path,
+                    RiskLevel = risk,
+                    Signature = signature,
+                })
+            end
+        end
+
+        -- 2. Si el perfilador de esquemas detecta parámetros numéricos manipulables o desprotegidos
+        if profile.SuspiciousClientArgs then
+            caps:RegisterSuspect(remoteObj, "ExploitableNumericParameter", 100, {
+                RemotePath = logEntry.Path,
+                Reason = "Manipulable numeric parameter detected in transactional context",
+                Signature = signature,
+            })
+            if self.Logger then
+                self.Logger:Vuln("REMOTESPY", string.format("🚨 Parámetro manipulable detectado en remoto: %s (%s)", remoteName, signature))
+            end
+        end
     end
 
     if self.Logger and risk == RemoteAnalyzer.RiskLevel.CRITICAL then
         self.Logger:Vuln("REMOTESPY", string.format("Remote de riesgo CRÍTICO interceptado: %s (%s)", remoteName, signature))
+    end
+
+    -- Notificación bidireccional inmediata al ActionRecorder
+    local recorder = (self.Registry and self.Registry:Get("ActionRecorder"))
+    if recorder and type(recorder.CorrelateRemoteCall) == "function" then
+        pcall(function()
+            recorder:CorrelateRemoteCall(logEntry)
+        end)
     end
     
     if self.EventBus then
