@@ -1,13 +1,14 @@
 --[[
     =============================================================================
-    APEX SUITE - REMOTE SPY & CAUSAL INTERACTION AUDITOR VIEW v4.0
+    APEX SUITE - REMOTE SPY & CAUSAL INTERACTION AUDITOR VIEW v4.5
     (USER INTERACTION & REVERSE ENGINEERING PIPELINE)
     =============================================================================
-    Interfaz de Auditoría Causal en Tiempo Real:
+    Interfaz de Auditoría Causal en Tiempo Real y Exportación Avanzada:
       - Feed de Tarjetas de Auditoría Causal (Acción → Scripts → Remotos)
-      - Badges de Riesgo y Confianza Semántica
-      - Acciones Rápidas: Copiar Replay Script, Ver Código Descompilado, Exportar Bundle
-      - Inspector de Código / JSON / Red en panel dividido
+      - Controles Quirúrgicos: Eliminar capturas individuales (🗑️) antes de exportar
+      - Exportación Unitaria: Exportar solo la captura deseada en formato JSON (💾)
+      - Exportación Total en Uno: Paquete Maestro Unificado con todas las capturas (📦)
+      - Inspector de Código / JSON / Red / Replay Script en panel dividido
 --]]
 
 local HttpService = game:GetService("HttpService")
@@ -37,7 +38,7 @@ function RemoteSpyView.new(parentFrame, registry)
     self.ActiveTab = "Replay" -- "Replay", "Bundle", "Decompiled", "Network"
     self.SelectedAction = nil
     self.FeedCards = {}
-    self.MaxCards = 60
+    self.MaxCards = 80
 
     self:Render()
     return self
@@ -51,6 +52,14 @@ function RemoteSpyView:Render()
     self.ViewFrame = frame
 
     -- =========================================================================
+    -- SERVICIOS Y REGISTRO
+    -- =========================================================================
+    local remoteAnalyzer = self.Registry:Get("RemoteAnalyzer")
+    local actionRecorder = self.Registry:Get("ActionRecorder")
+    local exporter = self.Registry:Get("ReportExporter")
+    local eventBus = self.Registry:Get("EventBus")
+
+    -- =========================================================================
     -- 1. BARRA SUPERIOR DE CONTROL PRINCIPAL
     -- =========================================================================
     local topBar = Instance.new("Frame")
@@ -59,7 +68,7 @@ function RemoteSpyView:Render()
     topBar.Parent = frame
 
     local toggleSpyBtn = Instance.new("TextButton")
-    toggleSpyBtn.Size = UDim2.new(0, 120, 1, 0)
+    toggleSpyBtn.Size = UDim2.new(0, 105, 1, 0)
     toggleSpyBtn.Position = UDim2.new(0, 0, 0, 0)
     toggleSpyBtn.BackgroundColor3 = Color3.fromRGB(40, 160, 90)
     toggleSpyBtn.Text = "▶ INICIAR SPY"
@@ -70,8 +79,8 @@ function RemoteSpyView:Render()
     Instance.new("UICorner", toggleSpyBtn).CornerRadius = UDim.new(0, 5)
 
     local toggleRecordBtn = Instance.new("TextButton")
-    toggleRecordBtn.Size = UDim2.new(0, 145, 1, 0)
-    toggleRecordBtn.Position = UDim2.new(0, 125, 0, 0)
+    toggleRecordBtn.Size = UDim2.new(0, 130, 1, 0)
+    toggleRecordBtn.Position = UDim2.new(0, 110, 0, 0)
     toggleRecordBtn.BackgroundColor3 = Color3.fromRGB(180, 80, 40)
     toggleRecordBtn.Text = "🔴 RASTREAR ACCIONES"
     toggleRecordBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -80,9 +89,20 @@ function RemoteSpyView:Render()
     toggleRecordBtn.Parent = topBar
     Instance.new("UICorner", toggleRecordBtn).CornerRadius = UDim.new(0, 5)
 
+    local exportAllBtn = Instance.new("TextButton")
+    exportAllBtn.Size = UDim2.new(0, 140, 1, 0)
+    exportAllBtn.Position = UDim2.new(0, 245, 0, 0)
+    exportAllBtn.BackgroundColor3 = Color3.fromRGB(120, 60, 180)
+    exportAllBtn.Text = "📦 EXPORTAR TODO (0)"
+    exportAllBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    exportAllBtn.Font = Enum.Font.GothamBold
+    exportAllBtn.TextSize = 10
+    exportAllBtn.Parent = topBar
+    Instance.new("UICorner", exportAllBtn).CornerRadius = UDim.new(0, 5)
+
     local clearBtn = Instance.new("TextButton")
-    clearBtn.Size = UDim2.new(0, 80, 1, 0)
-    clearBtn.Position = UDim2.new(0, 275, 0, 0)
+    clearBtn.Size = UDim2.new(0, 75, 1, 0)
+    clearBtn.Position = UDim2.new(0, 390, 0, 0)
     clearBtn.BackgroundColor3 = Color3.fromRGB(45, 50, 65)
     clearBtn.Text = "🗑️ LIMPIAR"
     clearBtn.TextColor3 = Color3.fromRGB(240, 240, 245)
@@ -93,15 +113,26 @@ function RemoteSpyView:Render()
 
     -- Status Pill
     local statusPill = Instance.new("TextLabel")
-    statusPill.Size = UDim2.new(1, -365, 1, 0)
-    statusPill.Position = UDim2.new(0, 362, 0, 0)
+    statusPill.Size = UDim2.new(1, -472, 1, 0)
+    statusPill.Position = UDim2.new(0, 470, 0, 0)
     statusPill.BackgroundColor3 = Color3.fromRGB(20, 24, 32)
     statusPill.Text = "Estado: Inactivo | Haz clic en Iniciar Spy o Rastrear"
     statusPill.TextColor3 = Color3.fromRGB(160, 175, 200)
     statusPill.Font = Enum.Font.GothamMedium
     statusPill.TextSize = 10
+    statusPill.TextTruncate = Enum.TextTruncate.AtEnd
     statusPill.Parent = topBar
     Instance.new("UICorner", statusPill).CornerRadius = UDim.new(0, 5)
+
+    local function updateExportButtonCounter()
+        local count = 0
+        if actionRecorder and actionRecorder.GetTimeline then
+            count = #(actionRecorder:GetTimeline() or {})
+        else
+            count = #self.FeedCards
+        end
+        exportAllBtn.Text = string.format("📦 EXPORTAR TODO (%d)", count)
+    end
 
     -- =========================================================================
     -- 2. BARRA DE EXTRACCIÓN RÁPIDA DE BUNDLES INTELIGENTES
@@ -149,25 +180,36 @@ function RemoteSpyView:Render()
     Instance.new("UICorner", leftPanel).CornerRadius = UDim.new(0, 6)
 
     local feedHeader = Instance.new("Frame")
-    feedHeader.Size = UDim2.new(1, 0, 0, 24)
+    feedHeader.Size = UDim2.new(1, 0, 0, 26)
     feedHeader.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
     feedHeader.Parent = leftPanel
     Instance.new("UICorner", feedHeader).CornerRadius = UDim.new(0, 6)
 
     local feedTitle = Instance.new("TextLabel")
-    feedTitle.Size = UDim2.new(1, -10, 1, 0)
+    feedTitle.Size = UDim2.new(1, -120, 1, 0)
     feedTitle.Position = UDim2.new(0, 8, 0, 0)
     feedTitle.BackgroundTransparency = 1
-    feedTitle.Text = "⚡ FEED DE AUDITORÍA CAUSAL (ACCIÓN → RED)"
+    feedTitle.Text = "⚡ FEED DE AUDITORÍA CAUSAL"
     feedTitle.TextColor3 = Color3.fromRGB(220, 230, 245)
     feedTitle.Font = Enum.Font.GothamBold
     feedTitle.TextSize = 10
     feedTitle.TextXAlignment = Enum.TextXAlignment.Left
     feedTitle.Parent = feedHeader
 
+    local feedExportAllSmallBtn = Instance.new("TextButton")
+    feedExportAllSmallBtn.Size = UDim2.new(0, 105, 0, 20)
+    feedExportAllSmallBtn.Position = UDim2.new(1, -110, 0, 3)
+    feedExportAllSmallBtn.BackgroundColor3 = Color3.fromRGB(90, 45, 140)
+    feedExportAllSmallBtn.Text = "📦 Guardar Todo"
+    feedExportAllSmallBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    feedExportAllSmallBtn.Font = Enum.Font.GothamBold
+    feedExportAllSmallBtn.TextSize = 9
+    feedExportAllSmallBtn.Parent = feedHeader
+    Instance.new("UICorner", feedExportAllSmallBtn).CornerRadius = UDim.new(0, 4)
+
     local feedScroll = Instance.new("ScrollingFrame")
-    feedScroll.Size = UDim2.new(1, -8, 1, -30)
-    feedScroll.Position = UDim2.new(0, 4, 0, 26)
+    feedScroll.Size = UDim2.new(1, -8, 1, -32)
+    feedScroll.Position = UDim2.new(0, 4, 0, 28)
     feedScroll.BackgroundTransparency = 1
     feedScroll.ScrollBarThickness = 4
     feedScroll.ScrollBarImageColor3 = Color3.fromRGB(50, 60, 80)
@@ -180,7 +222,7 @@ function RemoteSpyView:Render()
     feedLayout.Parent = feedScroll
 
     feedLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-        feedScroll.CanvasSize = UDim2.new(0, 0, 0, feedLayout.AbsoluteContentSize.Y + 10)
+        feedScroll.CanvasSize = UDim2.new(0, 0, 0, feedLayout.AbsoluteContentSize.Y + 12)
     end)
 
     -- Panel Derecho: Inspector de Código / JSON / Scripts
@@ -223,7 +265,7 @@ function RemoteSpyView:Render()
     inspectorBox.Parent = rightPanel
     Instance.new("UICorner", inspectorBox).CornerRadius = UDim.new(0, 6)
 
-    -- Barra inferior de acciones del inspector (Copiar / Guardar)
+    -- Barra inferior de acciones del inspector (Copiar / Guardar / Exportar Selección)
     local inspectorActions = Instance.new("Frame")
     inspectorActions.Size = UDim2.new(1, -12, 0, 26)
     inspectorActions.Position = UDim2.new(0, 6, 1, -30)
@@ -231,10 +273,10 @@ function RemoteSpyView:Render()
     inspectorActions.Parent = rightPanel
 
     local copyBtn = Instance.new("TextButton")
-    copyBtn.Size = UDim2.new(0.5, -4, 1, 0)
+    copyBtn.Size = UDim2.new(0.33, -4, 1, 0)
     copyBtn.Position = UDim2.new(0, 0, 0, 0)
     copyBtn.BackgroundColor3 = Color3.fromRGB(40, 90, 160)
-    copyBtn.Text = "📋 COPIAR AL PORTAPAPELES"
+    copyBtn.Text = "📋 COPIAR"
     copyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     copyBtn.Font = Enum.Font.GothamBold
     copyBtn.TextSize = 10
@@ -242,23 +284,26 @@ function RemoteSpyView:Render()
     Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 4)
 
     local saveFileBtn = Instance.new("TextButton")
-    saveFileBtn.Size = UDim2.new(0.5, -4, 1, 0)
-    saveFileBtn.Position = UDim2.new(0.5, 4, 0, 0)
+    saveFileBtn.Size = UDim2.new(0.33, -4, 1, 0)
+    saveFileBtn.Position = UDim2.new(0.33, 2, 0, 0)
     saveFileBtn.BackgroundColor3 = Color3.fromRGB(45, 120, 70)
-    saveFileBtn.Text = "💾 GUARDAR EN DISCO"
+    saveFileBtn.Text = "💾 GUARDAR VISTA"
     saveFileBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     saveFileBtn.Font = Enum.Font.GothamBold
     saveFileBtn.TextSize = 10
     saveFileBtn.Parent = inspectorActions
     Instance.new("UICorner", saveFileBtn).CornerRadius = UDim.new(0, 4)
 
-    -- =========================================================================
-    -- SERVICIOS Y REGISTRO
-    -- =========================================================================
-    local remoteAnalyzer = self.Registry:Get("RemoteAnalyzer")
-    local actionRecorder = self.Registry:Get("ActionRecorder")
-    local exporter = self.Registry:Get("ReportExporter")
-    local eventBus = self.Registry:Get("EventBus")
+    local exportSelectedJsonBtn = Instance.new("TextButton")
+    exportSelectedJsonBtn.Size = UDim2.new(0.34, -4, 1, 0)
+    exportSelectedJsonBtn.Position = UDim2.new(0.66, 4, 0, 0)
+    exportSelectedJsonBtn.BackgroundColor3 = Color3.fromRGB(130, 60, 170)
+    exportSelectedJsonBtn.Text = "📦 EXPORTAR JSON"
+    exportSelectedJsonBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    exportSelectedJsonBtn.Font = Enum.Font.GothamBold
+    exportSelectedJsonBtn.TextSize = 10
+    exportSelectedJsonBtn.Parent = inspectorActions
+    Instance.new("UICorner", exportSelectedJsonBtn).CornerRadius = UDim.new(0, 4)
 
     local function setInspectorText(text)
         local maxLimit = 75000
@@ -283,13 +328,15 @@ function RemoteSpyView:Render()
                 setInspectorText(script)
             elseif self.LastBundle and self.LastBundle.GeneratedScript then
                 setInspectorText(self.LastBundle.GeneratedScript)
+            elseif self.LastBundle and self.LastBundle.MasterReplayScript then
+                setInspectorText(self.LastBundle.MasterReplayScript)
             else
                 setInspectorText("-- No hay script de replay disponible para esta selección.")
             end
         elseif self.ActiveTab == "Bundle" then
             local bundleObj = self.LastBundle
             if not bundleObj and self.SelectedAction and actionRecorder then
-                bundleObj = actionRecorder:ExtractBundle(self.SelectedAction, "INTERACTION_BUNDLE")
+                bundleObj = actionRecorder:ExtractBundle(self.SelectedAction.Id, "INTERACTION_BUNDLE")
             end
             if bundleObj then
                 local s, json = pcall(function() return HttpService:JSONEncode(bundleObj) end)
@@ -358,25 +405,132 @@ function RemoteSpyView:Render()
     end
     selectTab("Replay")
 
-    -- Botones de copiado y guardado
+    -- =========================================================================
+    -- LÓGICA DE EXPORTACIÓN (INDIVIDUAL Y MASTER)
+    -- =========================================================================
+    local function exportSingleAction(actionEntry)
+        if not actionEntry then
+            statusPill.Text = "⚠️ Ninguna acción seleccionada para exportar."
+            return
+        end
+
+        local bundle = nil
+        if actionRecorder then
+            bundle = actionRecorder:ExtractBundle(actionEntry.Id, "SINGLE_INTERACTION_BUNDLE")
+        end
+        if not bundle then
+            bundle = {
+                BundleType = "SINGLE_INTERACTION_BUNDLE",
+                ActionId = actionEntry.Id,
+                ActionType = actionEntry.Type,
+                Timestamp = actionEntry.Timestamp,
+                Details = actionEntry.Details,
+                InstancePath = actionEntry.InstancePath,
+                ControllingScripts = actionEntry.ControllingScripts,
+                CapturedRemotes = actionEntry.CorrelatedRemotes,
+                Snapshot = actionEntry.Snapshot,
+            }
+        end
+
+        self.SelectedAction = actionEntry
+        self.LastBundle = bundle
+        selectTab("Bundle")
+
+        local s, jsonStr = pcall(function() return HttpService:JSONEncode(bundle) end)
+        if s and jsonStr then
+            local actClean = (actionEntry.Type or "action"):lower():gsub("%s+", "_")
+            local fname = string.format("apex_capture_%s_%d.json", actClean, math.floor(actionEntry.Timestamp or tick()))
+            if exporter then
+                exporter:SaveToFile(fname, jsonStr)
+            end
+            statusPill.Text = string.format("✅ Exportada captura '%s' a %s", actionEntry.Id or "Item", fname)
+        else
+            statusPill.Text = "⚠️ Error al codificar JSON de la captura"
+        end
+    end
+
+    local function exportAllCaptures()
+        local timeline = (actionRecorder and actionRecorder:GetTimeline()) or {}
+        if #timeline == 0 then
+            statusPill.Text = "⚠️ No hay capturas en el feed para exportar."
+            exportAllBtn.Text = "⚠️ VACÍO"
+            task.delay(1.5, updateExportButtonCounter)
+            return
+        end
+
+        local masterBundle = nil
+        if actionRecorder and actionRecorder.ExtractMasterBundle then
+            masterBundle = actionRecorder:ExtractMasterBundle()
+        else
+            masterBundle = {
+                BundleType = "MASTER_ALL_CAPTURES_BUNDLE",
+                Timestamp = tick(),
+                TotalCaptures = #timeline,
+                Captures = timeline,
+            }
+        end
+
+        self.LastBundle = masterBundle
+        selectTab("Bundle")
+
+        local s, jsonStr = pcall(function() return HttpService:JSONEncode(masterBundle) end)
+        if s and jsonStr then
+            local fname = string.format("apex_master_bundle_all_captures_%d.json", math.floor(tick()))
+            local saved = false
+            if exporter then
+                saved = exporter:SaveToFile(fname, jsonStr)
+            end
+            exportAllBtn.Text = "✅ ¡EXPORTADO!"
+            feedExportAllSmallBtn.Text = "✅ ¡Guardado!"
+            statusPill.Text = string.format("✅ Paquete Maestro con %d capturas guardado (%s)", #timeline, fname)
+            task.delay(2.0, function()
+                updateExportButtonCounter()
+                feedExportAllSmallBtn.Text = "📦 Guardar Todo"
+            end)
+        else
+            statusPill.Text = "⚠️ Error al generar JSON del paquete maestro"
+        end
+    end
+
+    exportAllBtn.MouseButton1Click:Connect(exportAllCaptures)
+    feedExportAllSmallBtn.MouseButton1Click:Connect(exportAllCaptures)
+
+    exportSelectedJsonBtn.MouseButton1Click:Connect(function()
+        if self.SelectedAction then
+            exportSingleAction(self.SelectedAction)
+        elseif self.LastBundle then
+            local s, jsonStr = pcall(function() return HttpService:JSONEncode(self.LastBundle) end)
+            if s and jsonStr and exporter then
+                local fname = string.format("apex_bundle_export_%d.json", math.floor(tick()))
+                exporter:SaveToFile(fname, jsonStr)
+                statusPill.Text = "✅ Bundle actual exportado a " .. fname
+            end
+        else
+            statusPill.Text = "⚠️ Selecciona una captura antes de exportar"
+        end
+    end)
+
+    -- Botones de copiado y guardado de texto
     copyBtn.MouseButton1Click:Connect(function()
         local text = inspectorBox.Text or ""
         if safeSetClipboard(text) then
             copyBtn.Text = "✅ ¡COPIADO!"
-            task.delay(1.5, function() copyBtn.Text = "📋 COPIAR AL PORTAPAPELES" end)
+            task.delay(1.5, function() copyBtn.Text = "📋 COPIAR" end)
         else
-            copyBtn.Text = "⚠️ Portapapeles no soportado"
-            task.delay(1.5, function() copyBtn.Text = "📋 COPIAR AL PORTAPAPELES" end)
+            copyBtn.Text = "⚠️ No soportado"
+            task.delay(1.5, function() copyBtn.Text = "📋 COPIAR" end)
         end
     end)
 
     saveFileBtn.MouseButton1Click:Connect(function()
         if exporter then
-            local fname = "apex_audit_" .. self.ActiveTab:lower() .. "_" .. tick() .. ".txt"
+            local ext = (self.ActiveTab == "Replay" and "lua") or (self.ActiveTab == "Bundle" and "json") or "txt"
+            local fname = "apex_audit_" .. self.ActiveTab:lower() .. "_" .. tick() .. "." .. ext
             local success = exporter:SaveToFile(fname, inspectorBox.Text)
             if success then
                 saveFileBtn.Text = "✅ ¡GUARDADO!"
-                task.delay(1.5, function() saveFileBtn.Text = "💾 GUARDAR EN DISCO" end)
+                statusPill.Text = "Guardado en " .. fname
+                task.delay(1.5, function() saveFileBtn.Text = "💾 GUARDAR VISTA" end)
             end
         end
     end)
@@ -389,7 +543,7 @@ function RemoteSpyView:Render()
     local function createAuditCard(actionEntry)
         cardCounter = cardCounter + 1
         local card = Instance.new("Frame")
-        card.Size = UDim2.new(1, 0, 0, 78)
+        card.Size = UDim2.new(1, 0, 0, 82)
         card.BackgroundColor3 = Color3.fromRGB(24, 28, 38)
         card.LayoutOrder = -cardCounter
         card.Parent = feedScroll
@@ -415,7 +569,7 @@ function RemoteSpyView:Render()
 
         -- Título de la tarjeta
         local titleLabel = Instance.new("TextLabel")
-        titleLabel.Size = UDim2.new(0.65, 0, 0, 18)
+        titleLabel.Size = UDim2.new(1, -78, 0, 18)
         titleLabel.Position = UDim2.new(0, 8, 0, 4)
         titleLabel.BackgroundTransparency = 1
         titleLabel.Text = string.format("%s %s: %s", icon, actType, targetName)
@@ -425,6 +579,30 @@ function RemoteSpyView:Render()
         titleLabel.TextXAlignment = Enum.TextXAlignment.Left
         titleLabel.TextTruncate = Enum.TextTruncate.AtEnd
         titleLabel.Parent = card
+
+        -- Botón Mini Eliminar en esquina superior derecha de la tarjeta
+        local btnDeleteTop = Instance.new("TextButton")
+        btnDeleteTop.Size = UDim2.new(0, 22, 0, 18)
+        btnDeleteTop.Position = UDim2.new(1, -26, 0, 4)
+        btnDeleteTop.BackgroundColor3 = Color3.fromRGB(140, 40, 40)
+        btnDeleteTop.Text = "🗑️"
+        btnDeleteTop.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btnDeleteTop.Font = Enum.Font.GothamBold
+        btnDeleteTop.TextSize = 9
+        btnDeleteTop.Parent = card
+        Instance.new("UICorner", btnDeleteTop).CornerRadius = UDim.new(0, 3)
+
+        -- Botón Mini Exportar Single en esquina superior derecha
+        local btnExportTop = Instance.new("TextButton")
+        btnExportTop.Size = UDim2.new(0, 44, 0, 18)
+        btnExportTop.Position = UDim2.new(1, -74, 0, 4)
+        btnExportTop.BackgroundColor3 = Color3.fromRGB(35, 110, 80)
+        btnExportTop.Text = "💾 JSON"
+        btnExportTop.TextColor3 = Color3.fromRGB(240, 255, 245)
+        btnExportTop.Font = Enum.Font.GothamBold
+        btnExportTop.TextSize = 8
+        btnExportTop.Parent = card
+        Instance.new("UICorner", btnExportTop).CornerRadius = UDim.new(0, 3)
 
         -- Ruta o resumen
         local pathLabel = Instance.new("TextLabel")
@@ -444,7 +622,7 @@ function RemoteSpyView:Render()
         local scriptsCount = #(actionEntry.ControllingScripts or {})
 
         local metaLabel = Instance.new("TextLabel")
-        metaLabel.Size = UDim2.new(0.60, 0, 0, 16)
+        metaLabel.Size = UDim2.new(1, -16, 0, 16)
         metaLabel.Position = UDim2.new(0, 8, 0, 38)
         metaLabel.BackgroundTransparency = 1
         metaLabel.Text = string.format("📡 Remotos: %d | 🕵️ Scripts: %d | Ventana: %.0fms",
@@ -455,10 +633,12 @@ function RemoteSpyView:Render()
         metaLabel.TextXAlignment = Enum.TextXAlignment.Left
         metaLabel.Parent = card
 
-        -- Botones de Acción Rápida en la tarjeta
+        -- =====================================================================
+        -- BOTONES DE ACCIÓN EN LA FILA INFERIOR DE LA TARJETA
+        -- =====================================================================
         local btnReplay = Instance.new("TextButton")
-        btnReplay.Size = UDim2.new(0, 68, 0, 18)
-        btnReplay.Position = UDim2.new(1, -144, 0, 54)
+        btnReplay.Size = UDim2.new(0, 60, 0, 18)
+        btnReplay.Position = UDim2.new(0, 8, 0, 58)
         btnReplay.BackgroundColor3 = Color3.fromRGB(35, 75, 130)
         btnReplay.Text = "📜 Replay"
         btnReplay.TextColor3 = Color3.fromRGB(240, 245, 255)
@@ -468,8 +648,8 @@ function RemoteSpyView:Render()
         Instance.new("UICorner", btnReplay).CornerRadius = UDim.new(0, 3)
 
         local btnInspect = Instance.new("TextButton")
-        btnInspect.Size = UDim2.new(0, 68, 0, 18)
-        btnInspect.Position = UDim2.new(1, -72, 0, 54)
+        btnInspect.Size = UDim2.new(0, 75, 0, 18)
+        btnInspect.Position = UDim2.new(0, 72, 0, 58)
         btnInspect.BackgroundColor3 = Color3.fromRGB(30, 110, 75)
         btnInspect.Text = "🔍 Inspeccionar"
         btnInspect.TextColor3 = Color3.fromRGB(240, 255, 245)
@@ -477,6 +657,54 @@ function RemoteSpyView:Render()
         btnInspect.TextSize = 9
         btnInspect.Parent = card
         Instance.new("UICorner", btnInspect).CornerRadius = UDim.new(0, 3)
+
+        local btnExportSingle = Instance.new("TextButton")
+        btnExportSingle.Size = UDim2.new(0, 66, 0, 18)
+        btnExportSingle.Position = UDim2.new(0, 151, 0, 58)
+        btnExportSingle.BackgroundColor3 = Color3.fromRGB(110, 55, 160)
+        btnExportSingle.Text = "💾 Exportar"
+        btnExportSingle.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btnExportSingle.Font = Enum.Font.GothamBold
+        btnExportSingle.TextSize = 9
+        btnExportSingle.Parent = card
+        Instance.new("UICorner", btnExportSingle).CornerRadius = UDim.new(0, 3)
+
+        local btnDelete = Instance.new("TextButton")
+        btnDelete.Size = UDim2.new(0, 60, 0, 18)
+        btnDelete.Position = UDim2.new(0, 221, 0, 58)
+        btnDelete.BackgroundColor3 = Color3.fromRGB(130, 45, 45)
+        btnDelete.Text = "🗑️ Quitar"
+        btnDelete.TextColor3 = Color3.fromRGB(255, 240, 240)
+        btnDelete.Font = Enum.Font.GothamBold
+        btnDelete.TextSize = 9
+        btnDelete.Parent = card
+        Instance.new("UICorner", btnDelete).CornerRadius = UDim.new(0, 3)
+
+        -- Función de eliminación individual
+        local function deleteThisCard()
+            if actionRecorder and actionRecorder.RemoveAction then
+                actionRecorder:RemoveAction(actionEntry)
+            end
+            for idx, c in ipairs(self.FeedCards) do
+                if c == card then
+                    table.remove(self.FeedCards, idx)
+                    break
+                end
+            end
+            if self.SelectedAction == actionEntry then
+                self.SelectedAction = nil
+                updateInspectorView()
+            end
+            card:Destroy()
+            updateExportButtonCounter()
+            statusPill.Text = string.format("🗑️ Captura '%s' eliminada del feed", targetName)
+        end
+
+        btnDeleteTop.MouseButton1Click:Connect(deleteThisCard)
+        btnDelete.MouseButton1Click:Connect(deleteThisCard)
+
+        btnExportTop.MouseButton1Click:Connect(function() exportSingleAction(actionEntry) end)
+        btnExportSingle.MouseButton1Click:Connect(function() exportSingleAction(actionEntry) end)
 
         btnReplay.MouseButton1Click:Connect(function()
             self.SelectedAction = actionEntry
@@ -508,6 +736,7 @@ function RemoteSpyView:Render()
 
         actionEntry._refreshCard = refreshCard
         table.insert(self.FeedCards, 1, card)
+        updateExportButtonCounter()
 
         if #self.FeedCards > self.MaxCards then
             local old = table.remove(self.FeedCards)
@@ -564,11 +793,12 @@ function RemoteSpyView:Render()
         self.LastBundle = nil
         setInspectorText("-- Registros y feed limpiados.")
         statusPill.Text = "Estado: Limpio"
+        updateExportButtonCounter()
     end)
 
     local function handleExtraction(extType)
         if not actionRecorder then return end
-        local bundle, err = actionRecorder:ExtractBundle(self.SelectedAction, extType)
+        local bundle, err = actionRecorder:ExtractBundle(self.SelectedAction and self.SelectedAction.Id, extType)
         if not bundle then
             setInspectorText("-- [Error de Extracción]: " .. tostring(err))
             return
@@ -581,7 +811,7 @@ function RemoteSpyView:Render()
             local s, jsonStr = pcall(function() return HttpService:JSONEncode(bundle) end)
             if s and jsonStr then
                 exporter:SaveToFile("smart_bundle_" .. extType:lower() .. "_" .. tick() .. ".json", jsonStr)
-                statusPill.Text = string.format("Estado: Bundle '%s' guardado", extType)
+                statusPill.Text = string.format("Estado: Bundle '%s' guardado en disco", extType)
             end
         end
     end

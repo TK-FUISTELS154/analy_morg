@@ -858,9 +858,92 @@ function ActionRecorder:Stop()
     end
 end
 
-function ActionRecorder:Clear()
-    table.clear(self.RecordedTimeline)
-    self.RecentAction = nil
+function ActionRecorder:RemoveAction(target)
+    for i, act in ipairs(self.RecordedTimeline) do
+        if act == target or act.Id == target then
+            local removed = table.remove(self.RecordedTimeline, i)
+            if self.RecentAction == removed then
+                self.RecentAction = self.RecordedTimeline[1]
+            end
+            if self.EventBus then
+                self.EventBus:Publish("ActionRemoved", removed)
+            end
+            if self.Logger then
+                self.Logger:Info("RECORDER", "Acción eliminada del timeline: " .. tostring(removed.Id))
+            end
+            return true
+        end
+    end
+    return false
+end
+
+function ActionRecorder:ExtractMasterBundle()
+    local timeline = self.RecordedTimeline or {}
+    local masterBundle = {
+        BundleType = "MASTER_ALL_CAPTURES_BUNDLE",
+        ExportedAt = os.date("!%Y-%m-%d %H:%M:%SZ"),
+        Timestamp = tick(),
+        GameInfo = {
+            PlaceId = game.PlaceId,
+            JobId = game.JobId,
+            PlaceVersion = game.PlaceVersion,
+        },
+        TotalCaptures = #timeline,
+        Captures = {},
+        UniqueRemotesSummary = {},
+        MasterReplayScript = nil,
+    }
+
+    local remoteMap = {}
+    local replayScripts = {}
+
+    for idx, action in ipairs(timeline) do
+        local bundleItem = self:ExtractBundle(action.Id, "TIMELINE_ACTION_BUNDLE")
+        if bundleItem then
+            table.insert(masterBundle.Captures, bundleItem)
+        end
+
+        for _, rem in ipairs(action.CorrelatedRemotes or {}) do
+            local key = rem.Path or rem.Name or "Unknown"
+            if not remoteMap[key] then
+                remoteMap[key] = {
+                    Name = rem.Name,
+                    Path = rem.Path,
+                    Method = rem.Method,
+                    TypeSignature = rem.TypeSignature,
+                    RiskLevel = rem.RiskLevel,
+                    TotalCalls = 0,
+                    AssociatedActions = {},
+                }
+            end
+            remoteMap[key].TotalCalls = remoteMap[key].TotalCalls + 1
+            table.insert(remoteMap[key].AssociatedActions, action.Id)
+        end
+
+        if bundleItem and bundleItem.GeneratedScript then
+            table.insert(replayScripts, string.format("-- [[ ACCIÓN %d/%d: %s (ID: %s) ]]\n-- Target: %s\n%s",
+                idx, #timeline, action.Type, action.Id, action.InstancePath or "N/A", bundleItem.GeneratedScript))
+        end
+    end
+
+    for _, rInfo in pairs(remoteMap) do
+        table.insert(masterBundle.UniqueRemotesSummary, rInfo)
+    end
+
+    if #replayScripts > 0 then
+        masterBundle.MasterReplayScript = table.concat({
+            "-- ============================================================================",
+            "-- [APEX SUITE v4.0] MASTER REPLAY SEQUENCE (ALL CAPTURED INTERACTIONS)",
+            string.format("-- Total Acciones: %d | Remotos Únicos: %d | Generado: %s", #timeline, #masterBundle.UniqueRemotesSummary, os.date("%X")),
+            "-- ============================================================================",
+            "",
+            table.concat(replayScripts, "\n\n-- ------------------------------------------------------------\n\n"),
+        }, "\n")
+    else
+        masterBundle.MasterReplayScript = "-- No hay scripts de replay generados para las capturas actuales."
+    end
+
+    return masterBundle
 end
 
 -- =============================================================================
