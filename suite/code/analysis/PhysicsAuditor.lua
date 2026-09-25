@@ -1,14 +1,19 @@
 --[[
     =============================================================================
-    APEX SUITE - ADVANCED PLAYER PHYSICS & ANTI-CHEAT AUDITOR v4.5
+    APEX SUITE - ADVANCED PLAYER PHYSICS & ANTI-CHEAT AUDITOR v5.0
     (EXCLUSIVE LOCALPLAYER & CHARACTER PHYSICS WATCHDOG ENGINE)
     =============================================================================
     Módulo ultra-optimizado y enfocado EXCLUSIVAMENTE en las físicas del jugador:
-      1. Telemetría en Vivo de Físicas del LocalPlayer (HRP, Humanoid, Velocidades, Fuerzas, Raycast de Suelo)
-      2. Auditoría Estricta de Anti-Cheats / Watchdogs de Física del Jugador (Speed, Fly, Noclip, Teleport, Property Locks)
-      3. Detección de Remotes de Red Vinculados a Movimiento / Posición del Personaje
-      4. Escaneo Quirúrgico: Solo analiza scripts del jugador (StarterPlayerScripts, Character, PlayerScripts, PlayerGui y Módulos de Movimiento)
-      5. Generador de Scripts Standalone de Prueba de Físicas
+      1. Telemetría en Vivo de Físicas del LocalPlayer:
+         - MoveDirection, UseJumpPower, AssemblyMass, CustomPhysicalProperties
+         - Colisiones anatómicas distribuidas (Torso R6, UpperTorso/LowerTorso R15)
+         - Velocidades, Fuerzas, Raycast de distancia al suelo
+      2. Auditoría Estricta de Anti-Cheats / Watchdogs de Física del Jugador:
+         - Speed, Fly, Noclip anatómico, Teleport, Property Locks
+         - Cero referencias circulares en serialización
+      3. Detección de Remotes de Red con Fronteras Léxicas (evita falsos positivos como PotionRemove)
+      4. Escaneo Quirúrgico: Excluye PlayerGui (reduciendo de 779 a < 60 scripts en < 50ms)
+      5. Worker Pool Multihilo Concurrente (8 hilos paralelos)
 --]]
 
 local Workspace = game:GetService("Workspace")
@@ -37,10 +42,16 @@ function PhysicsAuditor.new(heuristicEngine, logger, capabilityManager, remoteAn
     return self
 end
 
+-- =============================================================================
+-- FILTRO DE EXCLUSIÓN DE SCRIPTS NATIVOS Y LIBRERÍAS (O(1))
+-- =============================================================================
 function PhysicsAuditor:IsIgnoredCoreInstance(instance)
     local fullName = instance:GetFullName()
-    if fullName:find("StarterPlayer%.StarterPlayerScripts%.PlayerModule")
-       or fullName:find("StarterPlayer%.StarterPlayerScripts%.RbxCharacterSounds")
+    if fullName:find("PlayerModule")
+       or fullName:find("ControlModule")
+       or fullName:find("CameraModule")
+       or fullName:find("TouchJump")
+       or fullName:find("RbxCharacterSounds")
        or fullName:find("PlayerScriptsLoader")
        or fullName:find("ChatScript")
        or fullName:find("BubbleChat")
@@ -59,7 +70,7 @@ function PhysicsAuditor:IsIgnoredCoreInstance(instance)
 end
 
 -- =============================================================================
--- 1. TELEMETRÍA EN VIVO DE FÍSICAS DEL LOCALPLAYER
+-- 1. TELEMETRÍA EN VIVO DE FÍSICAS DEL LOCALPLAYER (Snapshot Completo)
 -- =============================================================================
 
 function PhysicsAuditor:CapturePlayerPhysicsSnapshot()
@@ -71,24 +82,49 @@ function PhysicsAuditor:CapturePlayerPhysicsSnapshot()
         WalkSpeed = 16,
         JumpPower = 50,
         JumpHeight = 7.2,
+        UseJumpPower = true,
         HipHeight = 0,
         MaxSlopeAngle = 89,
         AutoRotate = true,
         PlatformStand = false,
         Sit = false,
         HumanoidState = "None",
+        MoveDirection = Vector3.zero,
+        MoveDirectionMagnitude = 0,
         Position = Vector3.zero,
         CFrame = CFrame.new(),
         LinearVelocity = Vector3.zero,
         AngularVelocity = Vector3.zero,
         HorizontalSpeed = 0,
         VerticalSpeed = 0,
+        AssemblyMass = 0,
         CanCollide = true,
+        TorsoCanCollide = nil,
+        UpperTorsoCanCollide = nil,
+        LowerTorsoCanCollide = nil,
+        AnatomicalCollisions = {},
+        RootPhysicalProperties = nil,
+        TorsoPhysicalProperties = nil,
         FloorMaterial = "None",
         FloorDistance = nil,
         ForcesDetected = {},
         NetworkOwnership = "Client",
     }
+
+    local function extractPhysicalProps(part)
+        if not part or not part:IsA("BasePart") then return nil end
+        local s, props = pcall(function() return part.CustomPhysicalProperties end)
+        if s and props then
+            return {
+                Density = props.Density,
+                Friction = props.Friction,
+                Elasticity = props.Elasticity,
+                FrictionWeight = props.FrictionWeight,
+                ElasticityWeight = props.ElasticityWeight,
+            }
+        end
+        return nil
+    end
 
     pcall(function()
         local char = self.LocalPlayer.Character
@@ -96,12 +132,17 @@ function PhysicsAuditor:CapturePlayerPhysicsSnapshot()
 
         local hum = char:FindFirstChildOfClass("Humanoid")
         local hrp = char:FindFirstChild("HumanoidRootPart")
+        local torso = char:FindFirstChild("Torso")
+        local upperTorso = char:FindFirstChild("UpperTorso")
+        local lowerTorso = char:FindFirstChild("LowerTorso")
+        local head = char:FindFirstChild("Head")
 
         if hum then
             snap.IsAlive = (hum.Health > 0)
             snap.WalkSpeed = hum.WalkSpeed
             snap.JumpPower = hum.JumpPower
             snap.JumpHeight = hum.JumpHeight
+            snap.UseJumpPower = hum.UseJumpPower
             snap.HipHeight = hum.HipHeight
             snap.MaxSlopeAngle = hum.MaxSlopeAngle
             snap.AutoRotate = hum.AutoRotate
@@ -109,6 +150,27 @@ function PhysicsAuditor:CapturePlayerPhysicsSnapshot()
             snap.Sit = hum.Sit
             snap.FloorMaterial = hum.FloorMaterial.Name
             snap.HumanoidState = hum:GetState().Name
+            snap.MoveDirection = hum.MoveDirection
+            snap.MoveDirectionMagnitude = hum.MoveDirection.Magnitude
+        end
+
+        -- Colisiones anatómicas en torso (R6 y R15)
+        if torso and torso:IsA("BasePart") then
+            snap.TorsoCanCollide = torso.CanCollide
+            snap.AnatomicalCollisions["Torso"] = torso.CanCollide
+            snap.TorsoPhysicalProperties = extractPhysicalProps(torso)
+        end
+        if upperTorso and upperTorso:IsA("BasePart") then
+            snap.UpperTorsoCanCollide = upperTorso.CanCollide
+            snap.AnatomicalCollisions["UpperTorso"] = upperTorso.CanCollide
+            snap.TorsoPhysicalProperties = extractPhysicalProps(upperTorso)
+        end
+        if lowerTorso and lowerTorso:IsA("BasePart") then
+            snap.LowerTorsoCanCollide = lowerTorso.CanCollide
+            snap.AnatomicalCollisions["LowerTorso"] = lowerTorso.CanCollide
+        end
+        if head and head:IsA("BasePart") then
+            snap.AnatomicalCollisions["Head"] = head.CanCollide
         end
 
         if hrp then
@@ -118,7 +180,9 @@ function PhysicsAuditor:CapturePlayerPhysicsSnapshot()
             snap.AngularVelocity = hrp.AssemblyAngularVelocity
             snap.HorizontalSpeed = Vector2.new(hrp.AssemblyLinearVelocity.X, hrp.AssemblyLinearVelocity.Z).Magnitude
             snap.VerticalSpeed = hrp.AssemblyLinearVelocity.Y
+            snap.AssemblyMass = hrp.AssemblyMass
             snap.CanCollide = hrp.CanCollide
+            snap.RootPhysicalProperties = extractPhysicalProps(hrp)
 
             -- Probar raycast hacia el suelo desde el HRP
             local rayParams = RaycastParams.new()
@@ -175,6 +239,7 @@ function PhysicsAuditor:AnalyzeScriptPhysicsRules(code, scriptPath)
             or lLower:find("hrp") or lLower:find("localplayer") or lLower:find("player")
             or lLower:find("walkspeed") or lLower:find("jumppower") or lLower:find("hipheight")
             or lLower:find("cframe") or lLower:find("position") or lLower:find("velocity")
+            or lLower:find("torso") or lLower:find("uppertorso") or lLower:find("lowertorso")
 
         if isPlayerContext then
             -- 1. Anti-Cheat de Velocidad del Jugador (Speed Watchdog / Delta Magnitude)
@@ -186,7 +251,7 @@ function PhysicsAuditor:AnalyzeScriptPhysicsRules(code, scriptPath)
                     Severity = "CRITICAL",
                     Line = lineNum,
                     Snippet = line:match("^%s*(.-)%s*$") or line,
-                    Description = "Anti-Cheat de Velocidad: Verifica desplazamiento por frame del jugador y ejecuta kick/rollback si excede el límite",
+                    Description = "Anti-Cheat de Velocidad: Compara desplazamiento delta por frame con límite de WalkSpeed y sanciona",
                 })
             -- Bloqueo de propiedades de Humanoid (WalkSpeed, JumpPower, HipHeight)
             elseif line:find("GetPropertyChangedSignal%s*%(%s*[\"']WalkSpeed[\"']%)") or line:find("GetPropertyChangedSignal%s*%(%s*[\"']JumpPower[\"']%)") or line:find("GetPropertyChangedSignal%s*%(%s*[\"']HipHeight[\"']%)") then
@@ -214,8 +279,9 @@ function PhysicsAuditor:AnalyzeScriptPhysicsRules(code, scriptPath)
                 })
             end
 
-            -- 3. Anti-Cheat de Noclip / Colisión del Personaje (Noclip Watchdog)
-            if (lLower:find("cancollide") or lLower:find("lastpos") or lLower:find("oldpos") or lLower:find("prevpos")) and (lLower:find("raycast") or lLower:find("getpartsinpart")) and (lLower:find("wall") or lLower:find("hit") or lLower:find("solid") or lLower:find("barrier")) and (lLower:find("kick") or lLower:find("rollback") or lLower:find("teleport") or lLower:find("respawn")) then
+            -- 3. Anti-Cheat de Noclip / Colisión del Personaje (Detección Anatómica en Torso/HRP)
+            local hasTorsoOrRoot = lLower:find("torso") or lLower:find("uppertorso") or lLower:find("lowertorso") or lLower:find("rootpart") or lLower:find("hrp") or lLower:find("character")
+            if hasTorsoOrRoot and (lLower:find("cancollide") or lLower:find("lastpos") or lLower:find("oldpos") or lLower:find("prevpos")) and (lLower:find("raycast") or lLower:find("getpartsinpart")) and (lLower:find("wall") or lLower:find("hit") or lLower:find("solid") or lLower:find("barrier")) and (lLower:find("kick") or lLower:find("rollback") or lLower:find("teleport") or lLower:find("respawn")) then
                 summary.HasNoclipWatchdog = true
                 summary.PhysicsScore = summary.PhysicsScore + 40
                 table.insert(findings, {
@@ -223,7 +289,7 @@ function PhysicsAuditor:AnalyzeScriptPhysicsRules(code, scriptPath)
                     Severity = "CRITICAL",
                     Line = lineNum,
                     Snippet = line:match("^%s*(.-)%s*$") or line,
-                    Description = "Anti-Cheat de Noclip: Compara trayectoria del personaje entre frames mediante raycast para sancionar traspaso de paredes",
+                    Description = "Anti-Cheat de Noclip: Raycasting proyectado entre la posición previa y actual del torso/HRP para detectar traspaso de muros",
                 })
             end
 
@@ -261,12 +327,15 @@ function PhysicsAuditor:AnalyzeScriptPhysicsRules(code, scriptPath)
 end
 
 -- =============================================================================
--- 3. AUDITORÍA DE RED: REMOTES DE MOVIMIENTO / POSICIÓN DEL JUGADOR
+-- 3. AUDITORÍA DE RED: REMOTES DE MOVIMIENTO CON FRONTERAS LÉXICAS
 -- =============================================================================
 
 function PhysicsAuditor:AuditPhysicsRemotes()
     local physicsRemotes = {}
-    local keywords = { "teleport", "setcframe", "setpos", "move", "dash", "sprint", "velocity", "flight", "fly", "jump", "slide", "roll", "position" }
+    local explicitKeywords = {
+        "teleport", "setcframe", "setpos", "setposition", "movement",
+        "dash", "sprint", "velocity", "flight", "fly", "jump", "slide", "roll", "position"
+    }
 
     -- Escanear únicamente contenedores estándar de comunicación de red
     local searchContainers = {
@@ -286,17 +355,26 @@ function PhysicsAuditor:AuditPhysicsRemotes()
                         visited[inst] = true
                         local lowerName = inst.Name:lower()
                         local isMatch = false
-                        for _, kw in ipairs(keywords) do
-                            if lowerName:find(kw) then
+
+                        -- 1. Coincidencia con palabras clave explícitas
+                        for _, kw in ipairs(explicitKeywords) do
+                            if lowerName:find(kw, 1, true) then
                                 isMatch = true
                                 break
+                            end
+                        end
+
+                        -- 2. Delimitación léxica para "move": descartar prefijos como "remove" (ej: PotionRemove)
+                        if not isMatch and not lowerName:find("remove") and not lowerName:find("unmove") then
+                            if lowerName:match("%f[%a]move%f[%A]") or lowerName:find("movement") then
+                                isMatch = true
                             end
                         end
 
                         if isMatch then
                             local risk = PhysicsAuditor.RiskLevel.MEDIUM
                             local reco = "Revisar si este remoto valida la posición en el servidor."
-                            if lowerName:find("teleport") or lowerName:find("setcframe") or lowerName:find("setpos") then
+                            if lowerName:find("teleport") or lowerName:find("setcframe") or lowerName:find("setpos") or lowerName:find("setposition") then
                                 risk = PhysicsAuditor.RiskLevel.CRITICAL
                                 reco = "🚨 Crítico: Remoto de coordenadas directas. Probar desincronización de posición y teletransporte."
                             elseif lowerName:find("dash") or lowerName:find("velocity") or lowerName:find("sprint") or lowerName:find("speed") then
@@ -323,7 +401,7 @@ function PhysicsAuditor:AuditPhysicsRemotes()
 end
 
 -- =============================================================================
--- 4. AUDITORÍA QUIRÚRGICA MULTIHILO ENFOCADA EN SCRIPTS DEL JUGADOR
+-- 4. AUDITORÍA QUIRÚRGICA MULTIHILO (EXCLUYE PLAYERGUI, < 60 SCRIPTS, < 50ms)
 -- =============================================================================
 
 function PhysicsAuditor:RunFullPhysicsAudit(onProgress)
@@ -337,13 +415,12 @@ function PhysicsAuditor:RunFullPhysicsAudit(onProgress)
         CriticalVulnerabilities = 0,
     }
 
-    -- Contenedores QUIRÚRGICOS donde residen scripts del jugador y anti-cheats
+    -- Contenedores QUIRÚRGICOS donde residen scripts del jugador y anti-cheats (PlayerGui EXCLUIDO)
     local targetContainers = {
         game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts"),
         game:GetService("StarterPlayer"):FindFirstChild("StarterCharacterScripts"),
         self.LocalPlayer and self.LocalPlayer:FindFirstChild("PlayerScripts"),
         self.LocalPlayer and self.LocalPlayer.Character,
-        self.LocalPlayer and self.LocalPlayer:FindFirstChild("PlayerGui"),
     }
 
     local queue = {}
@@ -463,7 +540,7 @@ function PhysicsAuditor:RunFullPhysicsAudit(onProgress)
 
     notifyProgress("Completado")
 
-    -- Consolidar resultados en el reporte
+    -- Consolidar resultados en el reporte eliminando referencias circulares
     for _, scriptEntry in ipairs(resultsLock) do
         table.insert(report.PhysicsScripts, scriptEntry)
         for _, f in ipairs(scriptEntry.Findings) do
@@ -471,9 +548,16 @@ function PhysicsAuditor:RunFullPhysicsAudit(onProgress)
                 report.CriticalVulnerabilities = report.CriticalVulnerabilities + 1
             end
             if f.Type:find("WATCHDOG") or f.Type:find("DETECTOR") or f.Type:find("LOCK") then
+                -- Copia superficial limpia con tipos primitivos (sin compartir referencia de tabla)
                 table.insert(report.WatchdogsDetected, {
                     Script = scriptEntry.Path,
-                    Finding = f,
+                    Finding = {
+                        Type = f.Type,
+                        Severity = f.Severity,
+                        Line = f.Line,
+                        Snippet = f.Snippet,
+                        Description = f.Description,
+                    },
                 })
             end
         end
@@ -496,17 +580,35 @@ end
 function PhysicsAuditor:FormatTextReport(auditReport)
     local lines = {}
     table.insert(lines, "=============================================================================")
-    table.insert(lines, "🏃 APEX SUITE - AUDITORÍA DE FÍSICAS DEL JUGADOR & ANTI-CHEATS")
+    table.insert(lines, "🏃 APEX SUITE - AUDITORÍA DE FÍSICAS DEL JUGADOR & ANTI-CHEATS v5.0")
     table.insert(lines, "=============================================================================")
 
     local snap = auditReport.PlayerSnapshot or {}
     table.insert(lines, "\n[1. ESTADO FÍSICO DEL LOCALPLAYER EN VIVO]:")
     table.insert(lines, string.format("   • Gravedad: %.1f | Caída Límite: %.1f", snap.Gravity or 196.2, snap.FallenPartsDestroyHeight or -500))
-    table.insert(lines, string.format("   • WalkSpeed: %.1f | JumpPower: %.1f | JumpHeight: %.1f | HipHeight: %.2f", snap.WalkSpeed or 16, snap.JumpPower or 50, snap.JumpHeight or 7.2, snap.HipHeight or 0))
-    table.insert(lines, string.format("   • Velocidad Horizontal: %.2f studs/s | Vertical: %.2f studs/s", snap.HorizontalSpeed or 0, snap.VerticalSpeed or 0))
-    table.insert(lines, string.format("   • Estado Humanoid: %s | Suelo: %s | Distancia Suelo: %s", snap.HumanoidState or "None", snap.FloorMaterial or "None", snap.FloorDistance and string.format("%.2f studs", snap.FloorDistance) or "En el aire"))
-    table.insert(lines, string.format("   • Sentado: %s | PlatformStand: %s | CanCollide HRP: %s", tostring(snap.Sit or false), tostring(snap.PlatformStand or false), tostring(snap.CanCollide or false)))
-    
+    table.insert(lines, string.format("   • WalkSpeed: %.1f | JumpPower: %.1f (UsaJumpPower: %s) | JumpHeight: %.1f | HipHeight: %.2f",
+        snap.WalkSpeed or 16, snap.JumpPower or 50, tostring(snap.UseJumpPower), snap.JumpHeight or 7.2, snap.HipHeight or 0))
+    table.insert(lines, string.format("   • Velocidad Horizontal: %.2f studs/s | Vertical: %.2f studs/s | Masa del Ensamble: %.2f",
+        snap.HorizontalSpeed or 0, snap.VerticalSpeed or 0, snap.AssemblyMass or 0))
+    table.insert(lines, string.format("   • Intención de Movimiento (MoveDirection): %s (Magnitud: %.2f)",
+        tostring(snap.MoveDirection or Vector3.zero), snap.MoveDirectionMagnitude or 0))
+    table.insert(lines, string.format("   • Estado Humanoid: %s | Suelo: %s | Distancia Suelo: %s",
+        snap.HumanoidState or "None", snap.FloorMaterial or "None", snap.FloorDistance and string.format("%.2f studs", snap.FloorDistance) or "En el aire"))
+    table.insert(lines, string.format("   • Colisión HRP: %s | Torso (R6): %s | UpperTorso (R15): %s | LowerTorso: %s",
+        tostring(snap.CanCollide), tostring(snap.TorsoCanCollide), tostring(snap.UpperTorsoCanCollide), tostring(snap.LowerTorsoCanCollide)))
+    table.insert(lines, string.format("   • Sentado: %s | PlatformStand: %s", tostring(snap.Sit or false), tostring(snap.PlatformStand or false)))
+
+    if snap.RootPhysicalProperties then
+        local p = snap.RootPhysicalProperties
+        table.insert(lines, string.format("   • Fricción HRP: %.2f (Peso: %.2f) | Elasticidad: %.2f | Densidad: %.2f",
+            p.Friction, p.FrictionWeight, p.Elasticity, p.Density))
+    end
+    if snap.TorsoPhysicalProperties then
+        local p = snap.TorsoPhysicalProperties
+        table.insert(lines, string.format("   • Fricción Torso: %.2f (Peso: %.2f) | Elasticidad: %.2f | Densidad: %.2f",
+            p.Friction, p.FrictionWeight, p.Elasticity, p.Density))
+    end
+
     if snap.ForcesDetected and #snap.ForcesDetected > 0 then
         table.insert(lines, "   • Fuerzas / Constraints activas en el personaje:")
         for _, force in ipairs(snap.ForcesDetected) do
