@@ -1,14 +1,16 @@
 --[[
     =============================================================================
-    APEX SUITE - ADVANCED DUMPER VIEW v4.0
-    (VIRTUALIZED EXPLORER + THREAT HEATMAP + SURGICAL MANUAL EXTRACTION)
+    APEX SUITE - ADVANCED DUMPER & INSTANCE MANIPULATOR VIEW v5.0
+    (HEATMAP THREAT MATRIX + CLONE/DESTROY/RESTORE PIPELINE + IMPORT SCRIPT GEN)
     =============================================================================
-    Explorador interactivo de instancias virtualizado (60 FPS) potenciado con:
-      - Resaltado visual de sospechas (Anti-Cheat, Economía, Remotes, Causal Trace)
-      - Selección manual quirúrgica individual y por ramas
-      - Filtros instantáneos: Todos, Solo Sospechosos, Solo Remotes, Solo Scripts
-      - Inspector dinámico de propiedades, tags de CollectionService, atributos y código
-      - Exportación multi-formato: JSON plano, Estructura a Disco (.lua) y VFS Archive
+    Explorador de instancias de alto rendimiento (60 FPS) con:
+      1. Matriz de Calor Unificada (Heatmap): Cruza Anti-Cheat, Economía, Físicas,
+         Remotes y Trazas de Usuario, propagando alertas a carpetas contenedoras.
+      2. Manipulador de Instancias Quirúrgico: Clonar, Eliminar, Copiar Código,
+         Copiar Ruta (GetFullName / WaitForChild), Copiar Tabla Lua.
+      3. Registro de Modificaciones y Reimportación Automática: Registra cualquier
+         objeto eliminado o duplicado y genera un script autónomo de restauración.
+      4. Filtros Instantáneos y Selección Guiada por Alertas Heurísticas.
 --]]
 
 local HttpService = game:GetService("HttpService")
@@ -40,8 +42,8 @@ function DumperView.new(parentFrame, registry)
     self.Registry = registry
     self.ViewFrame = nil
     self.CurrentMode = "MANUAL_TREE" -- "MANUAL_TREE", "HEURISTIC_FINDINGS", "DEPENDENCY_CHAIN", "FULL_ENVIRONMENT"
-    self.CurrentFilter = "ALL"       -- "ALL", "SUSPICIOUS", "REMOTES", "SCRIPTS"
-    self.ActiveTab = "NodeInspector" -- "NodeInspector", "JSONOutput", "Stats"
+    self.CurrentFilter = "ALL"       -- "ALL", "SUSPICIOUS", "REMOTES", "SCRIPTS", "PHYSICS", "MODIFIED"
+    self.ActiveTab = "NodeInspector" -- "NodeInspector", "JSONOutput", "ModHistory", "Stats"
 
     self.FlatTree = {}
     self.SelectedNodes = {}
@@ -54,46 +56,235 @@ function DumperView.new(parentFrame, registry)
     self.SelectedNodeForInspection = nil
     self.LastExtractedPackage = nil
 
+    -- Registro de Modificaciones (Snapshots de Clonaciones y Eliminaciones)
+    self.ModificationHistory = {}
+    self.ThreatHeatmap = {}         -- [instance] = { Text, Color, Type, Reason }
+    self.ContainerAlertCounts = {}  -- [containerInstance] = count
+
+    self:BuildThreatHeatmap()
     self:Render()
     return self
 end
 
-function DumperView:GetNodeThreatBadge(instance)
-    if not instance then return nil end
+-- =============================================================================
+-- 1. CONSTRUCCIÓN Y PROPAGACIÓN DE LA MATRIZ DE CALOR (HEATMAP AGGREGATOR)
+-- =============================================================================
+
+function DumperView:BuildThreatHeatmap()
+    table.clear(self.ThreatHeatmap)
+    table.clear(self.ContainerAlertCounts)
+
     local heuristic = self.Registry:Get("HeuristicEngine")
+    local physics = self.Registry:Get("PhysicsAuditor")
     local remoteAnalyzer = self.Registry:Get("RemoteAnalyzer")
     local actionRecorder = self.Registry:Get("ActionRecorder")
 
-    -- 1. Chequeo de Remotes
-    if instance:IsA("RemoteEvent") or instance:IsA("RemoteFunction") or instance:IsA("UnreliableRemoteEvent") then
-        return { Text = "📡 REMOTE", Color = Color3.fromRGB(0, 180, 230), Type = "REMOTE" }
-    end
+    local function registerThreat(inst, badgeText, color, threatType, reason)
+        if not inst then return end
+        self.ThreatHeatmap[inst] = {
+            Text = badgeText,
+            Color = color,
+            Type = threatType,
+            Reason = reason or badgeText,
+        }
 
-    -- 2. Chequeo en Hallazgos Heurísticos
-    if heuristic and heuristic.CrossReferenceMatrix then
-        local instPath = instance:GetFullName()
-        local callers = heuristic.CrossReferenceMatrix.RemotesToCallers
-        if callers and callers[instance.Name] then
-            return { Text = "🔗 CALLSITE", Color = Color3.fromRGB(240, 180, 40), Type = "CALLSITE" }
+        -- Propagar alerta hacia los contenedores ancestros
+        local parent = inst.Parent
+        while parent and parent ~= game do
+            self.ContainerAlertCounts[parent] = (self.ContainerAlertCounts[parent] or 0) + 1
+            parent = parent.Parent
         end
     end
 
-    -- 3. Chequeo de Nombres Sospechosos / Anti-Cheat
-    local lowerName = instance.Name:lower()
-    if lowerName:find("anticheat") or lowerName:find("security") or lowerName:find("integrity") or lowerName:find("watchdog") or lowerName:find("detection") or lowerName:find("kick") then
-        return { Text = "🚨 AC / VULN", Color = Color3.fromRGB(240, 60, 60), Type = "SUSPICIOUS" }
-    end
-    if lowerName:find("spin") or lowerName:find("roll") or lowerName:find("gacha") or lowerName:find("shop") or lowerName:find("purchase") or lowerName:find("luck") or lowerName:find("chance") then
-        return { Text = "🎰 ECON", Color = Color3.fromRGB(210, 140, 40), Type = "ECONOMY" }
+    -- 1. Hallazgos Heurísticos (Anti-Cheat, Economía, Combate, Admin)
+    if heuristic and heuristic.LastFullAudit then
+        local audit = heuristic.LastFullAudit
+        for _, item in ipairs(audit.AntiCheat or {}) do
+            registerThreat(item.Instance, "🚨 ANTI-CHEAT", Color3.fromRGB(255, 75, 75), "SUSPICIOUS", "Detección de Anti-Cheat / Kick / Watchdog")
+        end
+        for _, item in ipairs(audit.Economy or {}) do
+            registerThreat(item.Instance, "🎰 ECONOMÍA", Color3.fromRGB(245, 170, 45), "ECONOMY", "Lógica de Tienda / Gacha / Manipulación de Probabilidades")
+        end
+        for _, item in ipairs(audit.Combat or {}) do
+            registerThreat(item.Instance, "⚔️ COMBATE", Color3.fromRGB(230, 90, 160), "COMBAT", "Mecánica de Daño / Hitbox / Combate")
+        end
+        for _, item in ipairs(audit.AdminTools or {}) do
+            registerThreat(item.Instance, "👑 ADMIN", Color3.fromRGB(175, 95, 240), "ADMIN", "Herramienta de Administración / Depuración")
+        end
+        for _, item in ipairs(audit.Remotes or {}) do
+            registerThreat(item.Instance, "📡 REMOTE", Color3.fromRGB(0, 195, 245), "REMOTE", "Punto de Red Replicado")
+        end
+
+        -- Emisores de llamadas de red (Cross-Reference Matrix)
+        if audit.CrossReferenceMatrix and audit.CrossReferenceMatrix.ScriptsToRemotes then
+            for path, _ in pairs(audit.CrossReferenceMatrix.ScriptsToRemotes) do
+                pcall(function()
+                    local segments = string.split(path, ".")
+                    local curr = game
+                    for i = 1, #segments do
+                        curr = curr and curr:FindFirstChild(segments[i])
+                    end
+                    if curr and not self.ThreatHeatmap[curr] then
+                        registerThreat(curr, "🔗 CALLSITE", Color3.fromRGB(240, 200, 50), "CALLSITE", "Script emisor de llamadas a Remotes")
+                    end
+                end)
+            end
+        end
     end
 
-    -- 4. Chequeo de Acción de Usuario Correlacionada
-    if actionRecorder and actionRecorder.RecentAction and actionRecorder.RecentAction.Instance == instance then
-        return { Text = "🎯 TRACE", Color = Color3.fromRGB(80, 220, 120), Type = "TRACE" }
+    -- 2. Hallazgos de Físicas y Watchdogs
+    if physics and physics.AuditPhysicsRemotes then
+        local pRemotes = physics:AuditPhysicsRemotes()
+        for _, rInfo in ipairs(pRemotes) do
+            if rInfo.Remote and not self.ThreatHeatmap[rInfo.Remote] then
+                registerThreat(rInfo.Remote, "🏃 FÍSICA", Color3.fromRGB(70, 220, 150), "PHYSICS", "Remote de Sincronización de Coordenadas/Física")
+            end
+        end
+    end
+
+    -- 3. Trazabilidad Causal de Usuario
+    if actionRecorder and actionRecorder.RecordedTimeline then
+        for _, act in ipairs(actionRecorder.RecordedTimeline) do
+            if act.Instance and not self.ThreatHeatmap[act.Instance] then
+                registerThreat(act.Instance, "🎯 TRACE", Color3.fromRGB(60, 230, 140), "TRACE", "Elemento detonador de acción de usuario")
+            end
+        end
+    end
+end
+
+function DumperView:GetNodeThreatBadge(instance)
+    if not instance then return nil end
+
+    -- 1. Alerta Directa
+    local direct = self.ThreatHeatmap[instance]
+    if direct then return direct end
+
+    -- 2. Alerta de Remotes Nativos
+    if instance:IsA("RemoteEvent") or instance:IsA("RemoteFunction") or instance:IsA("UnreliableRemoteEvent") then
+        return { Text = "📡 REMOTE", Color = Color3.fromRGB(0, 195, 245), Type = "REMOTE" }
+    end
+
+    -- 3. Alerta Heredada / Contenedor con Sospechas Internas
+    local alertCount = self.ContainerAlertCounts[instance]
+    if alertCount and alertCount > 0 then
+        return {
+            Text = string.format("🚨 [%d ALERTAS]", alertCount),
+            Color = Color3.fromRGB(255, 140, 50),
+            Type = "CONTAINER_ALERT",
+            Count = alertCount,
+        }
     end
 
     return nil
 end
+
+-- =============================================================================
+-- 2. SERIALIZACIÓN Y GENERADOR DE CÓDIGO DE REIMPORTACIÓN / RESTAURACIÓN
+-- =============================================================================
+
+function DumperView:GenerateLuaCreationSnippet(instance)
+    if not instance then return "-- [Instancia inválida]" end
+
+    local lines = {}
+    table.insert(lines, string.format("local obj = Instance.new(%q)", instance.ClassName))
+    table.insert(lines, string.format("obj.Name = %q", instance.Name))
+
+    pcall(function()
+        if instance:IsA("ValueBase") then
+            local v = instance.Value
+            if type(v) == "string" then
+                table.insert(lines, string.format("obj.Value = %q", v))
+            else
+                table.insert(lines, string.format("obj.Value = %s", tostring(v)))
+            end
+        elseif instance:IsA("ProximityPrompt") then
+            table.insert(lines, string.format("obj.ActionText = %q", instance.ActionText))
+            table.insert(lines, string.format("obj.ObjectText = %q", instance.ObjectText))
+            table.insert(lines, string.format("obj.HoldDuration = %s", tostring(instance.HoldDuration)))
+            table.insert(lines, string.format("obj.MaxActivationDistance = %s", tostring(instance.MaxActivationDistance)))
+        elseif instance:IsA("ClickDetector") then
+            table.insert(lines, string.format("obj.MaxActivationDistance = %s", tostring(instance.MaxActivationDistance)))
+        elseif instance:IsA("Tool") then
+            table.insert(lines, string.format("obj.RequiresHandle = %s", tostring(instance.RequiresHandle)))
+            table.insert(lines, string.format("obj.CanBeDropped = %s", tostring(instance.CanBeDropped)))
+            table.insert(lines, string.format("obj.ToolTip = %q", instance.ToolTip or ""))
+        end
+    end)
+
+    -- Atributos
+    pcall(function()
+        local attrs = instance:GetAttributes()
+        for k, v in pairs(attrs) do
+            if type(v) == "string" then
+                table.insert(lines, string.format("obj:SetAttribute(%q, %q)", tostring(k), v))
+            else
+                table.insert(lines, string.format("obj:SetAttribute(%q, %s)", tostring(k), tostring(v)))
+            end
+        end
+    end)
+
+    -- Tags de CollectionService
+    pcall(function()
+        local tags = CollectionService:GetTags(instance)
+        for _, tag in ipairs(tags) do
+            table.insert(lines, string.format("game:GetService('CollectionService'):AddTag(obj, %q)", tag))
+        end
+    end)
+
+    local parentPath = instance.Parent and instance.Parent:GetFullName() or "Workspace"
+    table.insert(lines, string.format("obj.Parent = %s", parentPath))
+
+    return table.concat(lines, "\n")
+end
+
+function DumperView:GenerateImportablePatchScript()
+    local lines = {}
+    table.insert(lines, [=[--[[
+    =============================================================================
+    APEX SUITE - STANDALONE IMPORTABLE PATCH & REVERSION SCRIPT
+    =============================================================================
+    Script autónomo generado automáticamente a partir del historial de
+    modificaciones (clonaciones, eliminaciones y parches) del Dumper.
+--]]
+
+local CollectionService = game:GetService("CollectionService")
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+]=])
+
+    if #self.ModificationHistory == 0 then
+        table.insert(lines, "-- No hay modificaciones registradas en esta sesión.")
+        return table.concat(lines, "\n")
+    end
+
+    for idx, mod in ipairs(self.ModificationHistory) do
+        table.insert(lines, string.format("\n-- ====================================================================="))
+        table.insert(lines, string.format("-- [%d] %s: %s (%s)", idx, mod.Action, mod.Name, mod.ClassName))
+        table.insert(lines, string.format("-- Ruta Original: %s", mod.Path))
+        table.insert(lines, string.format("-- ====================================================================="))
+
+        if mod.Action == "DESTROY" then
+            table.insert(lines, "-- Restauración de objeto eliminado:")
+            table.insert(lines, mod.CreationSnippet or "-- [Snippet no disponible]")
+            if mod.SourceCode and #mod.SourceCode > 0 and not mod.SourceCode:find("%[Código no disponible") then
+                table.insert(lines, string.format("\n-- Código fuente del script restaurado:"))
+                table.insert(lines, string.format("local restoredSource = %q", mod.SourceCode))
+                table.insert(lines, "pcall(function() obj.Source = restoredSource end)")
+            end
+        elseif mod.Action == "CLONE" then
+            table.insert(lines, string.format("-- Objeto duplicado creado: %s en %s", mod.CloneName or mod.Name, mod.ParentPath or "Workspace"))
+            table.insert(lines, mod.CreationSnippet or "-- [Snippet no disponible]")
+        end
+    end
+
+    table.insert(lines, "\nprint('[APEX] Parche de importación y restauración aplicado con éxito.')")
+    return table.concat(lines, "\n")
+end
+
+-- =============================================================================
+-- 3. RENDERIZADO DE LA INTERFAZ
+-- =============================================================================
 
 function DumperView:Render()
     local frame = Instance.new("Frame")
@@ -102,9 +293,7 @@ function DumperView:Render()
     frame.Parent = self.Parent
     self.ViewFrame = frame
 
-    -- =========================================================================
-    -- 1. BARRA SUPERIOR DE MODOS DE EXTRACCIÓN
-    -- =========================================================================
+    -- BARRA SUPERIOR DE MODOS DE EXTRACCIÓN
     local modeBar = Instance.new("Frame")
     modeBar.Size = UDim2.new(1, 0, 0, 30)
     modeBar.BackgroundTransparency = 1
@@ -149,16 +338,14 @@ function DumperView:Render()
     end
     setMode("MANUAL_TREE")
 
-    -- =========================================================================
-    -- 2. CUERPO PRINCIPAL (PANEL IZQUIERDO: ÁRBOL VIRTUALIZADO / PANEL DERECHO: INSPECTOR)
-    -- =========================================================================
+    -- CUERPO PRINCIPAL DIVIDIDO
     local body = Instance.new("Frame")
     body.Size = UDim2.new(1, 0, 1, -36)
     body.Position = UDim2.new(0, 0, 0, 36)
     body.BackgroundTransparency = 1
     body.Parent = frame
 
-    -- PANEL IZQUIERDO: Árbol de Instancias Virtualizado
+    -- PANEL IZQUIERDO: ÁRBOL VIRTUALIZADO Y FILTROS
     local leftPanel = Instance.new("Frame")
     leftPanel.Size = UDim2.new(0.48, -4, 1, 0)
     leftPanel.Position = UDim2.new(0, 0, 0, 0)
@@ -166,7 +353,7 @@ function DumperView:Render()
     leftPanel.Parent = body
     Instance.new("UICorner", leftPanel).CornerRadius = UDim.new(0, 6)
 
-    -- Barra de búsqueda + Botón Lupa
+    -- Barra de Búsqueda y Botón Refrescar Heatmap
     local searchRow = Instance.new("Frame")
     searchRow.Size = UDim2.new(1, -10, 0, 26)
     searchRow.Position = UDim2.new(0, 5, 0, 5)
@@ -174,7 +361,7 @@ function DumperView:Render()
     searchRow.Parent = leftPanel
 
     local searchBox = Instance.new("TextBox")
-    searchBox.Size = UDim2.new(1, -30, 1, 0)
+    searchBox.Size = UDim2.new(1, -56, 1, 0)
     searchBox.BackgroundColor3 = Color3.fromRGB(24, 28, 38)
     searchBox.TextColor3 = Color3.fromRGB(235, 240, 250)
     searchBox.PlaceholderText = "Filtrar por nombre o clase..."
@@ -187,7 +374,7 @@ function DumperView:Render()
 
     local searchBtn = Instance.new("TextButton")
     searchBtn.Size = UDim2.new(0, 26, 1, 0)
-    searchBtn.Position = UDim2.new(1, -26, 0, 0)
+    searchBtn.Position = UDim2.new(1, -52, 0, 0)
     searchBtn.BackgroundColor3 = Color3.fromRGB(35, 60, 100)
     searchBtn.Text = "🔍"
     searchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -195,6 +382,17 @@ function DumperView:Render()
     searchBtn.TextSize = 11
     searchBtn.Parent = searchRow
     Instance.new("UICorner", searchBtn).CornerRadius = UDim.new(0, 5)
+
+    local refreshHeatmapBtn = Instance.new("TextButton")
+    refreshHeatmapBtn.Size = UDim2.new(0, 24, 1, 0)
+    refreshHeatmapBtn.Position = UDim2.new(1, -24, 0, 0)
+    refreshHeatmapBtn.BackgroundColor3 = Color3.fromRGB(160, 70, 30)
+    refreshHeatmapBtn.Text = "🔥"
+    refreshHeatmapBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    refreshHeatmapBtn.Font = Enum.Font.Gotham
+    refreshHeatmapBtn.TextSize = 11
+    refreshHeatmapBtn.Parent = searchRow
+    Instance.new("UICorner", refreshHeatmapBtn).CornerRadius = UDim.new(0, 5)
 
     -- Barra de Filtros Rápidos
     local filterBar = Instance.new("Frame")
@@ -205,10 +403,11 @@ function DumperView:Render()
 
     local filterButtons = {}
     local filters = {
-        { Id = "ALL",        Label = "Todos",         Width = 0.20 },
-        { Id = "SUSPICIOUS", Label = "🚨 Sospechosos", Width = 0.32 },
-        { Id = "REMOTES",    Label = "📡 Remotes",     Width = 0.24 },
-        { Id = "SCRIPTS",    Label = "📜 Scripts",     Width = 0.24 },
+        { Id = "ALL",        Label = "Todos",         Width = 0.18 },
+        { Id = "SUSPICIOUS", Label = "🚨 Sospechosos", Width = 0.28 },
+        { Id = "REMOTES",    Label = "📡 Remotes",     Width = 0.20 },
+        { Id = "SCRIPTS",    Label = "📜 Scripts",     Width = 0.18 },
+        { Id = "PHYSICS",    Label = "🏃 Físicas",     Width = 0.16 },
     }
 
     local currentFilterX = 0
@@ -238,7 +437,7 @@ function DumperView:Render()
     treeScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
     treeScroll.Parent = leftPanel
 
-    -- Barra de Acción Rápida del Árbol (Seleccionar Sospechosos / Desmarcar)
+    -- Barra de Acción Rápida del Árbol
     local treeActions = Instance.new("Frame")
     treeActions.Size = UDim2.new(1, -10, 0, 24)
     treeActions.Position = UDim2.new(0, 5, 1, -58)
@@ -248,7 +447,7 @@ function DumperView:Render()
     local selectSuspiciousBtn = Instance.new("TextButton")
     selectSuspiciousBtn.Size = UDim2.new(0.60, -2, 1, 0)
     selectSuspiciousBtn.Position = UDim2.new(0, 0, 0, 0)
-    selectSuspiciousBtn.BackgroundColor3 = Color3.fromRGB(180, 70, 30)
+    selectSuspiciousBtn.BackgroundColor3 = Color3.fromRGB(190, 65, 30)
     selectSuspiciousBtn.Text = "⚡ SELECCIONAR SOSPECHOSOS"
     selectSuspiciousBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     selectSuspiciousBtn.Font = Enum.Font.GothamBold
@@ -267,7 +466,7 @@ function DumperView:Render()
     clearSelectionBtn.Parent = treeActions
     Instance.new("UICorner", clearSelectionBtn).CornerRadius = UDim.new(0, 4)
 
-    -- Barra de Estado / Conteo de Selección
+    -- Estado del Árbol
     local treeStatus = Instance.new("TextLabel")
     treeStatus.Size = UDim2.new(1, -10, 0, 24)
     treeStatus.Position = UDim2.new(0, 5, 1, -28)
@@ -279,7 +478,7 @@ function DumperView:Render()
     treeStatus.Parent = leftPanel
     Instance.new("UICorner", treeStatus).CornerRadius = UDim.new(0, 4)
 
-    -- PANEL DERECHO: Inspector de Detalle + Opciones de Volcado
+    -- PANEL DERECHO: INSPECTOR, ACCIONES QUIRÚRGICAS Y EXPORTACIÓN
     local rightPanel = Instance.new("Frame")
     rightPanel.Size = UDim2.new(0.52, -4, 1, 0)
     rightPanel.Position = UDim2.new(0.48, 4, 0, 0)
@@ -287,7 +486,7 @@ function DumperView:Render()
     rightPanel.Parent = body
     Instance.new("UICorner", rightPanel).CornerRadius = UDim.new(0, 6)
 
-    -- Pestañas del Inspector Derecho
+    -- Pestañas del Inspector
     local rightTabRow = Instance.new("Frame")
     rightTabRow.Size = UDim2.new(1, 0, 0, 26)
     rightTabRow.BackgroundColor3 = Color3.fromRGB(20, 24, 34)
@@ -295,19 +494,47 @@ function DumperView:Render()
     Instance.new("UICorner", rightTabRow).CornerRadius = UDim.new(0, 6)
 
     local rightTabs = {
-        { Id = "NodeInspector", Label = "🕵️ Inspector de Nodo" },
+        { Id = "NodeInspector", Label = "🕵️ Inspector & Acciones" },
         { Id = "JSONOutput",    Label = "📂 Salida JSON" },
-        { Id = "Stats",         Label = "📊 Telemetría y Caché" },
+        { Id = "ModHistory",    Label = "🧬 Historial & Parches" },
+        { Id = "Stats",         Label = "📊 Telemetría" },
     }
     local rightTabButtons = {}
     local rTabWidth = 1 / #rightTabs
 
+    -- Barra de Acciones Quirúrgicas de la Instancia Seleccionada
+    local instanceToolBar = Instance.new("Frame")
+    instanceToolBar.Size = UDim2.new(1, -12, 0, 26)
+    instanceToolBar.Position = UDim2.new(0, 6, 0, 28)
+    instanceToolBar.BackgroundTransparency = 1
+    instanceToolBar.Parent = rightPanel
+
+    local function createInstToolBtn(text, posX, width, color)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(width, -2, 1, 0)
+        btn.Position = UDim2.new(posX, 1, 0, 0)
+        btn.BackgroundColor3 = color or Color3.fromRGB(30, 35, 48)
+        btn.Text = text
+        btn.TextColor3 = Color3.fromRGB(240, 245, 255)
+        btn.Font = Enum.Font.GothamBold
+        btn.TextSize = 9
+        btn.Parent = instanceToolBar
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+        return btn
+    end
+
+    local btnCopyPath = createInstToolBtn("📋 Ruta", 0, 0.22, Color3.fromRGB(35, 75, 130))
+    local btnCopyCode = createInstToolBtn("📜 Código", 0.22, 0.22, Color3.fromRGB(45, 95, 150))
+    local btnClone    = createInstToolBtn("🧬 Clonar", 0.44, 0.26, Color3.fromRGB(35, 125, 75))
+    local btnDestroy  = createInstToolBtn("🗑️ Eliminar", 0.70, 0.30, Color3.fromRGB(180, 50, 50))
+
+    -- Caja de Texto Principal del Inspector
     local inspectorBox = Instance.new("TextBox")
-    inspectorBox.Size = UDim2.new(1, -12, 1, -96)
-    inspectorBox.Position = UDim2.new(0, 6, 0, 30)
+    inspectorBox.Size = UDim2.new(1, -12, 1, -126)
+    inspectorBox.Position = UDim2.new(0, 6, 0, 58)
     inspectorBox.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
     inspectorBox.TextColor3 = Color3.fromRGB(215, 225, 240)
-    inspectorBox.Text = "-- Selecciona cualquier nodo en el árbol de la izquierda para inspeccionar sus propiedades, atributos, tags y código descompilado."
+    inspectorBox.Text = "-- Selecciona cualquier nodo en el árbol para inspeccionar o ejecutar acciones quirúrgicas."
     inspectorBox.Font = Enum.Font.Code
     inspectorBox.TextSize = 10
     inspectorBox.TextXAlignment = Enum.TextXAlignment.Left
@@ -318,7 +545,7 @@ function DumperView:Render()
     inspectorBox.Parent = rightPanel
     Instance.new("UICorner", inspectorBox).CornerRadius = UDim.new(0, 6)
 
-    -- Barra de Ejecución de Volcados en Panel Derecho
+    -- Barra de Exportación de Volcados
     local dumpActionRow = Instance.new("Frame")
     dumpActionRow.Size = UDim2.new(1, -12, 0, 28)
     dumpActionRow.Position = UDim2.new(0, 6, 1, -62)
@@ -358,7 +585,7 @@ function DumperView:Render()
     dumpVfsBtn.Parent = dumpActionRow
     Instance.new("UICorner", dumpVfsBtn).CornerRadius = UDim.new(0, 4)
 
-    -- Barra de Utilidades Inferior (Copiar / Limpiar)
+    -- Barra de Utilidades Inferior (Copiar / Guardar Vista)
     local utilityRow = Instance.new("Frame")
     utilityRow.Size = UDim2.new(1, -12, 0, 26)
     utilityRow.Position = UDim2.new(0, 6, 1, -30)
@@ -388,6 +615,107 @@ function DumperView:Render()
     Instance.new("UICorner", saveToFileBtn).CornerRadius = UDim.new(0, 4)
 
     -- =========================================================================
+    -- HANDLERS DE ACCIONES QUIRÚRGICAS (CLONAR / ELIMINAR / COPIAR)
+    -- =========================================================================
+    local function setInspectorText(text)
+        local maxLimit = 75000
+        local str = tostring(text or "")
+        if #str > maxLimit then
+            inspectorBox.Text = str:sub(1, maxLimit) .. string.format("\n\n-- [⚠️ Truncado a %d chars por límite de TextBox]\n-- [Total: %d chars]", maxLimit, #str)
+        else
+            inspectorBox.Text = str
+        end
+    end
+
+    btnCopyPath.MouseButton1Click:Connect(function()
+        local inst = self.SelectedNodeForInspection
+        if inst then
+            local path = inst:GetFullName()
+            if safeSetClipboard(path) then
+                btnCopyPath.Text = "✅ ¡Copiado!"
+                task.delay(1.2, function() btnCopyPath.Text = "📋 Ruta" end)
+            end
+        end
+    end)
+
+    btnCopyCode.MouseButton1Click:Connect(function()
+        local inst = self.SelectedNodeForInspection
+        if inst and inst:IsA("LuaSourceContainer") then
+            local caps = self.Registry:Get("CapabilityManager")
+            local code = caps and caps:SafeDecompile(inst) or inst.Source
+            if safeSetClipboard(code) then
+                btnCopyCode.Text = "✅ ¡Copiado!"
+                task.delay(1.2, function() btnCopyCode.Text = "📜 Código" end)
+            end
+        end
+    end)
+
+    btnClone.MouseButton1Click:Connect(function()
+        local inst = self.SelectedNodeForInspection
+        if inst then
+            local s, cloned = pcall(function() return inst:Clone() end)
+            if s and cloned then
+                cloned.Name = inst.Name .. "_Clone"
+                cloned.Parent = inst.Parent or Workspace
+
+                -- Registrar en Historial
+                local snippet = self:GenerateLuaCreationSnippet(inst)
+                table.insert(self.ModificationHistory, 1, {
+                    Action = "CLONE",
+                    Timestamp = tick(),
+                    Name = inst.Name,
+                    CloneName = cloned.Name,
+                    ClassName = inst.ClassName,
+                    Path = inst:GetFullName(),
+                    ParentPath = inst.Parent and inst.Parent:GetFullName() or "Workspace",
+                    CreationSnippet = snippet,
+                })
+
+                btnClone.Text = "✅ ¡Clonado!"
+                treeStatus.Text = string.format("🧬 Elemento clonado: %s", cloned.Name)
+                task.delay(1.5, function() btnClone.Text = "🧬 Clonar" end)
+            else
+                btnClone.Text = "❌ No clonable"
+                task.delay(1.5, function() btnClone.Text = "🧬 Clonar" end)
+            end
+        end
+    end)
+
+    btnDestroy.MouseButton1Click:Connect(function()
+        local inst = self.SelectedNodeForInspection
+        if inst then
+            local caps = self.Registry:Get("CapabilityManager")
+            local src = inst:IsA("LuaSourceContainer") and (caps and caps:SafeDecompile(inst) or inst.Source) or nil
+            local snippet = self:GenerateLuaCreationSnippet(inst)
+
+            -- Registrar snapshot antes de destruir
+            table.insert(self.ModificationHistory, 1, {
+                Action = "DESTROY",
+                Timestamp = tick(),
+                Name = inst.Name,
+                ClassName = inst.ClassName,
+                Path = inst:GetFullName(),
+                ParentPath = inst.Parent and inst.Parent:GetFullName() or "Workspace",
+                CreationSnippet = snippet,
+                SourceCode = src,
+            })
+
+            local s, err = pcall(function() inst:Destroy() end)
+            if s then
+                btnDestroy.Text = "🗑️ ¡Eliminado!"
+                treeStatus.Text = string.format("🗑️ Objeto '%s' eliminado y respaldado en historial.", inst.Name)
+                self.SelectedNodeForInspection = nil
+                setInspectorText("-- Objeto eliminado del juego. Puedes ver su código de restauración en la pestaña 'Historial & Parches'.")
+                task.delay(1.5, function() btnDestroy.Text = "🗑️ Eliminar" end)
+            else
+                btnDestroy.Text = "❌ Error"
+                treeStatus.Text = "Error al destruir: " .. tostring(err)
+                task.delay(1.5, function() btnDestroy.Text = "🗑️ Eliminar" end)
+            end
+        end
+    end)
+
+    -- =========================================================================
     -- LÓGICA DE VIRTUALIZACIÓN DEL ÁRBOL
     -- =========================================================================
     local function hasChildrenSafe(obj)
@@ -403,7 +731,7 @@ function DumperView:Render()
     local function updateStatusLabel()
         local count = 0
         for _ in pairs(self.SelectedNodes) do count = count + 1 end
-        treeStatus.Text = string.format("Seleccionados: %d nodos | Modo: %s", count, self.CurrentMode)
+        treeStatus.Text = string.format("Seleccionados: %d nodos | Filtro: %s | Modo: %s", count, self.CurrentFilter, self.CurrentMode)
     end
 
     local function updateVisibleTree()
@@ -424,8 +752,9 @@ function DumperView:Render()
                 frameRow.CheckBtn.Position = UDim2.new(0, xOffset + 18, 0, 3)
 
                 local textX = xOffset + 38
+                local badgeWidth = data.badge and 85 or 0
                 frameRow.NameLabel.Position = UDim2.new(0, textX, 0, 0)
-                frameRow.NameLabel.Size = UDim2.new(1, -textX - (data.badge and 60 or 0), 1, 0)
+                frameRow.NameLabel.Size = UDim2.new(1, -textX - badgeWidth - 4, 1, 0)
 
                 local displayName = self.IsSearching and data.obj:GetFullName() or data.obj.Name
                 frameRow.NameLabel.Text = displayName
@@ -434,9 +763,11 @@ function DumperView:Render()
                     frameRow.BadgeLabel.Visible = true
                     frameRow.BadgeLabel.Text = data.badge.Text
                     frameRow.BadgeLabel.TextColor3 = data.badge.Color
-                    frameRow.NameLabel.TextColor3 = (data.badge.Type == "SUSPICIOUS") and Color3.fromRGB(255, 120, 120)
-                        or (data.badge.Type == "REMOTE") and Color3.fromRGB(130, 220, 255)
-                        or (data.badge.Type == "ECONOMY") and Color3.fromRGB(255, 200, 120)
+                    frameRow.NameLabel.TextColor3 = (data.badge.Type == "SUSPICIOUS") and Color3.fromRGB(255, 100, 100)
+                        or (data.badge.Type == "CONTAINER_ALERT") and Color3.fromRGB(255, 160, 60)
+                        or (data.badge.Type == "REMOTE") and Color3.fromRGB(120, 220, 255)
+                        or (data.badge.Type == "ECONOMY") and Color3.fromRGB(255, 200, 100)
+                        or (data.badge.Type == "PHYSICS") and Color3.fromRGB(100, 240, 160)
                         or Color3.fromRGB(220, 225, 235)
                 else
                     frameRow.BadgeLabel.Visible = false
@@ -458,6 +789,9 @@ function DumperView:Render()
             return obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") or obj:IsA("UnreliableRemoteEvent")
         elseif self.CurrentFilter == "SCRIPTS" then
             return obj:IsA("LuaSourceContainer")
+        elseif self.CurrentFilter == "PHYSICS" then
+            local lowerName = obj.Name:lower()
+            return lowerName:find("move") or lowerName:find("pos") or lowerName:find("cframe") or lowerName:find("velocity") or lowerName:find("speed") or lowerName:find("teleport")
         elseif self.CurrentFilter == "SUSPICIOUS" then
             local badge = self:GetNodeThreatBadge(obj)
             return badge ~= nil
@@ -530,6 +864,12 @@ function DumperView:Render()
         btn.MouseButton1Click:Connect(function() selectFilter(fId) end)
     end
 
+    refreshHeatmapBtn.MouseButton1Click:Connect(function()
+        self:BuildThreatHeatmap()
+        rebuildFlatTree()
+        treeStatus.Text = "🔥 Matriz de Calor recalculada y propagada."
+    end)
+
     local function performSearch(query)
         query = query:lower()
         self.SearchId = self.SearchId + 1
@@ -582,7 +922,7 @@ function DumperView:Render()
     searchBtn.MouseButton1Click:Connect(function() performSearch(searchBox.Text) end)
     searchBox.FocusLost:Connect(function(enter) if enter then performSearch(searchBox.Text) end end)
 
-    -- Creación de Filas UI Reutilizadas para Virtualización
+    -- Filas UI Reutilizadas para Virtualización
     for i = 1, VISIBLE_ROWS do
         local row = Instance.new("Frame")
         row.Size = UDim2.new(1, 0, 0, ROW_HEIGHT)
@@ -617,11 +957,11 @@ function DumperView:Render()
         nameLabel.Parent = row
 
         local badgeLabel = Instance.new("TextLabel")
-        badgeLabel.Size = UDim2.new(0, 70, 0, 16)
-        badgeLabel.Position = UDim2.new(1, -75, 0, 3)
-        badgeLabel.BackgroundColor3 = Color3.fromRGB(24, 28, 38)
+        badgeLabel.Size = UDim2.new(0, 85, 0, 16)
+        badgeLabel.Position = UDim2.new(1, -88, 0, 3)
+        badgeLabel.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
         badgeLabel.Font = Enum.Font.GothamBold
-        badgeLabel.TextSize = 9
+        badgeLabel.TextSize = 8
         badgeLabel.Visible = false
         badgeLabel.Parent = row
         Instance.new("UICorner", badgeLabel).CornerRadius = UDim.new(0, 3)
@@ -669,28 +1009,11 @@ function DumperView:Render()
 
     treeScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(updateVisibleTree)
 
-    -- Botones de Selección Rápida de Sospechosos
     selectSuspiciousBtn.MouseButton1Click:Connect(function()
         local count = 0
-        local function scanAndSelect(obj)
-            local badge = self:GetNodeThreatBadge(obj)
-            if badge then
-                self.SelectedNodes[obj] = true
-                count = count + 1
-            end
-            local s, d = pcall(function() return obj:GetDescendants() end)
-            if s and d then
-                for _, child in ipairs(d) do
-                    local b = self:GetNodeThreatBadge(child)
-                    if b then
-                        self.SelectedNodes[child] = true
-                        count = count + 1
-                    end
-                end
-            end
-        end
-        for _, root in ipairs(self.RootNodes) do
-            scanAndSelect(root)
+        for inst, _ in pairs(self.ThreatHeatmap) do
+            self.SelectedNodes[inst] = true
+            count = count + 1
         end
         updateVisibleTree()
         updateStatusLabel()
@@ -703,7 +1026,7 @@ function DumperView:Render()
         updateStatusLabel()
     end)
 
-    -- Raíces estándar de Roblox
+    -- Cargar Raíces del Explorador
     local commonServices = { "Workspace", "Players", "Lighting", "ReplicatedFirst", "ReplicatedStorage", "RobloxReplicatedStorage", "StarterGui", "StarterPack", "StarterPlayer" }
     for _, sName in ipairs(commonServices) do
         pcall(function()
@@ -714,18 +1037,8 @@ function DumperView:Render()
     rebuildFlatTree()
 
     -- =========================================================================
-    -- LÓGICA DEL INSPECTOR DE NODO DERECHO
+    -- INSPECTOR DE NODO DERECHO
     -- =========================================================================
-    local function setInspectorText(text)
-        local maxLimit = 75000
-        local str = tostring(text or "")
-        if #str > maxLimit then
-            inspectorBox.Text = str:sub(1, maxLimit) .. string.format("\n\n-- [⚠️ Truncado a %d chars por límite de Roblox TextBox]\n-- [Total: %d chars]", maxLimit, #str)
-        else
-            inspectorBox.Text = str
-        end
-    end
-
     function self:InspectNode(instance)
         self.SelectedNodeForInspection = instance
         self:SelectRightTab("NodeInspector")
@@ -735,6 +1048,11 @@ function DumperView:Render()
         table.insert(lines, "=============================================================================")
         table.insert(lines, string.format("🕵️ INSPECCIÓN DETALLADA: %s (%s)", instance.Name, instance.ClassName))
         table.insert(lines, string.format("📍 Ruta Completa: %s", instance:GetFullName()))
+
+        local badge = self:GetNodeThreatBadge(instance)
+        if badge then
+            table.insert(lines, string.format("⚠️ ALERTA DE SEGURIDAD: %s (%s)", badge.Text, badge.Reason or "Detectado en análisis"))
+        end
         table.insert(lines, "=============================================================================")
 
         -- Tags de CollectionService
@@ -803,6 +1121,9 @@ function DumperView:Render()
             else
                 setInspectorText("-- No hay ningún paquete de volcado extraído aún. Presiona EXTRAER JSON abajo.")
             end
+        elseif tabId == "ModHistory" then
+            local patchScript = self:GenerateImportablePatchScript()
+            setInspectorText(patchScript)
         elseif tabId == "Stats" then
             local caps = self.Registry:Get("CapabilityManager")
             local stats = caps and caps:GetCacheStats() or {}
@@ -816,6 +1137,8 @@ function DumperView:Render()
                 string.format("• Timeouts (>200ms protegidos): %d", stats.Timeouts or 0),
                 string.format("• Errores / Scripts no accesibles: %d", stats.Errors or 0),
                 string.format("• Entradas Activas en Caché: %d", stats.CacheSize or 0),
+                string.format("• Nodos en Matriz de Calor: %d", (function() local c=0; for _ in pairs(self.ThreatHeatmap) do c=c+1 end return c end)()),
+                string.format("• Modificaciones en Historial: %d", #self.ModificationHistory),
                 "=============================================================================",
                 string.format("• Resumen de Capacidades del Ejecutor:\n  %s", caps and caps:GetSummary() or "N/A"),
             }
@@ -841,7 +1164,7 @@ function DumperView:Render()
     self:SelectRightTab("NodeInspector")
 
     -- =========================================================================
-    -- EJECUCIÓN DE VOLCADOS (JSON, DISCO .LUA, VFS ARCHIVE)
+    -- EJECUCIÓN DE VOLCADOS
     -- =========================================================================
     local function executeDump(exportMode)
         local dumper = self.Registry:Get("SelectiveDumper")
@@ -875,14 +1198,12 @@ function DumperView:Render()
             elseif self.CurrentMode == "FULL_ENVIRONMENT" then
                 package = dumper:DumpFullEnvironment(onProgress)
             else
-                -- MODO MANUAL_TREE: Extraer exactamente los nodos seleccionados por el usuario
                 local queue = {}
                 for obj, isSel in pairs(self.SelectedNodes) do
                     if isSel then table.insert(queue, obj) end
                 end
 
                 if #queue == 0 then
-                    -- Si no seleccionó ninguno, usar raíces principales por defecto
                     queue = { game:GetService("ReplicatedStorage"), game:GetService("StarterPlayer") }
                 end
                 package = dumper:DumpManualNodes(queue, onProgress)
@@ -952,6 +1273,9 @@ end
 function DumperView:SetVisible(visible)
     if self.ViewFrame then
         self.ViewFrame.Visible = visible
+        if visible then
+            self:BuildThreatHeatmap()
+        end
     end
 end
 
