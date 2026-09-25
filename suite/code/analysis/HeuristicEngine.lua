@@ -96,9 +96,46 @@ function HeuristicEngine.new(capabilityManager, logger, structuralProfiler)
         { Pattern = "math%.random", Score = 15, Desc = "Generación de Números Aleatorios en Cliente", Category = "Economy" },
         { Pattern = "Random%.new", Score = 15, Desc = "Instanciación de RNG en Cliente", Category = "Economy" },
         { Pattern = "FireServer%(.*[Dd]amage.*%)", Score = 35, Desc = "Disparo de Daño desde el Cliente", Category = "Combat" },
+        -- Firmas de Capacidades Críticas de Modding / Admin Abuse
+        { Pattern = "BodyVelocity", Score = 35, Desc = "Manipulación de Vuelo / Física Forzada (BodyVelocity)", Category = "Admin" },
+        { Pattern = "BodyGyro", Score = 25, Desc = "Manipulación de Orientación / Vuelo (BodyGyro)", Category = "Admin" },
+        { Pattern = "CanCollide%s*=%s*false", Score = 40, Desc = "Rutina de Noclip en tiempo de ejecución", Category = "Admin" },
+        { Pattern = "_G%.", Score = 20, Desc = "Exposición de Variables Globales en Memoria (_G)", Category = "Admin" },
     }
     
     return self
+end
+
+function HeuristicEngine:IsIgnoredCoreInstance(instance)
+    local fullName = instance:GetFullName()
+    if fullName:find("StarterPlayer%.StarterPlayerScripts%.PlayerModule")
+       or fullName:find("StarterPlayer%.StarterPlayerScripts%.RbxCharacterSounds")
+       or fullName:find("PlayerScriptsLoader")
+       or fullName:find("ChatScript")
+       or fullName:find("BubbleChat")
+       or fullName:find("RobloxGui")
+       or fullName:find("%.spec")
+       or fullName:find("%.test")
+       or fullName:find("Jest")
+       or fullName:find("TestEZ") then
+        return true
+    end
+    return false
+end
+
+function HeuristicEngine:MatchesKeyword(targetText, keyword)
+    if not targetText or not keyword then return false end
+    local lowerText = targetText:lower()
+    local lowerKw = keyword:lower()
+    
+    -- Si contiene prefijos/sufijos técnicos o caracteres no alfanuméricos ASCII
+    if lowerKw:find("^[_%W]") or lowerKw:find("[_%W]$") or lowerKw:match("[^\32-\126]") then
+        return string.find(lowerText, lowerKw, 1, true) ~= nil
+    end
+    
+    -- Palabras ASCII normales: usar límite de frontera de palabra para evitar que 'controller' coincida con 'roll' o 'abandon' con 'ban'
+    local pattern = "%f[%w]" .. lowerKw .. "%f[%W]"
+    return string.find(lowerText, pattern) ~= nil
 end
 
 function HeuristicEngine:CalculateEntropy(str)
@@ -118,7 +155,22 @@ function HeuristicEngine:CalculateEntropy(str)
 end
 
 function HeuristicEngine:AnalyzeInstance(instance)
-    local name = instance.Name:lower()
+    if self:IsIgnoredCoreInstance(instance) then
+        return {
+            Instance = instance,
+            Name = instance.Name,
+            ClassName = instance.ClassName,
+            Path = instance:GetFullName(),
+            Score = 0,
+            Severity = HeuristicEngine.Severity.LOW,
+            MatchedKeywords = {},
+            Tags = { "Ignored: Core Roblox Script" },
+            Categories = {},
+            Code = nil,
+            IsIgnored = true,
+        }
+    end
+
     local rawName = instance.Name
     local className = instance.ClassName
     local path = instance:GetFullName()
@@ -127,11 +179,10 @@ function HeuristicEngine:AnalyzeInstance(instance)
     local tags = {}
     local categoriesFound = {}
     
-    -- 1. Análisis Multilingüe de Nombres y Rutas
+    -- 1. Análisis Multilingüe de Nombres con límites de palabra estrictos
     for catName, keywords in pairs(self.Lexicon) do
         for _, kw in ipairs(keywords) do
-            local kwLower = kw:lower()
-            if string.find(name, kwLower, 1, true) or string.find(rawName, kw, 1, true) then
+            if self:MatchesKeyword(rawName, kw) then
                 local weight = (catName == "AntiCheat" and 25) or (catName == "Admin" and 20) or 15
                 score = score + weight
                 table.insert(matchedKeywords, string.format("[%s]: %s", catName, kw))
@@ -172,10 +223,9 @@ function HeuristicEngine:AnalyzeInstance(instance)
     local successAttrs, attrs = pcall(function() return instance:GetAttributes() end)
     if successAttrs and attrs then
         for attrName, attrVal in pairs(attrs) do
-            local lowerAttr = tostring(attrName):lower()
             for catName, keywords in pairs(self.Lexicon) do
                 for _, kw in ipairs(keywords) do
-                    if string.find(lowerAttr, kw:lower(), 1, true) then
+                    if self:MatchesKeyword(tostring(attrName), kw) then
                         score = score + 10
                         table.insert(tags, "Attr:" .. attrName)
                         categoriesFound[catName] = true
@@ -200,10 +250,10 @@ function HeuristicEngine:AnalyzeInstance(instance)
                 end
             end
             
-            -- Análisis multilingüe dentro del propio código
+            -- Análisis multilingüe dentro del propio código con límites de palabra
             for catName, keywords in pairs(self.Lexicon) do
                 for _, kw in ipairs(keywords) do
-                    if string.find(decompiledCode, kw, 1, true) then
+                    if self:MatchesKeyword(decompiledCode, kw) then
                         score = score + 5
                         categoriesFound[catName] = true
                         break
@@ -224,11 +274,11 @@ function HeuristicEngine:AnalyzeInstance(instance)
     
     -- Determinar Severidad
     local severity = HeuristicEngine.Severity.LOW
-    if score >= 80 or (categoriesFound["AntiCheat"] and score >= 60) then
+    if score >= 75 or (categoriesFound["AntiCheat"] and score >= 55) or (categoriesFound["Admin"] and score >= 50) then
         severity = HeuristicEngine.Severity.CRITICAL
-    elseif score >= 60 or categoriesFound["Combat"] or categoriesFound["Admin"] then
+    elseif score >= 50 or categoriesFound["Combat"] or categoriesFound["Admin"] then
         severity = HeuristicEngine.Severity.HIGH
-    elseif score >= 30 or categoriesFound["Economy"] then
+    elseif score >= 25 or categoriesFound["Economy"] then
         severity = HeuristicEngine.Severity.MEDIUM
     end
     
@@ -277,7 +327,7 @@ function HeuristicEngine:RunFullAudit(targetContainers)
                     results.TotalScanned = results.TotalScanned + 1
                     local analysis = self:AnalyzeInstance(inst)
                     
-                    if analysis.Score > 0 or inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") then
+                    if not analysis.IsIgnored and (analysis.Score > 0 or inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction")) then
                         if analysis.Categories["AntiCheat"] or analysis.Score >= 50 then
                             table.insert(results.AntiCheat, analysis)
                         end
@@ -336,7 +386,7 @@ function HeuristicEngine:RunAntiCheatAudit(customLocations)
             if s and desc then
                 for _, inst in ipairs(desc) do
                     local analysis = self:AnalyzeInstance(inst)
-                    if analysis.Categories["AntiCheat"] or analysis.Score >= 40 then
+                    if not analysis.IsIgnored and (analysis.Categories["AntiCheat"] or analysis.Score >= 40) then
                         table.insert(report.Targets, analysis)
                         report.TotalFound = report.TotalFound + 1
                     end
@@ -372,7 +422,7 @@ function HeuristicEngine:RunEconomyAudit(customLocations)
             if s and desc then
                 for _, inst in ipairs(desc) do
                     local analysis = self:AnalyzeInstance(inst)
-                    if analysis.Categories["Economy"] then
+                    if not analysis.IsIgnored and analysis.Categories["Economy"] then
                         table.insert(report.Targets, analysis)
                         report.TotalFound = report.TotalFound + 1
                     end
@@ -401,20 +451,22 @@ function HeuristicEngine:RunRemotesAudit()
     local s, desc = pcall(function() return game:GetDescendants() end)
     if s and desc then
         for _, inst in ipairs(desc) do
-            if inst:IsA("RemoteEvent") then
-                table.insert(report.RemoteEvents, {
-                    Name = inst.Name,
-                    Path = inst:GetFullName(),
-                    Instance = inst,
-                })
-                report.TotalFound = report.TotalFound + 1
-            elseif inst:IsA("RemoteFunction") then
-                table.insert(report.RemoteFunctions, {
-                    Name = inst.Name,
-                    Path = inst:GetFullName(),
-                    Instance = inst,
-                })
-                report.TotalFound = report.TotalFound + 1
+            if not self:IsIgnoredCoreInstance(inst) then
+                if inst:IsA("RemoteEvent") then
+                    table.insert(report.RemoteEvents, {
+                        Name = inst.Name,
+                        Path = inst:GetFullName(),
+                        Instance = inst,
+                    })
+                    report.TotalFound = report.TotalFound + 1
+                elseif inst:IsA("RemoteFunction") then
+                    table.insert(report.RemoteFunctions, {
+                        Name = inst.Name,
+                        Path = inst:GetFullName(),
+                        Instance = inst,
+                    })
+                    report.TotalFound = report.TotalFound + 1
+                end
             end
         end
     end

@@ -41,25 +41,53 @@ function EconomyAuditor:ScanEconomyNodes()
         "ガチャ", "ルーレット", "確率", "購入", "ショップ", "рулетка", "шанс", "магазин"
     }
     
+    local function isIgnoredCoreInstance(instance)
+        local fullName = instance:GetFullName()
+        if fullName:find("StarterPlayer%.StarterPlayerScripts%.PlayerModule")
+           or fullName:find("StarterPlayer%.StarterPlayerScripts%.RbxCharacterSounds")
+           or fullName:find("PlayerScriptsLoader")
+           or fullName:find("ChatScript")
+           or fullName:find("BubbleChat")
+           or fullName:find("RobloxGui")
+           or fullName:find("%.spec")
+           or fullName:find("%.test")
+           or fullName:find("Jest")
+           or fullName:find("TestEZ") then
+            return true
+        end
+        return false
+    end
+
+    local function matchesWord(targetText, keyword)
+        if not targetText or not keyword then return false end
+        local lowerText = targetText:lower()
+        local lowerKw = keyword:lower()
+        if lowerKw:find("^[_%W]") or lowerKw:find("[_%W]$") or lowerKw:match("[^\32-\126]") then
+            return string.find(lowerText, lowerKw, 1, true) ~= nil
+        end
+        local pattern = "%f[%w]" .. lowerKw .. "%f[%W]"
+        return string.find(lowerText, pattern) ~= nil
+    end
+
     for _, cont in ipairs(containers) do
         if cont then
             local s, desc = pcall(function() return cont:GetDescendants() end)
             if s and desc then
                 for _, inst in ipairs(desc) do
-                    local name = inst.Name:lower()
-                    local rawName = inst.Name
-                    local path = inst:GetFullName()
-                    local isMatch = false
-                    local matchedTag = ""
-                    
-                    -- 1. Coincidencia por Léxico Multilingüe
-                    for _, kw in ipairs(lexicon) do
-                        if string.find(name, kw:lower(), 1, true) or string.find(rawName, kw, 1, true) then
-                            isMatch = true
-                            matchedTag = kw
-                            break
+                    if not isIgnoredCoreInstance(inst) then
+                        local rawName = inst.Name
+                        local path = inst:GetFullName()
+                        local isMatch = false
+                        local matchedTag = ""
+                        
+                        -- 1. Coincidencia por Léxico Multilingüe con límites de palabra
+                        for _, kw in ipairs(lexicon) do
+                            if matchesWord(rawName, kw) then
+                                isMatch = true
+                                matchedTag = kw
+                                break
+                            end
                         end
-                    end
                     
                     -- 2. Inspección de Atributos de probabilidad o precio
                     local sAttrs, attrs = pcall(function() return inst:GetAttributes() end)
@@ -88,7 +116,7 @@ function EconomyAuditor:ScanEconomyNodes()
                             table.insert(findings.LootTables, nodeData)
                         elseif inst:IsA("ValueBase") or inst:IsA("Configuration") then
                             table.insert(findings.ValueContainers, nodeData)
-                        elseif string.find(name, "shop") or string.find(name, "buy") or string.find(rawName, "商店") or string.find(rawName, "购买") or string.find(rawName, "ショップ") then
+                        elseif matchesWord(rawName, "shop") or matchesWord(rawName, "store") or matchesWord(rawName, "buy") or matchesWord(rawName, "tienda") or string.find(rawName, "商店") or string.find(rawName, "购买") or string.find(rawName, "ショップ") then
                             table.insert(findings.Shops, nodeData)
                         else
                             table.insert(findings.Roulettes, nodeData)

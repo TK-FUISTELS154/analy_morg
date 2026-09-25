@@ -106,25 +106,81 @@ local CodeSignatures = {
     { Pattern = "math%.random", Score = 15, Desc = "Lógica de Probabilidad / RNG", Category = "Economy" },
     { Pattern = "Random%.new", Score = 15, Desc = "Lógica de Generador Aleatorio Seguro", Category = "Economy" },
     { Pattern = "MarketplaceService", Score = 25, Desc = "Interacción con compras y Gamepasses", Category = "Economy" },
+    -- Capacidades Críticas de Modding / Admin Abuse
+    { Pattern = "BodyVelocity", Score = 35, Desc = "Manipulación de Vuelo / Física Forzada (BodyVelocity)", Category = "Admin" },
+    { Pattern = "BodyGyro", Score = 25, Desc = "Manipulación de Orientación / Vuelo (BodyGyro)", Category = "Admin" },
+    { Pattern = "CanCollide%s*=%s*false", Score = 40, Desc = "Rutina de Noclip en tiempo de ejecución", Category = "Admin" },
+    { Pattern = "_G%.", Score = 20, Desc = "Exposición de Variables Globales en Memoria (_G)", Category = "Admin" },
 }
 
 -- =========================================================================
--- 3. MOTOR DE ANÁLISIS HEURÍSTICO
+-- 3. FILTROS DE CORE DE ROBLOX & EMPAREJAMIENTO EXACTO POR LÍMITES DE PALABRA
+-- =========================================================================
+local function isIgnoredCoreInstance(inst)
+    local fullName = inst:GetFullName()
+    if fullName:find("StarterPlayer%.StarterPlayerScripts%.PlayerModule")
+       or fullName:find("StarterPlayer%.StarterPlayerScripts%.RbxCharacterSounds")
+       or fullName:find("PlayerScriptsLoader")
+       or fullName:find("ChatScript")
+       or fullName:find("BubbleChat")
+       or fullName:find("RobloxGui")
+       or fullName:find("%.spec")
+       or fullName:find("%.test")
+       or fullName:find("Jest")
+       or fullName:find("TestEZ") then
+        return true
+    end
+    return false
+end
+
+local function matchesKeyword(targetText, keyword)
+    if not targetText or not keyword then return false end
+    local lowerText = targetText:lower()
+    local lowerKw = keyword:lower()
+    
+    -- Si contiene prefijos/sufijos técnicos o caracteres no alfanuméricos ASCII
+    if lowerKw:find("^[_%W]") or lowerKw:find("[_%W]$") or lowerKw:match("[^\32-\126]") then
+        return string.find(lowerText, lowerKw, 1, true) ~= nil
+    end
+    
+    -- Palabras ASCII normales: usar límite de frontera de palabra para evitar que 'controller' coincida con 'roll' o 'abandon' con 'ban'
+    local pattern = "%f[%w]" .. lowerKw .. "%f[%W]"
+    return string.find(lowerText, pattern) ~= nil
+end
+
+-- =========================================================================
+-- 4. MOTOR DE ANÁLISIS HEURÍSTICO
 -- =========================================================================
 local function analyzeInstance(inst)
+    -- Omitir automáticamente scripts nativos del core de Roblox
+    if isIgnoredCoreInstance(inst) then
+        return {
+            Instance = inst,
+            Name = inst.Name,
+            ClassName = inst.ClassName,
+            Path = inst:GetFullName(),
+            Score = 0,
+            Severity = "IGNORED",
+            MatchedKeywords = {},
+            Tags = { "Ignored: Core Roblox Script" },
+            Categories = {},
+            Code = nil,
+            IsIgnored = true,
+        }
+    end
+
     local score = 0
     local rawName = inst.Name
-    local lowerName = rawName:lower()
     local className = inst.ClassName
     local path = inst:GetFullName()
     local tags = {}
     local categoriesFound = {}
     local matchedKeywords = {}
 
-    -- 1. Ponderación por Nombre
+    -- 1. Ponderación por Nombre con límites de palabra estrictos
     for catName, keywords in pairs(Lexicon) do
         for _, kw in ipairs(keywords) do
-            if string.find(lowerName, kw:lower(), 1, true) then
+            if matchesKeyword(rawName, kw) then
                 score = score + 25
                 table.insert(matchedKeywords, kw)
                 categoriesFound[catName] = true
@@ -160,10 +216,9 @@ local function analyzeInstance(inst)
     local sAttrs, attrs = pcall(function() return inst:GetAttributes() end)
     if sAttrs and attrs then
         for attrName, _ in pairs(attrs) do
-            local lowerAttr = tostring(attrName):lower()
             for catName, keywords in pairs(Lexicon) do
                 for _, kw in ipairs(keywords) do
-                    if string.find(lowerAttr, kw:lower(), 1, true) then
+                    if matchesKeyword(tostring(attrName), kw) then
                         score = score + 10
                         table.insert(tags, "Attr:" .. attrName)
                         categoriesFound[catName] = true
@@ -188,10 +243,10 @@ local function analyzeInstance(inst)
                 end
             end
 
-            -- Multilingüe en código
+            -- Multilingüe en código con límites de palabra
             for catName, keywords in pairs(Lexicon) do
                 for _, kw in ipairs(keywords) do
-                    if string.find(decompiledCode, kw, 1, true) then
+                    if matchesKeyword(decompiledCode, kw) then
                         score = score + 5
                         categoriesFound[catName] = true
                         break
@@ -210,7 +265,7 @@ local function analyzeInstance(inst)
     if score > 100 then score = 100 end
 
     local severity = "LOW"
-    if score >= 75 or (categoriesFound["AntiCheat"] and score >= 55) then
+    if score >= 75 or (categoriesFound["AntiCheat"] and score >= 55) or (categoriesFound["Admin"] and score >= 50) then
         severity = "CRITICAL"
     elseif score >= 50 or categoriesFound["Combat"] or categoriesFound["Admin"] then
         severity = "HIGH"
@@ -229,11 +284,10 @@ local function analyzeInstance(inst)
         Tags = tags,
         Categories = categoriesFound,
         Code = decompiledCode,
-    }
 end
 
 -- =========================================================================
--- 4. MODOS DE AUDITORÍA
+-- 5. MODOS DE AUDITORÍA
 -- =========================================================================
 local Scanner = {}
 
@@ -256,7 +310,7 @@ function Scanner.RunAntiCheatAudit()
             if s and desc then
                 for _, inst in ipairs(desc) do
                     local analysis = analyzeInstance(inst)
-                    if analysis.Categories["AntiCheat"] or analysis.Score >= 40 then
+                    if not analysis.IsIgnored and (analysis.Categories["AntiCheat"] or analysis.Score >= 40) then
                         table.insert(results.Targets, analysis)
                         results.TotalFound = results.TotalFound + 1
                     end
@@ -288,11 +342,11 @@ function Scanner.RunEconomyAudit()
             if s and desc then
                 for _, inst in ipairs(desc) do
                     local analysis = analyzeInstance(inst)
-                    if analysis.Categories["Economy"] or analysis.Score >= 25 then
+                    if not analysis.IsIgnored and (analysis.Categories["Economy"] or analysis.Score >= 25) then
                         results.TotalFound = results.TotalFound + 1
-                        if analysis.Name:lower():find("spin") or analysis.Name:lower():find("wheel") or analysis.Name:lower():find("ruleta") or analysis.Name:lower():find("roll") then
+                        if matchesKeyword(analysis.Name, "spin") or matchesKeyword(analysis.Name, "wheel") or matchesKeyword(analysis.Name, "ruleta") or matchesKeyword(analysis.Name, "roll") then
                             table.insert(results.Roulettes, analysis)
-                        elseif analysis.Name:lower():find("shop") or analysis.Name:lower():find("store") or analysis.Name:lower():find("tienda") or analysis.Name:lower():find("buy") then
+                        elseif matchesKeyword(analysis.Name, "shop") or matchesKeyword(analysis.Name, "store") or matchesKeyword(analysis.Name, "tienda") or matchesKeyword(analysis.Name, "buy") then
                             table.insert(results.Shops, analysis)
                         elseif inst:IsA("ModuleScript") then
                             table.insert(results.LootTables, analysis)
@@ -326,20 +380,22 @@ function Scanner.RunRemotesAudit()
             local s, desc = pcall(function() return loc:GetDescendants() end)
             if s and desc then
                 for _, inst in ipairs(desc) do
-                    if inst:IsA("RemoteEvent") then
-                        results.TotalFound = results.TotalFound + 1
-                        table.insert(results.RemoteEvents, {
-                            Name = inst.Name,
-                            ClassName = "RemoteEvent",
-                            Path = inst:GetFullName(),
-                        })
-                    elseif inst:IsA("RemoteFunction") then
-                        results.TotalFound = results.TotalFound + 1
-                        table.insert(results.RemoteFunctions, {
-                            Name = inst.Name,
-                            ClassName = "RemoteFunction",
-                            Path = inst:GetFullName(),
-                        })
+                    if not isIgnoredCoreInstance(inst) then
+                        if inst:IsA("RemoteEvent") then
+                            results.TotalFound = results.TotalFound + 1
+                            table.insert(results.RemoteEvents, {
+                                Name = inst.Name,
+                                ClassName = "RemoteEvent",
+                                Path = inst:GetFullName(),
+                            })
+                        elseif inst:IsA("RemoteFunction") then
+                            results.TotalFound = results.TotalFound + 1
+                            table.insert(results.RemoteFunctions, {
+                                Name = inst.Name,
+                                ClassName = "RemoteFunction",
+                                Path = inst:GetFullName(),
+                            })
+                        end
                     end
                 end
             end
@@ -391,7 +447,7 @@ function Scanner.RunFullAudit()
                     results.TotalScanned = results.TotalScanned + 1
                     local analysis = analyzeInstance(inst)
 
-                    if analysis.Score > 0 or inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") then
+                    if not analysis.IsIgnored and (analysis.Score > 0 or inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction")) then
                         if analysis.Categories["AntiCheat"] or analysis.Score >= 45 then
                             table.insert(results.AntiCheat, analysis)
                         end
