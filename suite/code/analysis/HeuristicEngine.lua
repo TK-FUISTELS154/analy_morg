@@ -332,19 +332,39 @@ function HeuristicEngine:AnalyzeCodeSinglePass(code, rawName, path)
             if counts.GlobalState == 1 then table.insert(tags, "Architecture:GlobalMemoryHook") end
         end
         
-        -- Regla 7: Azar Transaccional vs Cosmético (Descarta modulación de audio, pitch, rotación y diálogos)
-        if (line:find("math%.random") or line:find("Random%.new")) and hasNetwork and counts.RNG < maxFindingsPerRule then
-            local isCosmetic = lLower:find("playbackspeed") or lLower:find("pitch") or lLower:find("volume")
+        -- Regla 7: Azar Transaccional vs Cosmético (Filtro POR LÍNEA INDIVIDUAL, no por archivo)
+        -- Un math.random cosmético en una línea de sonido se ignora, pero una compra a red
+        -- en el mismo archivo se reporta normalmente. Se elimina la dependencia global de hasNetwork
+        -- para capturar RNG con contexto económico (palabras clave de economía en la misma línea).
+        if (line:find("math%.random") or line:find("Random%.new")) and counts.RNG < maxFindingsPerRule then
+            -- 1. Descarte cosmético POR LÍNEA: si esta línea específica es cosmética, se ignora
+            local isCosmeticLine = lLower:find("playbackspeed") or lLower:find("pitch") or lLower:find("volume")
                 or lLower:find("rotation") or lLower:find("offset") or lLower:find("color")
                 or lLower:find("angles") or lLower:find("dialogue") or lLower:find("greeting")
-                or line:find("%[%s*math%.random") or line:find("#%a+%)") or line:find("npc") or line:find("sound")
+                or line:find("%[%s*math%.random") or line:find("#%a+%)") or lLower:find("npc") or lLower:find("sound")
+                or lLower:find("particle") or lLower:find("effect") or lLower:find("trail")
+                or lLower:find("tween") or lLower:find("debris") or lLower:find("emit")
             
-            if not isCosmetic then
-                counts.RNG = counts.RNG + 1
-                score = score + 25
-                categoriesFound["Economy"] = true
-                table.insert(codeFindings, { Desc = "Lógica de RNG Vinculada a Red/Transacciones", Line = lineNum, Code = getCleanLine() })
-                if counts.RNG == 1 then table.insert(tags, "Economy:TransactionalRNG") end
+            if not isCosmeticLine then
+                -- 2. Determinar si el RNG tiene contexto transaccional:
+                --    a) El archivo tiene llamadas a red (hasNetwork global), O
+                --    b) La línea misma contiene contexto de economía
+                local hasLineEconomyContext = lLower:find("price") or lLower:find("cost") or lLower:find("chance")
+                    or lLower:find("odds") or lLower:find("rarity") or lLower:find("weight")
+                    or lLower:find("drop") or lLower:find("loot") or lLower:find("reward")
+                    or lLower:find("spin") or lLower:find("roll") or lLower:find("gacha")
+                    or lLower:find("crate") or lLower:find("luck") or lLower:find("mutation")
+                
+                if hasNetwork or hasLineEconomyContext then
+                    counts.RNG = counts.RNG + 1
+                    score = score + 25
+                    categoriesFound["Economy"] = true
+                    local desc = hasNetwork
+                        and "Lógica de RNG Vinculada a Red/Transacciones"
+                        or "Lógica de RNG con Contexto Económico (sin red directa)"
+                    table.insert(codeFindings, { Desc = desc, Line = lineNum, Code = getCleanLine() })
+                    if counts.RNG == 1 then table.insert(tags, "Economy:TransactionalRNG") end
+                end
             end
         end
         
@@ -671,6 +691,44 @@ function HeuristicEngine:RunFullAudit(targetContainers, onProgress)
     
     self:ProcessConcurrently(queue, function(inst, depth)
         local analysis = self:AnalyzeInstance(inst, depth)
+        
+        -- =====================================================================
+        -- EXTRACCIÓN DESACOPLADA DE RED: Se ejecuta en TODOS los scripts de
+        -- cliente, independientemente de si tienen score de amenaza o no.
+        -- Un script legítimo puede llamar a un remoto crítico y esa conexión
+        -- DEBE aparecer en la matriz cruzada.
+        -- =====================================================================
+        if inst:IsA("LuaSourceContainer") then
+            local code = self:SafeDecompileWithCache(inst)
+            if code and #code > 0 then
+                local path = (analysis and analysis.Path) or inst:GetFullName()
+                local invocations = self:ExtractRemoteInvocations(code, path)
+                if #invocations > 0 then
+                    -- Registrar en la matriz cruzada usando table.insert lineal
+                    results.CrossReferenceMatrix.ScriptsToRemotes[path] = invocations
+                    for _, inv in ipairs(invocations) do
+                        local rName = inv.RemoteName
+                        if not results.CrossReferenceMatrix.RemotesToCallers[rName] then
+                            results.CrossReferenceMatrix.RemotesToCallers[rName] = {}
+                        end
+                        table.insert(results.CrossReferenceMatrix.RemotesToCallers[rName], {
+                            Script = path,
+                            Line = inv.LineNumber,
+                            Method = inv.Method,
+                            ArgumentsRaw = inv.ArgumentsRaw,
+                            InferredTypes = inv.InferredTypes,
+                            Snippet = inv.Snippet,
+                        })
+                    end
+                    -- Si el analysis no capturó estas invocaciones, inyectarlas
+                    if analysis and (not analysis.RemoteInvocations or #analysis.RemoteInvocations == 0) then
+                        analysis.RemoteInvocations = invocations
+                    end
+                end
+            end
+        end
+        
+        -- Clasificación por categoría de amenaza (solo si el análisis produjo resultados)
         if analysis then
             if analysis.Severity == 5 or (analysis.Categories["Admin"] and not analysis.Categories["AntiCheat"]) then
                 table.insert(results.AdminTools, analysis)
@@ -696,33 +754,23 @@ function HeuristicEngine:RunFullAudit(targetContainers, onProgress)
             if analysis.Severity == HeuristicEngine.Severity.CRITICAL then
                 results.CriticalIssues = results.CriticalIssues + 1
             end
-            
-            -- Compilar Matriz de Trazabilidad Código-a-Red (Cross-Reference Matrix)
-            if analysis.RemoteInvocations and #analysis.RemoteInvocations > 0 then
-                results.CrossReferenceMatrix.ScriptsToRemotes[analysis.Path] = analysis.RemoteInvocations
-                for _, inv in ipairs(analysis.RemoteInvocations) do
-                    local rName = inv.RemoteName
-                    if not results.CrossReferenceMatrix.RemotesToCallers[rName] then
-                        results.CrossReferenceMatrix.RemotesToCallers[rName] = {}
-                    end
-                    table.insert(results.CrossReferenceMatrix.RemotesToCallers[rName], {
-                        Script = analysis.Path,
-                        Line = inv.LineNumber,
-                        Method = inv.Method,
-                        ArgumentsRaw = inv.ArgumentsRaw,
-                        InferredTypes = inv.InferredTypes,
-                        Snippet = inv.Snippet,
-                    })
-                end
-            end
         end
     end, onProgress, 6)
     
     self.LastFullAudit = results
     self.CrossReferenceMatrix = results.CrossReferenceMatrix
     
+    -- Contar referencias de red mapeadas para el log
+    local totalNetRefs = 0
+    for _, callers in pairs(results.CrossReferenceMatrix.RemotesToCallers) do
+        totalNetRefs = totalNetRefs + #callers
+    end
+    
     if self.Logger then
-        self.Logger:Info("AUDIT", string.format("Escaneo Heurístico Multihilo Completado: %d analizados, %d remotes, %d referencias de red mapeadas, %d amenazas críticas.", results.TotalScanned, #results.Remotes, #results.CrossReferenceMatrix.RemotesToCallers, results.CriticalIssues))
+        self.Logger:Info("AUDIT", string.format(
+            "Escaneo Heurístico Multihilo Completado: %d analizados, %d remotes, %d referencias de red mapeadas, %d amenazas críticas.",
+            results.TotalScanned, #results.Remotes, totalNetRefs, results.CriticalIssues
+        ))
     end
     
     return results

@@ -178,13 +178,18 @@ function StructuralProfiler:GenerateReport()
         { Service = game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"), Key = "PlayerGui" },
     }
     
+    -- =====================================================================
+    -- LECTURA DE CÓDIGO: Usa EXCLUSIVAMENTE el Shared Memory Store de
+    -- CapabilityManager. NO se intenta leer inst.Source (propiedad protegida
+    -- que siempre lanza error en ejecutores y desperdicia un pcall).
+    -- SafeDecompile ya maneja internamente: caché → Source → decompile → bytecode.
+    -- =====================================================================
     local function getScriptSource(inst)
+        if not inst:IsA("LuaSourceContainer") then return "" end
         if self.Caps then
             local s, src = pcall(function() return self.Caps:SafeDecompile(inst) end)
-            if s and src then return src end
+            if s and type(src) == "string" and #src > 0 then return src end
         end
-        local s2, src2 = pcall(function() return inst.Source end)
-        if s2 and src2 then return src2 end
         return ""
     end
     
