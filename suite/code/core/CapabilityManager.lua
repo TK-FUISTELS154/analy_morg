@@ -111,23 +111,46 @@ function CapabilityManager:EvaluateCapabilities()
     if caps.HasMetatableHooks then score = score + 25 end
     if caps.HasFunctionHooks then score = score + 15 end
 
-    -- 4. Resolución Multi-Motor de Descompiladores
+    -- 4. Resolución Multi-Motor de Descompiladores (Synapse, Fluxus, Delta, Wave, Solara, Codex, Arceus)
     local decompilerFunc = nil
     if type(decompile) == "function" then
         decompilerFunc = decompile
     elseif getgenv and type(getgenv().decompile) == "function" then
         decompilerFunc = getgenv().decompile
+    elseif getrenv and type(getrenv().decompile) == "function" then
+        decompilerFunc = getrenv().decompile
+    elseif type(getscriptsource) == "function" then
+        decompilerFunc = getscriptsource
+    elseif getgenv and type(getgenv().getscriptsource) == "function" then
+        decompilerFunc = getgenv().getscriptsource
+    elseif type(get_script_source) == "function" then
+        decompilerFunc = get_script_source
     elseif type(syn) == "table" and type(syn.decompile) == "function" then
         decompilerFunc = syn.decompile
     elseif type(fluxus) == "table" and type(fluxus.decompile) == "function" then
         decompilerFunc = fluxus.decompile
+    elseif type(delta) == "table" and type(delta.decompile) == "function" then
+        decompilerFunc = delta.decompile
     end
     apis.decompile = decompilerFunc
 
-    apis.getscriptbytecode = (type(getscriptbytecode) == "function" and getscriptbytecode)
-        or (type(get_script_bytecode) == "function" and get_script_bytecode)
-        or (getgenv and type(getgenv().getscriptbytecode) == "function" and getgenv().getscriptbytecode)
-        or nil
+    local bytecodeFunc = nil
+    if type(getscriptbytecode) == "function" then
+        bytecodeFunc = getscriptbytecode
+    elseif getgenv and type(getgenv().getscriptbytecode) == "function" then
+        bytecodeFunc = getgenv().getscriptbytecode
+    elseif getrenv and type(getrenv().getscriptbytecode) == "function" then
+        bytecodeFunc = getrenv().getscriptbytecode
+    elseif type(get_script_bytecode) == "function" then
+        bytecodeFunc = get_script_bytecode
+    elseif getgenv and type(getgenv().get_script_bytecode) == "function" then
+        bytecodeFunc = getgenv().get_script_bytecode
+    elseif type(dumpstring) == "function" then
+        bytecodeFunc = dumpstring
+    elseif type(syn) == "table" and type(syn.getscriptbytecode) == "function" then
+        bytecodeFunc = syn.getscriptbytecode
+    end
+    apis.getscriptbytecode = bytecodeFunc
 
     caps.HasDecompiler = (apis.decompile ~= nil)
     caps.HasBytecode = (apis.getscriptbytecode ~= nil)
@@ -181,6 +204,71 @@ function CapabilityManager:GetSummary()
     )
 end
 
+local B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+local function pureBase64Encode(data)
+    if not data or #data == 0 then return "" end
+    local bytes = { string.byte(data, 1, #data) }
+    local len = #bytes
+    local out = {}
+
+    for i = 1, len, 3 do
+        local b1 = bytes[i]
+        local b2 = bytes[i + 1]
+        local b3 = bytes[i + 2]
+
+        local n = bit32.lshift(b1, 16) + (b2 and bit32.lshift(b2, 8) or 0) + (b3 or 0)
+
+        local c1 = bit32.band(bit32.rshift(n, 18), 63) + 1
+        local c2 = bit32.band(bit32.rshift(n, 12), 63) + 1
+        local c3 = bit32.band(bit32.rshift(n, 6), 63) + 1
+        local c4 = bit32.band(n, 63) + 1
+
+        table.insert(out, B64_CHARS:sub(c1, c1))
+        table.insert(out, B64_CHARS:sub(c2, c2))
+        table.insert(out, b2 and B64_CHARS:sub(c3, c3) or "=")
+        table.insert(out, b3 and B64_CHARS:sub(c4, c4) or "=")
+    end
+
+    return table.concat(out)
+end
+
+local function encodeBase64(data)
+    if not data or #data == 0 then return "" end
+    if typeof(crypt) == "table" and type(crypt.base64encode) == "function" then
+        local s, res = pcall(crypt.base64encode, data)
+        if s and res and type(res) == "string" and #res > 0 then return res end
+    end
+    if type(base64_encode) == "function" then
+        local s, res = pcall(base64_encode, data)
+        if s and res and type(res) == "string" and #res > 0 then return res end
+    end
+    if typeof(syn) == "table" and typeof(syn.crypt) == "table" and type(syn.crypt.base64_encode) == "function" then
+        local s, res = pcall(syn.crypt.base64_encode, data)
+        if s and res and type(res) == "string" and #res > 0 then return res end
+    end
+    return pureBase64Encode(data)
+end
+
+local function extractBytecodeStrings(bytecode)
+    local strings = {}
+    local seen = {}
+    if not bytecode or type(bytecode) ~= "string" then return strings end
+
+    -- Escanear secuencias de caracteres imprimibles ASCII (strings literales en el bytecode)
+    for str in bytecode:gmatch("[%w_/%-.:$#@!+*=%%&%[%]<>]+%s*") do
+        local trimmed = str:match("^%s*(.-)%s*$")
+        if trimmed and #trimmed >= 3 and #trimmed <= 100 and not seen[trimmed] then
+            if not trimmed:match("^%d+$") then
+                seen[trimmed] = true
+                table.insert(strings, trimmed)
+                if #strings >= 80 then break end
+            end
+        end
+    end
+    return strings
+end
+
 -- =============================================================================
 -- SHARED MEMORY STORE: SafeDecompile (ÚNICO PUNTO DE DESCOMPILACIÓN)
 -- =============================================================================
@@ -188,7 +276,7 @@ end
 -- invocar este método en lugar de mantener cachés propios.
 
 function CapabilityManager:SafeDecompile(scriptInstance)
-    if not scriptInstance then return nil end
+    if not scriptInstance or not scriptInstance:IsA("LuaSourceContainer") then return nil end
 
     -- 1. Consultar caché primero (O(1) amortizado con tabla de claves débiles)
     local cached = self._decompCache[scriptInstance]
@@ -199,14 +287,26 @@ function CapabilityManager:SafeDecompile(scriptInstance)
 
     self._cacheStats.Misses = self._cacheStats.Misses + 1
 
-    -- 2. Intento 1: Lectura directa de propiedad Source (Studio / Nivel 3+)
+    -- 2. Intento 1: Lectura directa de propiedad Source (Studio / Nivel 3+ / Scripts creados localmente)
     local sSrc, directSrc = pcall(function() return scriptInstance.Source end)
     if sSrc and type(directSrc) == "string" and #directSrc > 0 then
         self._decompCache[scriptInstance] = directSrc
         return directSrc
     end
 
-    -- 3. Intento 2: Descompilador C del ejecutor CON TIMEOUT de 200ms
+    -- 3. Verificación de tipo de Script en Roblox:
+    -- Los Scripts de servidor estándar (ServerScript / Script regular) NO tienen bytecode en la memoria
+    -- del cliente en el protocolo de replicación de Roblox.
+    -- Intentar llamar a getscriptbytecode() o decompile() sobre ellos genera:
+    -- "Argument #1 is not a client script".
+    local isClientScript = scriptInstance:IsA("LocalScript") or scriptInstance:IsA("ModuleScript")
+    if not isClientScript then
+        local msg = string.format("-- [Script de Servidor: %s]\n-- En Roblox, el bytecode y código fuente de Scripts de servidor no son replicados ni accesibles desde la memoria del cliente.", scriptInstance.ClassName)
+        self._decompCache[scriptInstance] = msg
+        return msg
+    end
+
+    -- 4. Intento 2: Descompilador C de alto nivel del ejecutor (Nivel 7+) CON TIMEOUT
     local decompiler = self.APIs.decompile
     if decompiler then
         local result = nil
@@ -214,13 +314,20 @@ function CapabilityManager:SafeDecompile(scriptInstance)
 
         task.spawn(function()
             local success, code = pcall(decompiler, scriptInstance)
-            if success and type(code) == "string" and #code > 0 and not code:find("%[Decompilación no soportada") then
-                result = code
+            if success and type(code) == "string" and #code > 0 then
+                local lowerCode = code:lower()
+                if not lowerCode:find("decompilation not supported")
+                   and not lowerCode:find("failed to decompile")
+                   and not lowerCode:find("not a client script")
+                   and not lowerCode:find("c%+%+ exception")
+                   and not (code == "-- [Código no disponible]") then
+                    result = code
+                end
             end
             finished = true
         end)
 
-        -- Espera activa con deadline de 200ms
+        -- Espera activa con deadline (self.DecompileTimeout)
         local deadline = tick() + self.DecompileTimeout
         while not finished and tick() < deadline do
             task.wait()
@@ -231,29 +338,58 @@ function CapabilityManager:SafeDecompile(scriptInstance)
             return result
         elseif not finished then
             self._cacheStats.Timeouts = self._cacheStats.Timeouts + 1
-            self._decompCache[scriptInstance] = false
-            return nil
         end
     end
 
-    -- 4. Intento 3: Extracción de Bytecode nativo
+    -- 5. Intento 3: Extracción de Bytecode Luau nativo (Nivel 5-6) + Análisis de Constantes + Base64
     local bytecodeGetter = self.APIs.getscriptbytecode
     if bytecodeGetter then
         local success, bc = pcall(bytecodeGetter, scriptInstance)
-        if success and bc and #tostring(bc) > 0 then
-            local bcStr = string.format(
-                "-- [BYTECODE EXTRAÍDO: %d bytes (Ejecutor sin descompilador de alto nivel)]\n-- Hash/Size: %s",
-                #tostring(bc), tostring(bc):sub(1, 40)
+        if success and bc and type(bc) == "string" and #bc > 0 then
+            local byteLen = #bc
+            local luauVersion = string.byte(bc, 1) or 0
+            local stringConstants = extractBytecodeStrings(bc)
+            local b64 = encodeBase64(bc)
+
+            local constSection = ""
+            if #stringConstants > 0 then
+                local constList = {}
+                for idx, c in ipairs(stringConstants) do
+                    table.insert(constList, string.format("  [%d] %q", idx, c))
+                end
+                constSection = string.format("\n-- [CONSTANTES Y SÍMBOLOS DETECTADOS EN BYTECODE (%d)]:\n--%s\n", #stringConstants, table.concat(constList, "\n--"))
+            end
+
+            local formatted = string.format([[-- =============================================================================
+-- [VOLCADO DE BYTECODE LUAU - EJECUTOR SIN DESCOMPILADOR NATIVO C]
+-- Script: %s (%s)
+-- Tamaño Bytecode: %d bytes | Versión Luau: %d
+-- =============================================================================%s
+-- [BYTECODE BINARIO BASE64 (Listo para Unluau / Luau Decompiler)]:
+-- __BYTECODE_B64__ = %q
+-- =============================================================================]],
+                self:GetPath(scriptInstance),
+                scriptInstance.ClassName,
+                byteLen,
+                luauVersion,
+                constSection,
+                b64
             )
-            self._decompCache[scriptInstance] = bcStr
-            return bcStr
+
+            self._decompCache[scriptInstance] = formatted
+            return formatted
         end
     end
 
-    -- 5. Sin resultado: cachear como false para no reintentar
-    self._decompCache[scriptInstance] = false
+    -- 6. Sin resultado: mensaje explicativo detallado
+    local fallbackMsg = string.format(
+        "-- [Código no disponible: Ejecutor Nivel %d sin APIs 'decompile' ni 'getscriptbytecode' accesibles para %s]",
+        self.Capabilities.Level or 3,
+        scriptInstance.ClassName
+    )
+    self._decompCache[scriptInstance] = fallbackMsg
     self._cacheStats.Errors = self._cacheStats.Errors + 1
-    return nil
+    return fallbackMsg
 end
 
 -- =============================================================================
