@@ -25,41 +25,53 @@ function SelectiveDumper.new(capabilityManager, logger)
     local self = setmetatable({}, SelectiveDumper)
     self.Caps = capabilityManager
     self.Logger = logger
-    self.DecompCache = {}
+    -- NOTA: El caché de descompilación se gestiona EXCLUSIVAMENTE en CapabilityManager._decompCache
+    -- NO crear cachés locales aquí.
     return self
 end
 
+-- Tabla de clases no ejecutables (lookup O(1) en lugar de cadena de IsA)
+local PRUNED_CLASSES = {
+    BasePart = true, MeshPart = true, Decal = true, Texture = true,
+    Sound = true, ParticleEmitter = true, Beam = true, Trail = true,
+    Highlight = true, Light = true, SurfaceAppearance = true,
+    SpecialMesh = true, BlockMesh = true, CylinderMesh = true,
+    UIComponent = true, UILayout = true, UIConstraint = true,
+    UICorner = true, UIStroke = true, UIGradient = true, UIPadding = true,
+    UIListLayout = true, UIGridLayout = true, UITableLayout = true,
+    UIPageLayout = true, UIAspectRatioConstraint = true, UISizeConstraint = true,
+    UIScale = true, JointInstance = true, WeldConstraint = true,
+    Attachment = true, Constraint = true, Animation = true,
+    Keyframe = true, KeyframeSequence = true, Pose = true, Bone = true,
+    Clothing = true, BodyColors = true, CharacterMesh = true,
+    Accessory = true, Accoutrement = true, PackageLink = true,
+    HumanoidDescription = true, LocalizationTable = true, Terrain = true,
+    Smoke = true, Fire = true, Sparkles = true,
+}
+
+local VISUAL_ASSET_NAMES = {
+    assets = true, models = true, sounds = true, audio = true,
+    animations = true, anim = true, anims = true, textures = true,
+    meshes = true, mesh = true, fx = true, worldfx = true, map = true,
+    vfx = true, lighting = true, decals = true, particles = true,
+    npcs = true, terrain = true, camera = true, props = true,
+    effects = true, visual = true, materials = true, clothing = true,
+    accessories = true, rigs = true, characters = true, prefabs = true,
+}
+
 function SelectiveDumper:IsPrunedBranch(instance)
-    if instance:IsA("BasePart") or instance:IsA("MeshPart") or instance:IsA("Decal") or instance:IsA("Texture")
-       or instance:IsA("Sound") or instance:IsA("ParticleEmitter") or instance:IsA("Beam") or instance:IsA("Trail")
-       or instance:IsA("Highlight") or instance:IsA("Light") or instance:IsA("SurfaceAppearance")
-       or instance:IsA("SpecialMesh") or instance:IsA("BlockMesh") or instance:IsA("CylinderMesh")
-       or instance:IsA("UIComponent") or instance:IsA("UILayout") or instance:IsA("UIConstraint")
-       or instance:IsA("UICorner") or instance:IsA("UIStroke") or instance:IsA("UIGradient") or instance:IsA("UIPadding")
-       or instance:IsA("UIListLayout") or instance:IsA("UIGridLayout") or instance:IsA("UITableLayout")
-       or instance:IsA("UIPageLayout") or instance:IsA("UIAspectRatioConstraint") or instance:IsA("UISizeConstraint")
-       or instance:IsA("UIScale") or instance:IsA("JointInstance") or instance:IsA("WeldConstraint")
-       or instance:IsA("Attachment") or instance:IsA("Constraint") or instance:IsA("Animation")
-       or instance:IsA("Keyframe") or instance:IsA("KeyframeSequence") or instance:IsA("Pose") or instance:IsA("Bone")
-       or instance:IsA("Clothing") or instance:IsA("BodyColors") or instance:IsA("CharacterMesh")
-       or instance:IsA("Accessory") or instance:IsA("Accoutrement") or instance:IsA("PackageLink")
-       or instance:IsA("HumanoidDescription") or instance:IsA("LocalizationTable") or instance:IsA("Terrain")
-       or instance:IsA("Smoke") or instance:IsA("Fire") or instance:IsA("Sparkles") then
+    -- 1. Poda por lookup directo de ClassName (O(1))
+    if PRUNED_CLASSES[instance.ClassName] then return true end
+    
+    -- 2. Fallback con IsA para herencia (BasePart cubre Part, WedgePart, etc.)
+    if instance:IsA("BasePart") or instance:IsA("Light") or instance:IsA("Constraint")
+       or instance:IsA("UIComponent") or instance:IsA("JointInstance") then
         return true
     end
     
+    -- 3. Poda por nombre de contenedor visual
     local name = instance.Name:lower()
-    local visualAssets = {
-        assets = true, models = true, sounds = true, audio = true,
-        animations = true, anim = true, anims = true, textures = true,
-        meshes = true, mesh = true, fx = true, worldfx = true, map = true,
-        vfx = true, lighting = true, decals = true, particles = true,
-        npcs = true, terrain = true, camera = true, props = true,
-        effects = true, visual = true, materials = true, clothing = true,
-        accessories = true, rigs = true, characters = true, prefabs = true,
-    }
-    
-    if visualAssets[name] then
+    if VISUAL_ASSET_NAMES[name] then
         if not (name:find("script") or name:find("module") or name:find("controller") or name:find("network") or name:find("client") or name:find("service") or name:find("handler")) then
             return true
         end
@@ -71,21 +83,15 @@ end
 function SelectiveDumper:SafeDecompile(instance)
     if not instance or not instance:IsA("LuaSourceContainer") then return nil end
     
-    local fullName = instance:GetFullName()
-    if self.DecompCache[fullName] ~= nil then
-        return self.DecompCache[fullName]
-    end
-    
-    local src = nil
+    -- Delegación completa al Shared Memory Store centralizado de CapabilityManager
     if self.Caps then
-        src = self.Caps:SafeDecompile(instance)
-    else
-        local s, direct = pcall(function() return instance.Source end)
-        if s and direct then src = direct end
+        local code = self.Caps:SafeDecompile(instance)
+        return code or "-- [Código no disponible]"
     end
     
-    self.DecompCache[fullName] = src or "-- [Código no disponible]"
-    return self.DecompCache[fullName]
+    -- Fallback mínimo si no hay CapabilityManager
+    local s, direct = pcall(function() return instance.Source end)
+    return (s and type(direct) == "string" and #direct > 0 and direct) or "-- [Código no disponible]"
 end
 
 function SelectiveDumper:DumpInstance(instance, scriptsOnly, depthLimit, currentDepth)

@@ -23,7 +23,8 @@ function HeuristicEngine.new(capabilityManager, logger, structuralProfiler)
     self.Caps = capabilityManager
     self.Logger = logger
     self.Structural = structuralProfiler
-    self.DecompCache = setmetatable({}, { __mode = "k" }) -- Caché global en memoria compartida (Lazy Evaluation)
+    -- NOTA: El caché de descompilación se gestiona EXCLUSIVAMENTE en CapabilityManager._decompCache
+    -- NO crear cachés locales aquí. Usar self.Caps:SafeDecompile(instance) en todo momento.
     self.LastFullAudit = nil -- Resultados cacheados de auditoría completa para reutilización instantánea
     
     -- DICCIONARIO MULTILINGÜE INTEGRADO DE FIRMAS
@@ -216,29 +217,14 @@ function HeuristicEngine:SafeDecompileWithCache(instance)
         return nil
     end
     
-    if self.DecompCache[instance] ~= nil then
-        return self.DecompCache[instance]
+    -- Delegación completa al Shared Memory Store centralizado de CapabilityManager
+    if not self.Caps then return nil end
+    
+    local code = self.Caps:SafeDecompile(instance)
+    if code and #code > 50000 then
+        code = code:sub(1, 50000)
     end
-    
-    if not self.Caps or not self.Caps.Capabilities.HasDecompiler then
-        self.DecompCache[instance] = false
-        return nil
-    end
-    
-    local s, code = pcall(function()
-        return decompile(instance)
-    end)
-    
-    if s and type(code) == "string" and #code > 0 and not code:find("%[Decompilación no soportada") then
-        if #code > 50000 then
-            code = code:sub(1, 50000)
-        end
-        self.DecompCache[instance] = code
-        return code
-    end
-    
-    self.DecompCache[instance] = false
-    return nil
+    return code
 end
 
 -- =========================================================================
@@ -383,41 +369,48 @@ function HeuristicEngine:ExtractRemoteInvocations(code, scriptPath)
     
     local lineNum = 1
     for line in code:gmatch("([^\r\n]*)\r?\n?") do
-        -- Buscar invocaciones a FireServer o InvokeServer
-        for remExpr, method, args in line:gmatch("([%w_%.:]+)%s*:%s*([Ff]ire[Ss]erver|[Ii]nvoke[Ss]erver)%s*%((.-)%)") do
-            local cleanRem = remExpr:match("([%w_]+)$") or remExpr
-            local cleanArgs = args:match("^%s*(.-)%s*$") or ""
-            
-            -- Inferir tipos aproximados de los argumentos pasados
-            local argTypes = {}
-            if #cleanArgs > 0 then
-                for argToken in cleanArgs:gmatch("([^,]+)") do
-                    local tToken = argToken:match("^%s*(.-)%s*$")
-                    if tToken:find('^"') or tToken:find("^'") then
-                        table.insert(argTypes, "string(" .. tToken .. ")")
-                    elseif tonumber(tToken) then
-                        table.insert(argTypes, "number(" .. tToken .. ")")
-                    elseif tToken == "true" or tToken == "false" then
-                        table.insert(argTypes, "boolean(" .. tToken .. ")")
-                    elseif tToken:find("Vector3") or tToken:find("CFrame") then
-                        table.insert(argTypes, "Vector/CFrame")
-                    else
-                        table.insert(argTypes, "var(" .. tToken .. ")")
+        -- Buscar invocaciones a FireServer o InvokeServer (patrón corregido para Lua)
+        local function tryExtract(pattern, methodName)
+            local remExpr, args = line:match(pattern)
+            if remExpr and args then
+                local cleanRem = remExpr:match("([%w_]+)$") or remExpr
+                local cleanArgs = args:match("^%s*(.-)%s*$") or ""
+                
+                -- Inferir tipos aproximados de los argumentos pasados
+                local argTypes = {}
+                if #cleanArgs > 0 then
+                    for argToken in cleanArgs:gmatch("([^,]+)") do
+                        local tToken = argToken:match("^%s*(.-)%s*$")
+                        if tToken:find('^"') or tToken:find("^'") then
+                            table.insert(argTypes, "string(" .. tToken .. ")")
+                        elseif tonumber(tToken) then
+                            table.insert(argTypes, "number(" .. tToken .. ")")
+                        elseif tToken == "true" or tToken == "false" then
+                            table.insert(argTypes, "boolean(" .. tToken .. ")")
+                        elseif tToken:find("Vector3") or tToken:find("CFrame") then
+                            table.insert(argTypes, "Vector/CFrame")
+                        else
+                            table.insert(argTypes, "var(" .. tToken .. ")")
+                        end
                     end
                 end
+                
+                table.insert(invocations, {
+                    RemoteName = cleanRem,
+                    FullExpression = remExpr,
+                    Method = methodName,
+                    ArgumentsRaw = cleanArgs,
+                    InferredTypes = #argTypes > 0 and ("(" .. table.concat(argTypes, ", ") .. ")") or "()",
+                    LineNumber = lineNum,
+                    ScriptPath = scriptPath,
+                    Snippet = line:match("^%s*(.-)%s*$") or line,
+                })
             end
-            
-            table.insert(invocations, {
-                RemoteName = cleanRem,
-                FullExpression = remExpr,
-                Method = method,
-                ArgumentsRaw = cleanArgs,
-                InferredTypes = #argTypes > 0 and ("(" .. table.concat(argTypes, ", ") .. ")") or "()",
-                LineNumber = lineNum,
-                ScriptPath = scriptPath,
-                Snippet = line:match("^%s*(.-)%s*$") or line,
-            })
         end
+        
+        tryExtract("([%w_%.:]+)%s*:%s*[Ff]ire[Ss]erver%s*%((.-)%)", "FireServer")
+        tryExtract("([%w_%.:]+)%s*:%s*[Ii]nvoke[Ss]erver%s*%((.-)%)", "InvokeServer")
+        
         lineNum = lineNum + 1
     end
     

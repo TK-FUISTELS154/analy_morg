@@ -1,12 +1,11 @@
 --[[
     =============================================================================
-    APEX SUITE - DUMPER VIEW (MULTI-MODE EXTRACTION & DISK RECONSTRUCTION)
+    APEX SUITE - DUMPER VIEW v3.0
+    (MULTI-MODE EXTRACTION + VFS ARCHIVE + DISK RECONSTRUCTION)
     =============================================================================
-    Explorador de instancias con 4 modos de extracción profesional:
-    - Extracción Manual de Nodos
-    - Extracción de Carpetas con Hallazgos Heurísticos
-    - Extracción de Cadena de Dependencias y Código Intermedio
-    - Volcado Total del Entorno de Scripts en Disco (.lua)
+    Explorador de instancias con 4 modos de extracción + 3 formatos de salida:
+    - JSON plano, VFS Archive (archivo único), Proyecto a Disco (.lua)
+    - Barra de progreso con ETA y velocidad
 --]]
 
 local DumperView = {}
@@ -116,13 +115,13 @@ function DumperView:Render()
     infoLabel.Parent = leftPanel
     
     local actionRow = Instance.new("Frame")
-    actionRow.Size = UDim2.new(1, -12, 0, 32)
-    actionRow.Position = UDim2.new(0, 6, 1, -38)
+    actionRow.Size = UDim2.new(1, -12, 0, 68)
+    actionRow.Position = UDim2.new(0, 6, 1, -74)
     actionRow.BackgroundTransparency = 1
     actionRow.Parent = leftPanel
     
     local dumpBtn = Instance.new("TextButton")
-    dumpBtn.Size = UDim2.new(0.48, -2, 1, 0)
+    dumpBtn.Size = UDim2.new(0.48, -2, 0, 28)
     dumpBtn.BackgroundColor3 = Color3.fromRGB(0, 160, 230)
     dumpBtn.Text = "📂 EXTRAER JSON"
     dumpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -132,15 +131,26 @@ function DumperView:Render()
     Instance.new("UICorner", dumpBtn).CornerRadius = UDim.new(0, 6)
     
     local diskBtn = Instance.new("TextButton")
-    diskBtn.Size = UDim2.new(0.48, -2, 1, 0)
+    diskBtn.Size = UDim2.new(0.48, -2, 0, 28)
     diskBtn.Position = UDim2.new(0.52, 0, 0, 0)
     diskBtn.BackgroundColor3 = Color3.fromRGB(140, 60, 200)
-    diskBtn.Text = "💾 PROYECTO A DISCO (.LUA)"
+    diskBtn.Text = "💾 DISCO (.LUA)"
     diskBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     diskBtn.Font = Enum.Font.GothamBold
     diskBtn.TextSize = 10
     diskBtn.Parent = actionRow
     Instance.new("UICorner", diskBtn).CornerRadius = UDim.new(0, 6)
+    
+    local vfsBtn = Instance.new("TextButton")
+    vfsBtn.Size = UDim2.new(1, 0, 0, 28)
+    vfsBtn.Position = UDim2.new(0, 0, 0, 34)
+    vfsBtn.BackgroundColor3 = Color3.fromRGB(30, 130, 80)
+    vfsBtn.Text = "📦 VFS ARCHIVE (Archivo Único)"
+    vfsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    vfsBtn.Font = Enum.Font.GothamBold
+    vfsBtn.TextSize = 10
+    vfsBtn.Parent = actionRow
+    Instance.new("UICorner", vfsBtn).CornerRadius = UDim.new(0, 6)
     
     -- Panel derecho: Vista previa
     local previewBox = Instance.new("TextBox")
@@ -159,7 +169,7 @@ function DumperView:Render()
     previewBox.Parent = rightPanel
     Instance.new("UICorner", previewBox).CornerRadius = UDim.new(0, 6)
     
-    local function executeDump(exportToDisk)
+    local function executeDump(exportMode)
         local dumper = self.Registry:Get("SelectiveDumper")
         local exporter = self.Registry:Get("ReportExporter")
         local heuristic = self.Registry:Get("HeuristicEngine")
@@ -170,13 +180,17 @@ function DumperView:Render()
         infoLabel.Text = "⏳ Procesando extracción en modo " .. self.CurrentMode .. "..."
         dumpBtn.Text = "⏳ VOLCANDO..."
         diskBtn.Text = "⏳ VOLCANDO..."
+        vfsBtn.Text = "⏳ VOLCANDO..."
         
         task.spawn(function()
             local startTime = tick()
             local package = nil
             
             local function onProgress(curr, total, name)
-                infoLabel.Text = string.format("⏳ Extrayendo [%d/%d]: %s", curr, total, tostring(name or ""):sub(1, 30))
+                local elapsed = tick() - startTime
+                local speed = curr / math.max(elapsed, 0.001)
+                local eta = speed > 0 and ((total - curr) / speed) or 0
+                infoLabel.Text = string.format("⏳ [%d/%d] %s | %.1fs | ETA: ~%.1fs", curr, total, tostring(name or ""):sub(1, 25), elapsed, eta)
             end
             
             if self.CurrentMode == "HEURISTIC_FINDINGS" then
@@ -192,38 +206,61 @@ function DumperView:Render()
             end
             
             local duration = tick() - startTime
-            local jsonStr = exporter:ToJSON(package)
             
-            local function setSafeText(targetBox, text)
-                local maxLimit = 75000
-                local str = tostring(text or "")
-                if #str > maxLimit then
-                    targetBox.Text = string.sub(str, 1, maxLimit) .. string.format("\n\n-- [⚠️ AVISO: Vista previa truncada a %d caracteres por límite de interfaz de Roblox]\n-- [Total: %d caracteres. El proyecto completo e intacto se ha guardado en disco / archivo JSON]", maxLimit, #str)
+            -- Exportar según el modo seleccionado
+            if exportMode == "vfs" then
+                local s, path = exporter:ExportAsVFSArchive("Dump_" .. self.CurrentMode, package)
+                if s then
+                    infoLabel.Text = string.format("✅ VFS Archive exportado en %.2fs: %s", duration, tostring(path))
                 else
-                    targetBox.Text = str
+                    infoLabel.Text = "❌ VFS Error: " .. tostring(path)
                 end
-            end
-            setSafeText(previewBox, jsonStr)
-            
-            if exportToDisk then
-                local s, res = exporter:ExportProjectTreeToDisk("Dump_" .. self.CurrentMode .. "_" .. tick(), package)
+                previewBox.Text = "-- VFS Archive exportado. El contenido está en el archivo JSON único.\n-- Usa un visor JSON para inspeccionar las " .. tostring(package and package.TotalScriptsDumped or 0) .. " entradas."
+            elseif exportMode == "disk" then
+                local jsonStr = exporter:ToJSON(package)
+                local function setSafeText(targetBox, text)
+                    local maxLimit = 75000
+                    local str = tostring(text or "")
+                    if #str > maxLimit then
+                        targetBox.Text = str:sub(1, maxLimit) .. string.format("\n\n-- [⚠️ Truncado a %d chars. Total: %d chars]", maxLimit, #str)
+                    else
+                        targetBox.Text = str
+                    end
+                end
+                setSafeText(previewBox, jsonStr)
+                
+                local s, res = exporter:ExportProjectTreeToDisk("Dump_" .. self.CurrentMode .. "_" .. math.floor(tick()), package)
                 if s then
                     infoLabel.Text = string.format("✅ Árbol reconstruido en disco en %.2fs:\n%s", duration, tostring(res))
                 else
                     infoLabel.Text = "Resultado: " .. tostring(res)
                 end
             else
-                local s, path = exporter:SaveToFile("dump_" .. self.CurrentMode .. "_" .. tick() .. ".json", jsonStr)
-                infoLabel.Text = string.format("✅ Extracción completada en %.2fs (%s)", duration, tostring(path))
+                local jsonStr = exporter:ToJSON(package)
+                local function setSafeText(targetBox, text)
+                    local maxLimit = 75000
+                    local str = tostring(text or "")
+                    if #str > maxLimit then
+                        targetBox.Text = str:sub(1, maxLimit) .. string.format("\n\n-- [⚠️ Truncado a %d chars. Total: %d chars]", maxLimit, #str)
+                    else
+                        targetBox.Text = str
+                    end
+                end
+                setSafeText(previewBox, jsonStr)
+                
+                local s, path = exporter:SaveToFile("dump_" .. self.CurrentMode .. "_" .. math.floor(tick()) .. ".json", jsonStr)
+                infoLabel.Text = string.format("✅ JSON exportado en %.2fs (%d KB) → %s", duration, math.floor(#jsonStr / 1024), tostring(path))
             end
             
             dumpBtn.Text = "📂 EXTRAER JSON"
-            diskBtn.Text = "💾 PROYECTO A DISCO (.LUA)"
+            diskBtn.Text = "💾 DISCO (.LUA)"
+            vfsBtn.Text = "📦 VFS ARCHIVE (Archivo Único)"
         end)
     end
     
-    dumpBtn.MouseButton1Click:Connect(function() executeDump(false) end)
-    diskBtn.MouseButton1Click:Connect(function() executeDump(true) end)
+    dumpBtn.MouseButton1Click:Connect(function() executeDump("json") end)
+    diskBtn.MouseButton1Click:Connect(function() executeDump("disk") end)
+    vfsBtn.MouseButton1Click:Connect(function() executeDump("vfs") end)
 end
 
 function DumperView:SetVisible(visible)

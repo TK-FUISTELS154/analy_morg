@@ -1,12 +1,13 @@
 --[[
     =============================================================================
-    APEX SUITE - AUDIT VIEW (DEDICATED MULTITHREADED MODES & LIVE PROGRESS HUD)
+    APEX SUITE - AUDIT VIEW v3.0
+    (DEDICATED MULTITHREADED MODES + LIVE PROGRESS HUD + CACHE STATS)
     =============================================================================
     Pestaña de escaneo heurístico con 4 modos multihilo y panel de telemetría:
     - 🛡️ Anti-Cheat & Kicks (Watchdogs, Integridad, Kicks)
     - 🎰 Lógica & Ruleta (Economía, Gacha, Probabilidades, RNG)
-    - 📡 Todos los Remotes (Mapeo completo de RemoteEvents y RemoteFunctions)
-    - 🌐 Auditoría Completa (Perfil arquitectónico, métricas y scoring)
+    - 📡 Todos los Remotes (Mapeo completo + Cross-Reference Matrix)
+    - 🌐 Auditoría Completa (Perfil arquitectónico, métricas, scoring, caché)
 --]]
 
 local AuditView = {}
@@ -208,17 +209,17 @@ function AuditView:Render()
                 table.insert(lines, string.format("-- Instancias Sospechosas Encontradas: %d | Tiempo Total: %.2fs\n", rep.TotalFound, tick() - startTime))
                 
                 for _, item in ipairs(rep.Targets) do
-                    table.insert(lines, string.format("-> [%s] %s | Score: %d/100 | Ruta: %s", item.ClassName, item.Name, item.Score, item.Path))
-                    if #item.Tags > 0 then
+                    table.insert(lines, string.format("-> [%s] %s | Score: %d/100 | Ruta: %s", item.ClassName or "Script", item.Name, item.Score, item.Path))
+                    if item.Tags and #item.Tags > 0 then
                         table.insert(lines, "   Firmas: " .. table.concat(item.Tags, ", "))
                     end
                     if item.Findings and #item.Findings > 0 then
                         for _, f in ipairs(item.Findings) do
-                            table.insert(lines, "   [" .. f.Desc .. "]")
-                            if f.Snippets then
-                                for _, snip in ipairs(f.Snippets) do
-                                    table.insert(lines, string.format("      Línea %d: %s", snip.Line, snip.Code))
-                                end
+                            local findingLine = "   [" .. f.Desc .. "]"
+                            if f.Line then findingLine = findingLine .. " (Línea " .. f.Line .. ")" end
+                            table.insert(lines, findingLine)
+                            if f.Code then
+                                table.insert(lines, "      > " .. tostring(f.Code))
                             end
                         end
                     end
@@ -270,9 +271,39 @@ function AuditView:Render()
                 table.insert(lines, string.format("Watchdogs / Anti-Cheat localizados: %d", #fullAudit.AntiCheat))
                 table.insert(lines, string.format("Vulnerabilidades de Combate: %d", #fullAudit.Combat))
                 table.insert(lines, string.format("Sistemas de Economía: %d", #fullAudit.Economy))
-                table.insert(lines, string.format("Remotes mapeados: %d\n", #fullAudit.Remotes))
+                table.insert(lines, string.format("Remotes mapeados: %d", #fullAudit.Remotes))
+                
+                -- Estadísticas de Caché Centralizado
+                local caps = self.Registry:Get("CapabilityManager")
+                if caps and caps.GetCacheStats then
+                    local cs = caps:GetCacheStats()
+                    table.insert(lines, "")
+                    table.insert(lines, "📊 CACHE STATS (Shared Memory Store):")
+                    table.insert(lines, string.format("   Hit Rate: %s | Hits: %d | Misses: %d | Timeouts: %d | Entradas: %d",
+                        cs.HitRate, cs.Hits, cs.Misses, cs.Timeouts, cs.CacheSize))
+                end
+                
+                -- Cross-Reference Matrix
+                if fullAudit.CrossReferenceMatrix then
+                    local crm = fullAudit.CrossReferenceMatrix
+                    local remoteCount = 0
+                    for _ in pairs(crm.RemotesToCallers or {}) do remoteCount = remoteCount + 1 end
+                    local scriptCount = 0
+                    for _ in pairs(crm.ScriptsToRemotes or {}) do scriptCount = scriptCount + 1 end
+                    
+                    table.insert(lines, "")
+                    table.insert(lines, string.format("🔗 CROSS-REFERENCE MATRIX: %d remotes vinculados a %d scripts", remoteCount, scriptCount))
+                    
+                    for remoteName, callers in pairs(crm.RemotesToCallers or {}) do
+                        table.insert(lines, string.format("   📡 %s (invocado por %d scripts):", remoteName, #callers))
+                        for _, caller in ipairs(callers) do
+                            table.insert(lines, string.format("      → %s (L%d) %s %s", caller.Script:sub(-50), caller.Line, caller.Method, caller.InferredTypes or ""))
+                        end
+                    end
+                end
                 
                 if archReport and archReport.Frameworks then
+                    table.insert(lines, "")
                     table.insert(lines, "• Frameworks Detectados: " .. table.concat(archReport.Frameworks, ", "))
                 end
             end
@@ -304,13 +335,30 @@ function AuditView:Render()
         end
         local exporter = self.Registry:Get("ReportExporter")
         if exporter then
-            local jsonStr = exporter:ToJSON(lastAuditData)
-            local success, target = exporter:SaveToFile("audit_" .. self.CurrentMode .. "_" .. tick() .. ".json", jsonStr)
-            if success then
-                statusLabel.Text = "Exportado: " .. tostring(target)
-            else
-                statusLabel.Text = "Fallo al exportar."
-            end
+            statusLabel.Text = "Exportando..."
+            task.spawn(function()
+                local jsonStr = exporter:ToJSON(lastAuditData)
+                local success, target
+                
+                -- Usar VFS Archive para payloads grandes (>500KB)
+                if #jsonStr > 500 * 1024 then
+                    success, target = exporter:SaveToFileChunked(
+                        "audit_" .. self.CurrentMode .. "_" .. tostring(math.floor(tick())) .. ".json",
+                        jsonStr
+                    )
+                else
+                    success, target = exporter:SaveToFile(
+                        "audit_" .. self.CurrentMode .. "_" .. tostring(math.floor(tick())) .. ".json",
+                        jsonStr
+                    )
+                end
+                
+                if success then
+                    statusLabel.Text = string.format("✅ Exportado: %s (%d KB)", tostring(target), math.floor(#jsonStr / 1024))
+                else
+                    statusLabel.Text = "❌ Fallo al exportar: " .. tostring(target)
+                end
+            end)
         end
     end)
 end
