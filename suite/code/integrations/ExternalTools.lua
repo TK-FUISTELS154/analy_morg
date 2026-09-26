@@ -90,4 +90,51 @@ function ExternalTools:LaunchDarkDex()
     end)
 end
 
+function ExternalTools:LaunchSelectiveDumper()
+    if self.Logger then
+        self.Logger:Info("TOOLS", "Iniciando Selective Dumper & Smart Inspector...")
+    end
+    
+    task.spawn(function()
+        local code = nil
+        
+        -- 1. Intentar cargar desde el sistema de archivos local
+        if typeof(readfile) == "function" and typeof(isfile) == "function" then
+            pcall(function()
+                if isfile("scan/selective_dumper.lua") then
+                    code = readfile("scan/selective_dumper.lua")
+                elseif isfile("scripts/scan/selective_dumper.lua") then
+                    code = readfile("scripts/scan/selective_dumper.lua")
+                end
+            end)
+        end
+        
+        -- 2. Fallback remoto de GitHub
+        if not code or #code == 0 then
+            local urls = {
+                "https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/scan/selective_dumper.lua",
+            }
+            code = self:FetchScript(urls)
+        end
+        
+        if code and #code > 0 then
+            local s, fn = pcall(loadstring, code)
+            if s and fn then
+                local sRun, errRun = pcall(fn)
+                if sRun then
+                    if self.Logger then self.Logger:Info("TOOLS", "Selective Dumper & Smart Inspector iniciado exitosamente.") end
+                    return
+                else
+                    if self.Logger then self.Logger:Error("TOOLS", "Error al ejecutar Selective Dumper: " .. tostring(errRun)) end
+                end
+            end
+        end
+        
+        if self.Logger then
+            self.Logger:Error("TOOLS", "No se pudo cargar Selective Dumper.")
+        end
+    end)
+end
+
 return ExternalTools
+

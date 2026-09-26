@@ -32,23 +32,35 @@ function ToolsView:Render()
     topRow.Parent = frame
     
     local dexBtn = Instance.new("TextButton")
-    dexBtn.Size = UDim2.new(0.48, -4, 1, 0)
-    dexBtn.BackgroundColor3 = Color3.fromRGB(45, 90, 160)
-    dexBtn.Text = "📁 LANZAR DARKDEX (EXPLORER)"
+    dexBtn.Size = UDim2.new(0.32, -3, 1, 0)
+    dexBtn.Position = UDim2.new(0, 0, 0, 0)
+    dexBtn.BackgroundColor3 = Color3.fromRGB(35, 75, 140)
+    dexBtn.Text = "📁 DARKDEX (EXPLORER)"
     dexBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     dexBtn.Font = Enum.Font.GothamBold
-    dexBtn.TextSize = 12
+    dexBtn.TextSize = 10
     dexBtn.Parent = topRow
     Instance.new("UICorner", dexBtn).CornerRadius = UDim.new(0, 6)
+
+    local selectiveBtn = Instance.new("TextButton")
+    selectiveBtn.Size = UDim2.new(0.34, -3, 1, 0)
+    selectiveBtn.Position = UDim2.new(0.33, 0, 0, 0)
+    selectiveBtn.BackgroundColor3 = Color3.fromRGB(0, 145, 110)
+    selectiveBtn.Text = "📂 SELECTIVE DUMPER PRO"
+    selectiveBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    selectiveBtn.Font = Enum.Font.GothamBold
+    selectiveBtn.TextSize = 10
+    selectiveBtn.Parent = topRow
+    Instance.new("UICorner", selectiveBtn).CornerRadius = UDim.new(0, 6)
     
     local yieldBtn = Instance.new("TextButton")
-    yieldBtn.Size = UDim2.new(0.48, -4, 1, 0)
-    yieldBtn.Position = UDim2.new(0.52, 0, 0, 0)
-    yieldBtn.BackgroundColor3 = Color3.fromRGB(120, 50, 180)
-    yieldBtn.Text = "⚡ LANZAR INFINITE YIELD"
+    yieldBtn.Size = UDim2.new(0.33, 0, 1, 0)
+    yieldBtn.Position = UDim2.new(0.67, 0, 0, 0)
+    yieldBtn.BackgroundColor3 = Color3.fromRGB(110, 45, 165)
+    yieldBtn.Text = "⚡ INFINITE YIELD"
     yieldBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     yieldBtn.Font = Enum.Font.GothamBold
-    yieldBtn.TextSize = 12
+    yieldBtn.TextSize = 10
     yieldBtn.Parent = topRow
     Instance.new("UICorner", yieldBtn).CornerRadius = UDim.new(0, 6)
     
@@ -91,6 +103,10 @@ function ToolsView:Render()
     local tools = self.Registry:Get("ExternalTools")
     dexBtn.MouseButton1Click:Connect(function()
         if tools then tools:LaunchDarkDex() end
+    end)
+    
+    selectiveBtn.MouseButton1Click:Connect(function()
+        if tools then tools:LaunchSelectiveDumper() end
     end)
     
     yieldBtn.MouseButton1Click:Connect(function()
