@@ -536,9 +536,9 @@ local TabButtons = {}
 local TabDefs = {
 	{ Id = "Combat",    Title = "🎯 Combate & Aimbot" },
 	{ Id = "Visuals",   Title = "👁️ Visuales & ESP" },
+	{ Id = "Teams",     Title = "👥 Bandos & Equipos" },
 	{ Id = "Movement",  Title = "🏃 Movimiento & Físicas" },
 	{ Id = "Robberies", Title = "📍 Robos & Waypoints" },
-	{ Id = "Teams",     Title = "👥 Bandos & Equipos" },
 	{ Id = "Lighting",  Title = "☀️ Iluminación" },
 	{ Id = "Settings",  Title = "⚙️ Ajustes & Atajos" }
 }
@@ -895,76 +895,7 @@ legendText.TextXAlignment = Enum.TextXAlignment.Left
 legendText.Parent = legendCard
 
 -- =============================================================================
--- PESTAÑA 3: 🏃 MOVIMIENTO & FÍSICAS SEGURAS
--- =============================================================================
-local pMovement = Tabs["Movement"]
-
-createToggle(pMovement, "⚡ Super Velocidad (Speed Engine Seguro)", State.SpeedEngineEnabled, function(v)
-	State.SpeedEngineEnabled = v
-end)
-
-createSlider(pMovement, "Fuerza de Desplazamiento (studs/s)", 16, 250, State.SpeedValue, function(v)
-	State.SpeedValue = v
-end)
-
-createToggle(pMovement, "Activar Solo al Mantener Presionado SHIFT", State.SprintOnly, function(v)
-	State.SprintOnly = v
-end)
-
-createToggle(pMovement, "🦘 Salto Infinito en el Aire (ESPACIO)", State.InfiniteJump, function(v)
-	State.InfiniteJump = v
-end)
-
-createSlider(pMovement, "Potencia del Salto en el Aire (Jump Power)", 30, 160, State.InfiniteJumpPower, function(v)
-	State.InfiniteJumpPower = v
-end)
-
-createToggle(pMovement, "🚀 Impulso Vertical (Tecla X)", State.ForwardJump, function(v)
-	State.ForwardJump = v
-end)
-
-createSlider(pMovement, "Fuerza de Impulso Vertical (X)", 40, 150, State.ForwardJumpPower, function(v)
-	State.ForwardJumpPower = v
-end)
-
-createToggle(pMovement, "💨 Dash Horizontal (Tecla G)", State.HorizontalJump, function(v)
-	State.HorizontalJump = v
-end)
-
-createSlider(pMovement, "Fuerza de Dash Horizontal (G)", 50, 200, State.HorizontalJumpPower, function(v)
-	State.HorizontalJumpPower = v
-end)
-
-createToggle(pMovement, "👻 Noclip (Atravesar Paredes)", State.Noclip, function(v)
-	State.Noclip = v
-end)
-
-createToggle(pMovement, "🦅 Modo Vuelo 3D (Fly Mode)", State.FlyEnabled, function(v)
-	State.FlyEnabled = v
-end)
-
-createSlider(pMovement, "Velocidad de Vuelo", 20, 160, State.FlySpeed, function(v)
-	State.FlySpeed = v
-end)
-
--- =============================================================================
--- PESTAÑA 4: 📍 ROBOS & WAYPOINTS DE JAILBREAK
--- =============================================================================
-local pRobberies = Tabs["Robberies"]
-
-createCard(pRobberies, "Teleport Directo a Zonas de Robo y Salidas", 36)
-for _, loc in ipairs(JAILBREAK_LOCATIONS) do
-	createActionButton(pRobberies, loc.Name, PALETTE.Card, function()
-		local char = LocalPlayer and LocalPlayer.Character
-		local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
-		if hrp then
-			hrp.CFrame = CFrame.new(loc.Pos) + Vector3.new(0, 3, 0)
-		end
-	end)
-end
-
--- =============================================================================
--- PESTAÑA 5: 👥 BANDOS & EQUIPOS
+-- PESTAÑA 3: 👥 BANDOS & EQUIPOS
 -- =============================================================================
 local pTeams = Tabs["Teams"]
 
@@ -1034,6 +965,75 @@ end
 
 createActionButton(pTeams, "🔄 Actualizar Lista de Bandos", PALETTE.Primary, refreshTeamsList)
 refreshTeamsList()
+
+-- =============================================================================
+-- PESTAÑA 4: 🏃 MOVIMIENTO & FÍSICAS SEGURAS
+-- =============================================================================
+local pMovement = Tabs["Movement"]
+
+createToggle(pMovement, "⚡ Super Velocidad (Speed Engine Seguro)", State.SpeedEngineEnabled, function(v)
+	State.SpeedEngineEnabled = v
+end)
+
+createSlider(pMovement, "Fuerza de Desplazamiento (studs/s)", 16, 250, State.SpeedValue, function(v)
+	State.SpeedValue = v
+end)
+
+createToggle(pMovement, "Activar Solo al Mantener Presionado SHIFT", State.SprintOnly, function(v)
+	State.SprintOnly = v
+end)
+
+createToggle(pMovement, "🦘 Salto Infinito en el Aire (ESPACIO)", State.InfiniteJump, function(v)
+	State.InfiniteJump = v
+end)
+
+createSlider(pMovement, "Potencia del Salto en el Aire (Jump Power)", 30, 160, State.InfiniteJumpPower, function(v)
+	State.InfiniteJumpPower = v
+end)
+
+createToggle(pMovement, "🚀 Impulso Vertical (Ctrl + X)", State.ForwardJump, function(v)
+	State.ForwardJump = v
+end)
+
+createSlider(pMovement, "Fuerza de Impulso Vertical (X)", 40, 150, State.ForwardJumpPower, function(v)
+	State.ForwardJumpPower = v
+end)
+
+createToggle(pMovement, "💨 Dash Horizontal (Ctrl + G)", State.HorizontalJump, function(v)
+	State.HorizontalJump = v
+end)
+
+createSlider(pMovement, "Fuerza de Dash Horizontal (G)", 50, 200, State.HorizontalJumpPower, function(v)
+	State.HorizontalJumpPower = v
+end)
+
+createToggle(pMovement, "👻 Noclip (Atravesar Paredes)", State.Noclip, function(v)
+	State.Noclip = v
+end)
+
+createToggle(pMovement, "🦅 Modo Vuelo 3D (Fly Mode)", State.FlyEnabled, function(v)
+	State.FlyEnabled = v
+end)
+
+createSlider(pMovement, "Velocidad de Vuelo", 20, 160, State.FlySpeed, function(v)
+	State.FlySpeed = v
+end)
+
+-- =============================================================================
+-- PESTAÑA 5: 📍 ROBOS & WAYPOINTS DE JAILBREAK
+-- =============================================================================
+local pRobberies = Tabs["Robberies"]
+
+createCard(pRobberies, "Teleport Directo a Zonas de Robo y Salidas", 36)
+for _, loc in ipairs(JAILBREAK_LOCATIONS) do
+	createActionButton(pRobberies, loc.Name, PALETTE.Card, function()
+		local char = LocalPlayer and LocalPlayer.Character
+		local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
+		if hrp then
+			hrp.CFrame = CFrame.new(loc.Pos) + Vector3.new(0, 3, 0)
+		end
+	end)
+end
 
 -- =============================================================================
 -- PESTAÑA 6: ☀️ ILUMINACIÓN & CLIMA
