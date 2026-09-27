@@ -303,6 +303,8 @@ table.insert(connections, charAddedConn)
 --------------------------------------------------------------------------------
 -- 5. SERVER HOPPER Y AUTO RE-EJECUCIÓN
 --------------------------------------------------------------------------------
+local RAW_GITHUB_URL = "https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/monta_una_mascota.lua"
+
 local function queueTeleportCode(codeStr)
     pcall(function()
         local queue_teleport = (syn and syn.queue_on_teleport)
@@ -313,24 +315,41 @@ local function queueTeleportCode(codeStr)
             queue_teleport(codeStr)
         end
     end)
+    pcall(function()
+        if LocalPlayer and LocalPlayer.OnTeleport then
+            LocalPlayer.OnTeleport:Connect(function(state)
+                local queue_teleport = (syn and syn.queue_on_teleport)
+                    or queue_on_teleport
+                    or (fluxus and fluxus.queue_on_teleport)
+                if queue_teleport then
+                    queue_teleport(codeStr)
+                end
+            end)
+        end
+    end)
+end
+
+local function getReexecScript()
+    return string.format([[
+        repeat task.wait() until game:IsLoaded()
+        task.wait(1.5)
+        pcall(function()
+            if isfile and isfile("monta_una_mascota.lua") then
+                loadstring(readfile("monta_una_mascota.lua"))()
+            elseif isfile and isfile("scripts/monta_una_mascota.lua") then
+                loadstring(readfile("scripts/monta_una_mascota.lua"))()
+            else
+                loadstring(game:HttpGet("%s"))()
+            end
+        end)
+    ]], RAW_GITHUB_URL)
 end
 
 local function executeServerHop(preferLowPlayers)
     saveConfig()
 
     if Config.AutoReexecute then
-        local reexecScript = [[
-            repeat task.wait() until game:IsLoaded()
-            task.wait(1.5)
-            pcall(function()
-                if isfile and isfile("monta_una_mascota.lua") then
-                    loadstring(readfile("monta_una_mascota.lua"))()
-                elseif isfile and isfile("scripts/monta_una_mascota.lua") then
-                    loadstring(readfile("scripts/monta_una_mascota.lua"))()
-                end
-            end)
-        ]]
-        queueTeleportCode(reexecScript)
+        queueTeleportCode(getReexecScript())
     end
 
     local placeId = game.PlaceId
@@ -381,18 +400,7 @@ end
 local function executeRejoin()
     saveConfig()
     if Config.AutoReexecute then
-        local reexecScript = [[
-            repeat task.wait() until game:IsLoaded()
-            task.wait(1.5)
-            pcall(function()
-                if isfile and isfile("monta_una_mascota.lua") then
-                    loadstring(readfile("monta_una_mascota.lua"))()
-                elseif isfile and isfile("scripts/monta_una_mascota.lua") then
-                    loadstring(readfile("scripts/monta_una_mascota.lua"))()
-                end
-            end)
-        ]]
-        queueTeleportCode(reexecScript)
+        queueTeleportCode(getReexecScript())
     end
     TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
 end
