@@ -5,6 +5,22 @@
 -- Compatible con Secure Framework (Nivel Básico 3-5)
 -- ==============================================================================
 
+-- ==============================================================================
+-- 0. SINGLETON PATTERN: DESTRUIR INSTANCIAS PREVIAS Y PREVENIR DOBLE GUI
+-- ==============================================================================
+if _G.MontaMascotaInstance and type(_G.MontaMascotaInstance.Destroy) == "function" then
+    pcall(function() _G.MontaMascotaInstance.Destroy() end)
+end
+
+pcall(function()
+    local oldGui = (type(gethui) == "function" and gethui():FindFirstChild("EggTrackerPro_GUI"))
+        or (game:GetService("CoreGui"):FindFirstChild("EggTrackerPro_GUI"))
+        or (game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("EggTrackerPro_GUI"))
+    if oldGui then
+        oldGui:Destroy()
+    end
+end)
+
 local rawGame = workspace.Parent or game
 
 local function getService(name)
@@ -324,7 +340,10 @@ table.insert(connections, charAddedConn)
 --------------------------------------------------------------------------------
 local RAW_GITHUB_URL = "https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/monta_una_mascota.lua"
 
+local isTeleporting = false
 local function queueTeleportCode(codeStr)
+    if isTeleporting then return end
+    isTeleporting = true
     pcall(function()
         local queue_teleport = (syn and syn.queue_on_teleport)
             or queue_on_teleport
@@ -332,18 +351,6 @@ local function queueTeleportCode(codeStr)
             or (identifyexecutor and queue_on_teleport)
         if queue_teleport then
             queue_teleport(codeStr)
-        end
-    end)
-    pcall(function()
-        if LocalPlayer and LocalPlayer.OnTeleport then
-            LocalPlayer.OnTeleport:Connect(function(state)
-                local queue_teleport = (syn and syn.queue_on_teleport)
-                    or queue_on_teleport
-                    or (fluxus and fluxus.queue_on_teleport)
-                if queue_teleport then
-                    queue_teleport(codeStr)
-                end
-            end)
         end
     end)
 end
@@ -587,7 +594,7 @@ end
 -- 7. CONSTRUCCIÓN DE LA INTERFAZ CON PESTAÑAS (TABS)
 --------------------------------------------------------------------------------
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "EggTrackerPro_" .. tostring(math.random(10000, 99999))
+screenGui.Name = "EggTrackerPro_GUI"
 screenGui.ResetOnSpawn = false
 screenGui.DisplayOrder = 1000
 
@@ -1529,9 +1536,14 @@ local function destroyScript()
     table.clear(runningThreads)
 
     if screenGui then screenGui:Destroy() end
+    _G.MontaMascotaInstance = nil
     print("[SECURE-TRACKER] Código y rastreadores finalizados exitosamente.")
 end
 closeButton.MouseButton1Click:Connect(destroyScript)
+
+_G.MontaMascotaInstance = {
+    Destroy = destroyScript
+}
 
 -- Menú Contextual Clicks
 local inputConn = UserInputService.InputBegan:Connect(function(input)
