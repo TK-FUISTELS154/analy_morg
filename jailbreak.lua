@@ -233,7 +233,7 @@ local State = {
 	TeamCheck = true,
 	TargetFFA = false,
 	OffsetX = 0,
-	OffsetY = -28,
+	OffsetY = 0,
 
 	-- Visuales & ESP
 	ESPEnabled = true,
