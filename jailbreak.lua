@@ -549,7 +549,7 @@ local TabDefs = {
 
 for idx, t in ipairs(TabDefs) do
 	local page = Instance.new("ScrollingFrame")
-	page.Name = "Page_" .. t.Id
+	page.Name = string.format("%02d_Page_%s", idx, t.Id)
 	page.Size = UDim2.new(1, -16, 1, -16)
 	page.Position = UDim2.new(0, 8, 0, 8)
 	page.BackgroundTransparency = 1
@@ -569,7 +569,7 @@ for idx, t in ipairs(TabDefs) do
 	Tabs[t.Id] = page
 
 	local btn = Instance.new("TextButton")
-	btn.Name = "TabBtn_" .. t.Id
+	btn.Name = string.format("%02d_TabBtn_%s", idx, t.Id)
 	btn.LayoutOrder = idx
 	btn.Size = UDim2.new(1, -12, 0, 36)
 	btn.BackgroundColor3 = PALETTE.Card
@@ -1139,7 +1139,7 @@ end
 local function getEntityInfo(char)
 	if not char or not char.Parent then return nil end
 	local hum = char:FindFirstChildOfClass("Humanoid")
-	local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+	local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso") or char.PrimaryPart or (hum and hum.RootPart)
 	if not hum or hum.Health <= 0 or not hrp then return nil end
 	if char == (LocalPlayer and LocalPlayer.Character) then return nil end
 
@@ -1152,14 +1152,14 @@ local function getEntityInfo(char)
 	local displayName = char.Name
 
 	if plr then
-		displayName = plr.Name
-		local teamVal = plr:FindFirstChild("TeamValue")
+		displayName = (plr.DisplayName and plr.DisplayName ~= "" and plr.DisplayName ~= plr.Name) and (plr.DisplayName .. " (@" .. plr.Name .. ")") or plr.Name
+		local teamVal = plr:FindFirstChild("TeamValue") or char:FindFirstChild("TeamValue")
 		local rawTeam = (teamVal and teamVal:IsA("StringValue") and teamVal.Value ~= "" and teamVal.Value)
 			or (plr.Team and plr.Team.Name)
 			or ""
 		local lower = rawTeam:lower()
 
-		if lower:find("police") or lower:find("guard") or lower:find("polic") then
+		if lower:find("police") or lower:find("guard") or lower:find("polic") or lower:find("cop") then
 			teamId = "Police"
 			teamBadge = "👮 Policía"
 			teamColor = State.ColorPolice
@@ -1167,17 +1167,21 @@ local function getEntityInfo(char)
 			teamId = "Criminal"
 			teamBadge = "🔴 Criminal"
 			teamColor = State.ColorCriminal
-		elseif lower:find("prison") or lower:find("pris") then
+		elseif lower:find("prison") or lower:find("pris") or lower:find("inmate") then
 			teamId = "Prisoner"
 			teamBadge = "⛓️ Prisionero"
 			teamColor = State.ColorPrisoner
 		else
-			teamId = "Police" -- Fallback Jailbreak team
-			teamBadge = "👮 Policía"
-			teamColor = State.ColorPolice
+			if plr.Team then
+				local tName = plr.Team.Name:lower()
+				if tName:find("police") or tName:find("cop") then teamId = "Police"; teamBadge = "👮 Policía"; teamColor = State.ColorPolice
+				elseif tName:find("crim") then teamId = "Criminal"; teamBadge = "🔴 Criminal"; teamColor = State.ColorCriminal
+				elseif tName:find("pris") then teamId = "Prisoner"; teamBadge = "⛓️ Prisionero"; teamColor = State.ColorPrisoner
+				end
+			end
 		end
 
-		local myTeamVal = LocalPlayer and LocalPlayer:FindFirstChild("TeamValue")
+		local myTeamVal = LocalPlayer and (LocalPlayer:FindFirstChild("TeamValue") or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("TeamValue")))
 		local myRawTeam = (myTeamVal and myTeamVal.Value) or (LocalPlayer and LocalPlayer.Team and LocalPlayer.Team.Name) or ""
 		if myRawTeam ~= "" and rawTeam ~= "" and rawTeam == myRawTeam then
 			teamBadge = "🛡️ Aliado"
@@ -1227,7 +1231,7 @@ local function getAllEntities()
 	-- 2. NPCs de OilRig
 	local oilRig = Workspace and Workspace:FindFirstChild("OilRig")
 	if oilRig then
-		local gf = oilRig:FindFirstChild("GuardsFolder")
+		local gf = oilRig:FindFirstChild("GuardsFolder") or oilRig:FindFirstChild("Guards")
 		if gf then
 			for _, g in ipairs(gf:GetChildren()) do
 				if g:IsA("Model") and not seen[g] then
@@ -1249,6 +1253,20 @@ local function getAllEntities()
 				local info = getEntityInfo(m)
 				if info then
 					seen[m] = true
+					table.insert(list, info)
+				end
+			end
+		end
+	end
+
+	-- 4. Otros NPCs en Workspace (Airdrop Guards, Roaming NPCs)
+	for _, child in ipairs(Workspace:GetChildren()) do
+		if child:IsA("Model") and not seen[child] and child ~= (LocalPlayer and LocalPlayer.Character) then
+			local hum = child:FindFirstChildOfClass("Humanoid")
+			if hum and hum.Health > 0 then
+				local info = getEntityInfo(child)
+				if info then
+					seen[child] = true
 					table.insert(list, info)
 				end
 			end
@@ -1415,7 +1433,7 @@ local function purgeDeadESP()
 		else
 			local hum = char:FindFirstChildOfClass("Humanoid")
 			if not hum or hum.Health <= 0 then
-				if esp.Billboard then esp.Billboard.Visible = false end
+				if esp.Billboard then esp.Billboard.Enabled = false end
 				if esp.Highlight then esp.Highlight.Enabled = false end
 			end
 		end
@@ -1437,55 +1455,68 @@ Secure.Thread:SpawnSafe("RadarESPUpdater", function()
 				local esp = ESPCache[char]
 				if not esp then
 					local bb = Instance.new("BillboardGui")
-					bb.Name = "ESP_" .. entity.Name
-					bb.Size = UDim2.new(0, 160, 0, 38)
+					bb.Name = "JBESP_Billboard"
+					bb.Size = UDim2.new(0, 160, 0, 40)
+					bb.StudsOffset = Vector3.new(0, 3.2, 0)
 					bb.AlwaysOnTop = true
+					bb.LightInfluence = 0
+					bb.ResetOnSpawn = false
 					bb.Adornee = hrp
-					bb.Parent = ESPFolder
+					bb.Parent = char
 
 					local label = Instance.new("TextLabel")
+					label.Name = "ESPLabel"
 					label.Size = UDim2.new(1, 0, 1, 0)
 					label.BackgroundTransparency = 1
 					label.Font = Enum.Font.GothamBold
 					label.TextSize = 10
 					label.TextColor3 = entity.TeamColor
-					label.TextStrokeTransparency = 0.25
+					label.TextStrokeTransparency = 0.2
+					label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 					label.Parent = bb
 
 					local hl = Instance.new("Highlight")
+					hl.Name = "JBESP_Highlight"
 					hl.Adornee = char
+					hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 					hl.FillColor = entity.TeamColor
 					hl.OutlineColor = Color3.fromRGB(255, 255, 255)
 					hl.FillTransparency = 0.55
 					hl.OutlineTransparency = 0.15
-					hl.Parent = ESPFolder
+					hl.Parent = char
 
 					esp = { Billboard = bb, Label = label, Highlight = hl }
 					ESPCache[char] = esp
 				end
 
-				esp.Billboard.Adornee = hrp
-				esp.Highlight.Adornee = char
+				if esp.Billboard and esp.Billboard.Parent ~= char then
+					esp.Billboard.Adornee = hrp
+					esp.Billboard.Parent = char
+				end
+				if esp.Highlight and esp.Highlight.Parent ~= char then
+					esp.Highlight.Adornee = char
+					esp.Highlight.Parent = char
+				end
 
 				if isIgnored then
-					esp.Billboard.Visible = false
+					esp.Billboard.Enabled = false
 					esp.Highlight.Enabled = false
 				else
 					local dist = (hrp.Position - Camera.CFrame.Position).Magnitude
 					esp.Label.TextColor3 = entity.TeamColor
 					esp.Highlight.FillColor = entity.TeamColor
 					esp.Label.Text = string.format("%s [%s]\n%d HP | %d m", entity.Name, entity.TeamBadge, math.floor(hum.Health), math.floor(dist))
-					esp.Billboard.Visible = true
+					esp.Billboard.Enabled = true
 					esp.Highlight.Enabled = true
 				end
 			end
 		else
 			for _, esp in pairs(ESPCache) do
-				if esp.Billboard then esp.Billboard.Visible = false end
+				if esp.Billboard then esp.Billboard.Enabled = false end
 				if esp.Highlight then esp.Highlight.Enabled = false end
 			end
 		end
-		task.wait(0.15)
+		task.wait(0.12)
 	end
 end)
 
