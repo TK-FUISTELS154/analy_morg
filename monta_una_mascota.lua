@@ -1,6 +1,7 @@
 -- ==============================================================================
 -- 🐾 EGGS & PETS TRACKER PRO + ADVANCED MOVEMENT & SERVER HOPPER
--- Versión Ultra: Shift Sprint (250 default), JumpPower (150 default),
+-- Versión Ultra: Vista Previa 3D en Vivo de Huevos (ViewportFrame),
+-- Shift Sprint (250 default), JumpPower (150 default),
 -- Preservación Dinámica de Velocidad Nativa del Juego / Monturas, Server Hop & Auto Re-ejecución
 -- Compatible con Secure Framework (Nivel Básico 3-5)
 -- ==============================================================================
@@ -233,23 +234,17 @@ local function bindCharacterPhysics(char)
     local hum = char:WaitForChild("Humanoid", 8) or char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
 
-    -- Capturamos la velocidad nativa otorgada por el juego o montura
     if not isShiftCurrentlyPressed() then
         nativeWalkSpeed = hum.WalkSpeed
     end
     applyJumpPower(hum)
 
-    -- Escuchador reactivo de WalkSpeed:
-    -- Si el juego cambia la velocidad (montar/desmontar mascota, buffs, pociones),
-    -- actualizamos nativeWalkSpeed sin sobreescribirla cuando no se corre
     local wsConn = hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
         local shiftActive = Config.SprintEnabled and isShiftCurrentlyPressed()
         if not shiftActive then
             nativeWalkSpeed = hum.WalkSpeed
             if updateStatusTelemetry then updateStatusTelemetry() end
         else
-            -- Si el juego intenta cambiar la velocidad MIENTRAS sprintamos (ej. montamos mascota en pleno sprint),
-            -- guardamos esa nueva velocidad como la base nativa a restaurar
             if hum.WalkSpeed ~= (tonumber(Config.SprintSpeed) or 250) then
                 nativeWalkSpeed = hum.WalkSpeed
                 hum.WalkSpeed = tonumber(Config.SprintSpeed) or 250
@@ -286,7 +281,6 @@ local speedHeartbeat = RunService.RenderStepped:Connect(function()
             hum.WalkSpeed = targetSprint
         end
 
-        -- Si el jugador está sentado en una montura/VehicleSeat
         if hum.SeatPart and hum.SeatPart:IsA("VehicleSeat") then
             pcall(function()
                 hum.SeatPart.MaxSpeed = targetSprint
@@ -295,7 +289,6 @@ local speedHeartbeat = RunService.RenderStepped:Connect(function()
     else
         if isShiftHeld then
             isShiftHeld = false
-            -- Restauramos exactamente la velocidad nativa de la mascota/jugador
             hum.WalkSpeed = nativeWalkSpeed
         end
     end
@@ -418,7 +411,6 @@ local function executeServerHop(preferLowPlayers)
             end
         end
 
-        -- Fallback si la API de servidores falla
         TeleportService:Teleport(placeId, LocalPlayer)
     end)
 end
@@ -608,11 +600,11 @@ end)
 if not screenGui.Parent then screenGui.Parent = PlayerGui end
 
 local mainFrame = Instance.new("Frame")
-local defaultSize = UDim2.new(0, 420, 0, 520)
+local defaultSize = UDim2.new(0, 440, 0, 530)
 mainFrame.Name = "MainFrame"
 mainFrame.Size = defaultSize
 mainFrame.Position = UDim2.new(0.03, 0, 0.2, 0)
-mainFrame.BackgroundColor3 = Color3.fromRGB(22, 24, 30)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
 mainFrame.Parent = screenGui
@@ -651,7 +643,7 @@ table.insert(connections, dragConn)
 local header = Instance.new("Frame", mainFrame)
 header.Name = "Header"
 header.Size = UDim2.new(1, 0, 0, 42)
-header.BackgroundColor3 = Color3.fromRGB(30, 33, 42)
+header.BackgroundColor3 = Color3.fromRGB(28, 31, 40)
 header.BorderSizePixel = 0
 Instance.new("UICorner", header).CornerRadius = UDim.new(0, 10)
 
@@ -659,7 +651,7 @@ local titleLabel = Instance.new("TextLabel", header)
 titleLabel.Size = UDim2.new(0.6, 0, 1, 0)
 titleLabel.Position = UDim2.new(0.04, 0, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "🐾 EGGS & SPEED PRO"
+titleLabel.Text = "🐾 EGGS & SPEED PRO (3D PREVIEW)"
 titleLabel.TextColor3 = Color3.fromRGB(250, 250, 250)
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextSize = 13
@@ -696,8 +688,8 @@ Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 6)
 local tabBar = Instance.new("Frame", mainFrame)
 tabBar.Name = "TabBar"
 tabBar.Size = UDim2.new(0.92, 0, 0, 32)
-tabBar.Position = UDim2.new(0.04, 0, 0.1, 0)
-tabBar.BackgroundColor3 = Color3.fromRGB(18, 20, 25)
+tabBar.Position = UDim2.new(0.04, 0, 0.095, 0)
+tabBar.BackgroundColor3 = Color3.fromRGB(16, 18, 24)
 tabBar.BorderSizePixel = 0
 Instance.new("UICorner", tabBar).CornerRadius = UDim.new(0, 6)
 
@@ -728,8 +720,8 @@ local tabBtnServer = createTabButton("TabServer", "🌐 Servidor", false)
 -- Contenedores de Páginas
 local contentArea = Instance.new("Frame", mainFrame)
 contentArea.Name = "ContentArea"
-contentArea.Size = UDim2.new(0.92, 0, 0.73, 0)
-contentArea.Position = UDim2.new(0.04, 0, 0.18, 0)
+contentArea.Size = UDim2.new(0.92, 0, 0.74, 0)
+contentArea.Position = UDim2.new(0.04, 0, 0.175, 0)
 contentArea.BackgroundTransparency = 1
 
 -- PÁGINA 1: HUEVOS
@@ -746,7 +738,7 @@ eggsTopBar.BackgroundTransparency = 1
 local sortButton = Instance.new("TextButton", eggsTopBar)
 sortButton.Name = "SortButton"
 sortButton.Size = UDim2.new(0.48, 0, 1, 0)
-sortButton.BackgroundColor3 = Color3.fromRGB(38, 42, 54)
+sortButton.BackgroundColor3 = Color3.fromRGB(35, 39, 50)
 sortButton.Text = "Filtro: " .. (Config.SortMode == "Luck" and "Mayor 🍀" or "Distancia")
 sortButton.TextColor3 = Color3.fromRGB(220, 220, 220)
 sortButton.Font = Enum.Font.GothamMedium
@@ -757,7 +749,7 @@ Instance.new("UICorner", sortButton).CornerRadius = UDim.new(0, 6)
 local clearTrackersBtn = Instance.new("TextButton", eggsTopBar)
 clearTrackersBtn.Size = UDim2.new(0.48, 0, 1, 0)
 clearTrackersBtn.Position = UDim2.new(0.52, 0, 0, 0)
-clearTrackersBtn.BackgroundColor3 = Color3.fromRGB(50, 40, 45)
+clearTrackersBtn.BackgroundColor3 = Color3.fromRGB(50, 38, 42)
 clearTrackersBtn.Text = "Limpiar Faros 3D"
 clearTrackersBtn.TextColor3 = Color3.fromRGB(240, 180, 180)
 clearTrackersBtn.Font = Enum.Font.GothamMedium
@@ -825,7 +817,7 @@ lblNativeVal.TextXAlignment = Enum.TextXAlignment.Left
 local function createControlCard(parent, title, desc, defaultValue, onToggle, onValChange)
     local card = Instance.new("Frame", parent)
     card.Size = UDim2.new(1, 0, 0, 68)
-    card.BackgroundColor3 = Color3.fromRGB(28, 31, 39)
+    card.BackgroundColor3 = Color3.fromRGB(26, 29, 37)
     card.BorderSizePixel = 0
     Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
 
@@ -852,7 +844,7 @@ local function createControlCard(parent, title, desc, defaultValue, onToggle, on
     local inputVal = Instance.new("TextBox", card)
     inputVal.Size = UDim2.new(0.18, 0, 0.5, 0)
     inputVal.Position = UDim2.new(0.58, 0, 0.25, 0)
-    inputVal.BackgroundColor3 = Color3.fromRGB(40, 44, 56)
+    inputVal.BackgroundColor3 = Color3.fromRGB(38, 42, 54)
     inputVal.Text = tostring(defaultValue)
     inputVal.TextColor3 = Color3.fromRGB(255, 255, 255)
     inputVal.Font = Enum.Font.GothamBold
@@ -943,7 +935,7 @@ jumpCtrl.SetState(Config.JumpEnabled)
 local function createSimpleToggle(parent, title, desc, initVal, onToggle)
     local card = Instance.new("Frame", parent)
     card.Size = UDim2.new(1, 0, 0, 50)
-    card.BackgroundColor3 = Color3.fromRGB(28, 31, 39)
+    card.BackgroundColor3 = Color3.fromRGB(26, 29, 37)
     card.BorderSizePixel = 0
     Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
 
@@ -1013,7 +1005,7 @@ srvLayout.SortOrder = Enum.SortOrder.LayoutOrder
 local function createActionCard(parent, title, desc, btnText, btnColor, onClick)
     local card = Instance.new("Frame", parent)
     card.Size = UDim2.new(1, 0, 0, 62)
-    card.BackgroundColor3 = Color3.fromRGB(28, 31, 39)
+    card.BackgroundColor3 = Color3.fromRGB(26, 29, 37)
     card.BorderSizePixel = 0
     Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
 
@@ -1078,7 +1070,7 @@ local bottomBar = Instance.new("Frame", mainFrame)
 bottomBar.Name = "BottomBar"
 bottomBar.Size = UDim2.new(0.92, 0, 0, 26)
 bottomBar.Position = UDim2.new(0.04, 0, 0.93, 0)
-bottomBar.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
+bottomBar.BackgroundColor3 = Color3.fromRGB(16, 18, 24)
 bottomBar.BorderSizePixel = 0
 Instance.new("UICorner", bottomBar).CornerRadius = UDim.new(0, 5)
 
@@ -1161,7 +1153,7 @@ local btnPickup = createCtxOption("PickupOption", "Recoger (Remote)")
 local btnHatch = createCtxOption("HatchOption", "Eclosionar Nido")
 
 --------------------------------------------------------------------------------
--- 8. ESCANEO Y RENDERIZADO DE HUEVOS
+-- 8. ESCANEO, MODELADO 3D Y VISTA PREVIA (VIEWPORTFRAME)
 --------------------------------------------------------------------------------
 local function resolveVector3(val)
     if typeof(val) == "Vector3" then return val end
@@ -1178,23 +1170,99 @@ end
 
 local function get3DModelForEgg(eggName, targetPos)
     local renderedFolder = workspace:FindFirstChild("RenderedEggs")
-    if not renderedFolder then return nil end
-    local closest, minDist = nil, 25
-    for _, model in ipairs(renderedFolder:GetChildren()) do
-        if model:IsA("Model") and (model.Name == eggName or model.Name:find(eggName)) then
-            local root = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
-            if root and targetPos then
-                local dist = (root.Position - targetPos).Magnitude
-                if dist < minDist then
-                    minDist = dist
+    if renderedFolder then
+        local closest, minDist = nil, 25
+        for _, model in ipairs(renderedFolder:GetChildren()) do
+            if model:IsA("Model") and (model.Name == eggName or model.Name:find(eggName)) then
+                local root = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+                if root and targetPos then
+                    local dist = (root.Position - targetPos).Magnitude
+                    if dist < minDist then
+                        minDist = dist
+                        closest = model
+                    end
+                elseif not closest then
                     closest = model
                 end
-            elseif not closest then
-                closest = model
+            end
+        end
+        if closest then return closest end
+    end
+
+    local storageFolders = {
+        ReplicatedStorage:FindFirstChild("Eggs"),
+        ReplicatedStorage:FindFirstChild("EggModels"),
+        ReplicatedStorage:FindFirstChild("Assets") and ReplicatedStorage.Assets:FindFirstChild("Eggs")
+    }
+    for _, folder in ipairs(storageFolders) do
+        if folder then
+            local found = folder:FindFirstChild(eggName) or folder:FindFirstChild(eggName:gsub(" Egg", ""))
+            if found and found:IsA("Model") then
+                return found
             end
         end
     end
-    return closest
+
+    return nil
+end
+
+local function setupEggViewport(viewportFrame, eggData)
+    viewportFrame:ClearAllChildren()
+
+    local camera = Instance.new("Camera")
+    camera.FieldOfView = 30
+    camera.Parent = viewportFrame
+    viewportFrame.CurrentCamera = camera
+
+    local previewModel = nil
+    if eggData.Model3D then
+        pcall(function()
+            previewModel = eggData.Model3D:Clone()
+        end)
+    end
+
+    if not previewModel then
+        previewModel = Instance.new("Model")
+        local eggMesh = Instance.new("Part")
+        eggMesh.Name = "EggPart"
+        eggMesh.Shape = Enum.PartType.Ball
+        eggMesh.Size = Vector3.new(2.4, 3.2, 2.4)
+        eggMesh.Color = eggData.Color or Color3.fromRGB(255, 255, 255)
+        eggMesh.Material = (eggData.Rarity == "Divine" or eggData.Rarity == "Ethereal") and Enum.Material.Neon or Enum.Material.SmoothPlastic
+        eggMesh.Anchored = true
+        eggMesh.CanCollide = false
+        eggMesh.CFrame = CFrame.new(0, 0, 0)
+        eggMesh.Parent = previewModel
+        previewModel.PrimaryPart = eggMesh
+    end
+
+    previewModel.Parent = viewportFrame
+
+    local cf, size = previewModel:GetBoundingBox()
+    local maxDim = math.max(size.X, size.Y, size.Z)
+    if maxDim <= 0 then maxDim = 3 end
+    local dist = maxDim * 2.1
+
+    local camPos = cf.Position + Vector3.new(dist * 0.75, dist * 0.35, dist * 0.9)
+    camera.CFrame = CFrame.new(camPos, cf.Position)
+
+    viewportFrame.LightColor = Color3.fromRGB(240, 240, 250)
+    viewportFrame.Ambient = Color3.fromRGB(130, 130, 140)
+    viewportFrame.LightDirection = Vector3.new(-1, -1.5, -1).Unit
+
+    local spinThread = task.spawn(function()
+        local angle = 0
+        while isScriptActive and viewportFrame and viewportFrame.Parent do
+            angle = angle + 1
+            if previewModel and previewModel.PrimaryPart then
+                pcall(function()
+                    previewModel:SetPrimaryPartCFrame(cf * CFrame.Angles(0, math.rad(angle), 0))
+                end)
+            end
+            task.wait(0.04)
+        end
+    end)
+    table.insert(runningThreads, spinThread)
 end
 
 local function scanEggs()
@@ -1204,7 +1272,6 @@ local function scanEggs()
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local myPos = hrp and hrp.Position or Vector3.new(0, 0, 0)
 
-    -- Fuente 1: ServerData.ActiveEggs
     local serverData = ReplicatedStorage:FindFirstChild("ServerData")
     local activeFolder = (serverData and serverData:FindFirstChild("ActiveEggs")) or ReplicatedStorage:FindFirstChild("ActiveEggs")
 
@@ -1241,7 +1308,6 @@ local function scanEggs()
         end
     end
 
-    -- Fuente 2: Modelos físicos en RenderedEggs
     local renderedFolder = workspace:FindFirstChild("RenderedEggs")
     if renderedFolder then
         for _, model in ipairs(renderedFolder:GetChildren()) do
@@ -1313,7 +1379,7 @@ local function refreshGUI()
 
         if #eggs == 0 then
             local emptyLabel = Instance.new("TextLabel")
-            emptyLabel.Size = UDim2.new(1, 0, 0, 45)
+            emptyLabel.Size = UDim2.new(1, 0, 0, 50)
             emptyLabel.BackgroundTransparency = 1
             emptyLabel.Text = "Buscando huevos en el servidor..."
             emptyLabel.TextColor3 = Color3.fromRGB(160, 165, 175)
@@ -1327,33 +1393,57 @@ local function refreshGUI()
         for idx, data in ipairs(eggs) do
             local card = Instance.new("Frame")
             card.Name = "Egg_" .. data.UUID
-            card.Size = UDim2.new(1, -6, 0, 52)
-            card.BackgroundColor3 = Color3.fromRGB(32, 35, 45)
+            card.Size = UDim2.new(1, -6, 0, 60)
+            card.BackgroundColor3 = Color3.fromRGB(28, 31, 40)
             card.BorderSizePixel = 0
             card.LayoutOrder = idx
             card.Parent = scrollList
 
-            Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
+            Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
+
+            local cardStroke = Instance.new("UIStroke", card)
+            cardStroke.Thickness = 1
+            cardStroke.Color = Color3.fromRGB(45, 50, 65)
 
             local rarityBar = Instance.new("Frame", card)
-            rarityBar.Size = UDim2.new(0, 5, 1, 0)
+            rarityBar.Size = UDim2.new(0, 4, 1, -12)
+            rarityBar.Position = UDim2.new(0, 6, 0, 6)
             rarityBar.BackgroundColor3 = data.Color
             rarityBar.BorderSizePixel = 0
-            Instance.new("UICorner", rarityBar).CornerRadius = UDim.new(0, 6)
+            Instance.new("UICorner", rarityBar).CornerRadius = UDim.new(0, 4)
+
+            local vpContainer = Instance.new("Frame", card)
+            vpContainer.Name = "ViewportContainer"
+            vpContainer.Size = UDim2.new(0, 46, 0, 46)
+            vpContainer.Position = UDim2.new(0, 16, 0.5, -23)
+            vpContainer.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
+            vpContainer.BorderSizePixel = 0
+            Instance.new("UICorner", vpContainer).CornerRadius = UDim.new(0, 6)
+
+            local vpStroke = Instance.new("UIStroke", vpContainer)
+            vpStroke.Thickness = 1
+            vpStroke.Color = data.Color
+
+            local vp = Instance.new("ViewportFrame", vpContainer)
+            vp.Size = UDim2.new(1, 0, 1, 0)
+            vp.BackgroundTransparency = 1
+            vp.BorderSizePixel = 0
+
+            setupEggViewport(vp, data)
 
             local nameLabel = Instance.new("TextLabel", card)
-            nameLabel.Size = UDim2.new(0.56, 0, 0.45, 0)
-            nameLabel.Position = UDim2.new(0.05, 0, 0.08, 0)
+            nameLabel.Size = UDim2.new(0.46, 0, 0.44, 0)
+            nameLabel.Position = UDim2.new(0, 70, 0, 6)
             nameLabel.BackgroundTransparency = 1
             nameLabel.Text = data.Name .. (data.Mutation and (" [" .. data.Mutation .. "]") or "")
-            nameLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
+            nameLabel.TextColor3 = Color3.fromRGB(245, 245, 245)
             nameLabel.Font = Enum.Font.GothamBold
             nameLabel.TextSize = 12
             nameLabel.TextXAlignment = Enum.TextXAlignment.Left
 
             local infoLabel = Instance.new("TextLabel", card)
-            infoLabel.Size = UDim2.new(0.56, 0, 0.38, 0)
-            infoLabel.Position = UDim2.new(0.05, 0, 0.54, 0)
+            infoLabel.Size = UDim2.new(0.46, 0, 0.4, 0)
+            infoLabel.Position = UDim2.new(0, 70, 0, 32)
             infoLabel.BackgroundTransparency = 1
             infoLabel.Text = string.format("🍀 %s  |  %.2f KG  |  %dm", formatLuck(data.Luck), data.Weight, data.Distance)
             infoLabel.TextColor3 = data.Color
@@ -1363,16 +1453,16 @@ local function refreshGUI()
 
             local quickTrackBtn = Instance.new("TextButton", card)
             quickTrackBtn.Name = "QuickTrack"
-            quickTrackBtn.Size = UDim2.new(0.34, 0, 0.6, 0)
-            quickTrackBtn.Position = UDim2.new(0.63, 0, 0.2, 0)
-            quickTrackBtn.BackgroundColor3 = activeTrackers[data.UUID] and Color3.fromRGB(0, 160, 110) or Color3.fromRGB(48, 52, 65)
+            quickTrackBtn.Size = UDim2.new(0.28, 0, 0.55, 0)
+            quickTrackBtn.Position = UDim2.new(0.69, 0, 0.22, 0)
+            quickTrackBtn.BackgroundColor3 = activeTrackers[data.UUID] and Color3.fromRGB(0, 160, 110) or Color3.fromRGB(45, 50, 64)
             quickTrackBtn.Text = activeTrackers[data.UUID] and "★ MARCADO" or "MARCAR"
             quickTrackBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
             quickTrackBtn.Font = Enum.Font.GothamBold
             quickTrackBtn.TextSize = 10
             quickTrackBtn.BorderSizePixel = 0
             quickTrackBtn.ZIndex = 5
-            Instance.new("UICorner", quickTrackBtn).CornerRadius = UDim.new(0, 5)
+            Instance.new("UICorner", quickTrackBtn).CornerRadius = UDim.new(0, 6)
 
             quickTrackBtn.MouseButton1Click:Connect(function()
                 if activeTrackers[data.UUID] then
@@ -1384,7 +1474,7 @@ local function refreshGUI()
             end)
 
             local clickCatcher = Instance.new("TextButton", card)
-            clickCatcher.Size = UDim2.new(0.62, 0, 1, 0)
+            clickCatcher.Size = UDim2.new(0.68, 0, 1, 0)
             clickCatcher.BackgroundTransparency = 1
             clickCatcher.Text = ""
 
@@ -1429,7 +1519,7 @@ local hbConn = RunService.Heartbeat:Connect(function()
             item.InfoLabel.Text = string.format("🍀 %s  |  %.2f KG  |  %dm", formatLuck(item.Data.Luck), item.Data.Weight, dist)
             if item.TrackBtn then
                 item.TrackBtn.Text = activeTrackers[uuid] and "★ MARCADO" or "MARCAR"
-                item.TrackBtn.BackgroundColor3 = activeTrackers[uuid] and Color3.fromRGB(0, 160, 110) or Color3.fromRGB(48, 52, 65)
+                item.TrackBtn.BackgroundColor3 = activeTrackers[uuid] and Color3.fromRGB(0, 160, 110) or Color3.fromRGB(45, 50, 64)
             end
         end
     end
@@ -1487,7 +1577,7 @@ end)
 minButton.MouseButton1Click:Connect(function()
     isMinimized = not isMinimized
     if isMinimized then
-        mainFrame.Size = UDim2.new(0, 420, 0, 42)
+        mainFrame.Size = UDim2.new(0, 440, 0, 42)
         tabBar.Visible = false
         contentArea.Visible = false
         bottomBar.Visible = false
@@ -1615,4 +1705,4 @@ SpawnSafe("BackupHeartbeatLoop", function()
 end)
 
 refreshGUI()
-print("[SECURE-TRACKER] Sistema Pro con Shift Sprint (250), JumpPower (150) y Server Hop inicializado correctamente.")
+print("[SECURE-TRACKER] Sistema Pro con Aspecto 3D de Huevos, Shift Sprint (250), JumpPower (150) y Server Hop inicializado correctamente.")
