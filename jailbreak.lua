@@ -344,6 +344,12 @@ local function loadConfig()
 			end
 		end
 	end)
+	if State.ToggleKey == Enum.KeyCode.LeftControl or State.ToggleKey == Enum.KeyCode.RightControl or State.ToggleKey == Enum.KeyCode.Unknown then
+		State.ToggleKey = Enum.KeyCode.F
+	end
+	if State.ForwardJumpKey == Enum.KeyCode.F then
+		State.ForwardJumpKey = Enum.KeyCode.X
+	end
 end
 
 loadConfig()
@@ -1067,7 +1073,15 @@ createKeybindRow(pSettings, "Tecla Salto Infinito en Aire:", State.InfiniteJumpK
 createKeybindRow(pSettings, "Tecla Impulso Vertical (X):", State.ForwardJumpKey, function(k) State.ForwardJumpKey = k end)
 createKeybindRow(pSettings, "Tecla Dash Horizontal (G):", State.HorizontalJumpKey, function(k) State.HorizontalJumpKey = k end)
 createKeybindRow(pSettings, "Atajo Modo Noclip:", State.NoclipKey, function(k) State.NoclipKey = k end)
-createKeybindRow(pSettings, "Atajo Modo Vuelo (Fly):", State.FlyKey, function(k) State.FlyKeylocal function performFullCleanup()
+createKeybindRow(pSettings, "Atajo Modo Vuelo (Fly):", State.FlyKey, function(k) State.FlyKey = k end)
+createKeybindRow(pSettings, "Atajo Radar ESP / Spy:", State.ESPKey, function(k) State.ESPKey = k end)
+createKeybindRow(pSettings, "Atajo Fullbright:", State.FullbrightKey, function(k) State.FullbrightKey = k end)
+
+createActionButton(pSettings, "💾 FORZAR GUARDADO DE CONFIGURACIÓN", PALETTE.Success, function()
+	saveConfig()
+end)
+
+local function performFullCleanup()
 	for _, conn in pairs(Connections) do pcall(function() conn:Disconnect() end) end
 	Connections = {}
 	for char, esp in pairs(ESPCache) do
