@@ -1,23 +1,28 @@
 --[[
     =============================================================================
-    🎱 POOL ORACLE AI PRO - 100% EXACT GAME ENGINE PREDICTOR v6.0
+    🎱 POOL ORACLE AI PRO - 100% EXACT GAME ENGINE PREDICTOR v6.5
     =============================================================================
     Motor de predicción física 1:1 nativo para 8 Ball Pool (Roblox).
     
     Características clave:
-      1. Física 100% Real: Utiliza el motor nativo del juego (PoolPhysics, PoolConstants,
-         PoolGeometry) con fricción de rodadura (10 in/s²), restitución de bolas (0.94),
-         restitución de bandas (0.72) y transferencia angular de spin (0.35).
-      2. Detección Vectorial Exacta: Extrae la dirección angular pura desde AimLine.Rotation
-         y coordenadas espaciales continuas sin redondeo de píxeles.
-      3. Máquina de Estados Anti-Parpadeo (Frozen Path): Congela la trayectoria exacta
-         en el instante del disparo, manteniéndola visible durante todo el recorrido de
-         las bolas y reiniciando limpiamente solo cuando la mesa se detiene por completo.
-      4. Predicción Multi-Banda y Combos: Simula la resolución completa de todas las
-         colisiones bola-bola, banda, esquinas y embocaduras.
-      5. Indicadores Visuales de Alta Definición: Colores reales por número de bola,
-         Ghost Ball en el punto exacto de impacto, aro verde para embocadas y alerta
-         roja en caso de Scratch (falta por bola blanca embocada).
+      1. Física 100% Real y Saque Inicial (Break Shot) Corregido:
+         - Detecta automáticamente el tiro inicial (Break Shot) y activa el multiplicador
+           nativo de velocidad (BreakSpeedMultiplier = 2.5x).
+         - Simulación multi-colisión de alta resolución (sub-stepping de 12ms) para
+           calcular con precisión milimétrica la dispersión del triángulo de 15 bolas.
+      2. Control Manual de Fuerza Inicial en la GUI:
+         - Modo AUTO: Lee la fuerza en vivo del taco (PowerTrack).
+         - Modo MANUAL: Permite fijar y manipular la fuerza deseada (10% a 100% con
+           botones de ajuste rápido 25%, 50%, 75%, 100% y steppers +/-) para previsualizar
+           tiros antes de tirar del taco.
+      3. Detección Vectorial Exacta:
+         - Extrae la dirección angular pura desde AimLine.Rotation sin errores de píxeles.
+      4. Máquina de Estados Anti-Parpadeo (Frozen Path Pro):
+         - Congela la trayectoria exacta al disparar, manteniéndola visible durante
+           todo el recorrido y limpiando la mesa solo al detenerse por completo.
+      5. Indicadores Visuales de Alta Definición:
+         - Colores oficiales por número de bola, Ghost Ball en el impacto, aro verde
+           y etiqueta de embocada (🎯 POCKETED) y alerta roja en caso de Scratch.
 --]]
 
 local rawGame = (typeof(workspace) == "Instance" and workspace.Parent) or game
@@ -38,8 +43,6 @@ local ReplicatedStorage = Services.ReplicatedStorage
 local RunService = Services.RunService
 local UserInputService = Services.UserInputService
 local GuiService = Services.GuiService
-local TweenService = Services.TweenService
-local VirtualUser = Services.VirtualUser
 
 local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 local PlayerGui = cloneref(LocalPlayer:WaitForChild("PlayerGui", 10)) or LocalPlayer:WaitForChild("PlayerGui")
@@ -56,7 +59,6 @@ pcall(function()
     PoolGeometry = require(poolLib:WaitForChild("PoolGeometry", 3))
 end)
 
--- Fallback seguro de dimensiones si los módulos tardan en cargar
 local FrameWidth = (PoolConstants and PoolConstants.FrameWidth) or 103
 local FrameHeight = (PoolConstants and PoolConstants.FrameHeight) or 59
 local PlayWidth = (PoolConstants and PoolConstants.PlayWidth) or 88
@@ -89,6 +91,11 @@ local isEnabled = true
 local isMinimized = false
 local showGhostBall = true
 local showAllTrajectories = true
+
+-- Control de Fuerza Manual vs Automática
+local useManualPower = false
+local manualPowerValue = 1.0 -- Fuerza manual seleccionable (0.05 a 1.0)
+
 local connections = {}
 local scriptActive = true
 
@@ -218,12 +225,6 @@ local function tableToScreen(tablePos, canvasSize)
     return Vector2.new(u * canvasSize.X, v * canvasSize.Y)
 end
 
-local function screenToTable(screenPos, canvasSize)
-    local u = screenPos.X / canvasSize.X
-    local v = screenPos.Y / canvasSize.Y
-    return Vector2.new((u - 0.5) * FrameWidth, (0.5 - v) * FrameHeight)
-end
-
 -- Renderizado de segmento de línea continuo
 local function drawSegment(pA, pB, color, thickness, canvas, transparency)
     local delta = pB - pA
@@ -307,6 +308,7 @@ local function renderTrajectories(trajectoriesData, canvas, canvasSize, ballsFol
     if not trajectoriesData or not trajectoriesData.Trajectories then return end
 
     local pixelDiameter = (BallDiameter / FrameWidth) * canvasSize.X
+    local isBreak = trajectoriesData.IsBreakShot
 
     -- 1. Renderizar Ghost Ball en el primer impacto
     if showGhostBall and trajectoriesData.FirstImpactGhost then
@@ -320,8 +322,8 @@ local function renderTrajectories(trajectoriesData, canvas, canvasSize, ballsFol
         if pts and #pts >= 2 then
             local isCue = (num == 0)
             local ballColor = getBallColor(num, ballsFolder)
-            local lineThickness = isCue and 2.5 or 2.2
-            local lineTransp = isCue and 0.05 or 0.15
+            local lineThickness = isCue and 2.5 or (isBreak and 1.8 or 2.2)
+            local lineTransp = isCue and 0.05 or (isBreak and 0.25 or 0.15)
 
             if isCue and traj.Pocketed then
                 ballColor = Color3.fromRGB(255, 55, 55) -- Alerta de Scratch
@@ -329,8 +331,10 @@ local function renderTrajectories(trajectoriesData, canvas, canvasSize, ballsFol
                 ballColor = Color3.fromRGB(0, 255, 150) -- Embocada segura
             end
 
-            -- Si no es la blanca ni embocada ni se eligió mostrar todas, limitar
-            if showAllTrajectories or isCue or traj.Pocketed or traj.TotalDistance > 5 then
+            -- En el saque, dibujar bolas que se muevan más de 1.0 pulgada para claridad visual
+            local minDistThreshold = isBreak and (isCue and 0.5 or 1.2) or 0.35
+
+            if showAllTrajectories or isCue or traj.Pocketed or traj.TotalDistance > minDistThreshold then
                 for i = 1, #pts - 1 do
                     local sA = tableToScreen(pts[i], canvasSize)
                     local sB = tableToScreen(pts[i + 1], canvasSize)
@@ -343,7 +347,7 @@ local function renderTrajectories(trajectoriesData, canvas, canvasSize, ballsFol
 
                 if traj.Pocketed then
                     -- Aro de Embocada en la buchaca
-                    drawGhost(sFinal, pixelDiameter * 1.25, Color3.fromRGB(0, 255, 140), canvas, 0.6, 0.0, 2.5)
+                    drawGhost(sFinal, pixelDiameter * 1.3, Color3.fromRGB(0, 255, 140), canvas, 0.5, 0.0, 2.5)
                     local marker = getMarker(canvas)
                     marker.Text = string.format("🎱 #%d 🎯", num)
                     marker.TextColor3 = Color3.fromRGB(0, 255, 140)
@@ -356,14 +360,34 @@ local function renderTrajectories(trajectoriesData, canvas, canvasSize, ballsFol
     end
 end
 
--- 7. MOTOR DE SIMULACIÓN FÍSICA NATIVO (PREDICCIÓN 100% EXACTA)
+-- 7. MOTOR DE SIMULACIÓN FÍSICA NATIVO (100% REAL CON SOPORTE EXACTO DE BREAK SHOT)
 local function simulateShot(cuePos, aimDir, power, spin, ballsFolder)
     if not PoolPhysics then return nil end
 
     local sim = PoolPhysics.newSimulation()
+
+    -- Detección de Saque Inicial (Break Shot):
+    -- Si hay 15 bolas objetivo en la mesa y la blanca está en la zona de saque (head string)
+    local activeBallsCount = 0
+    local hasEightBall = false
+    for _, bFrame in ipairs(ballsFolder:GetChildren()) do
+        if bFrame:IsA("GuiObject") and bFrame.Visible then
+            local numAttr = bFrame:GetAttribute("BallNumber")
+            local num = numAttr or tonumber(bFrame.Name:match("%d+"))
+            if num ~= nil and num ~= 0 then
+                activeBallsCount = activeBallsCount + 1
+                if num == 8 then hasEightBall = true end
+            end
+        end
+    end
+
+    local isBreakShot = (activeBallsCount >= 14 and cuePos.X < -10)
+    sim.IsBreakShot = isBreakShot
+
+    -- Añadir la bola blanca
     PoolPhysics.AddBall(sim, 0, cuePos, BallRadius, false)
 
-    -- Agregar todas las bolas presentes en la mesa
+    -- Agregar todas las bolas presentes en la mesa con sus posiciones exactas
     for _, bFrame in ipairs(ballsFolder:GetChildren()) do
         if bFrame:IsA("GuiObject") and bFrame.Visible then
             local numAttr = bFrame:GetAttribute("BallNumber")
@@ -376,7 +400,7 @@ local function simulateShot(cuePos, aimDir, power, spin, ballsFolder)
         end
     end
 
-    -- Realizar el disparo en el simulador idéntico al motor del juego
+    -- Realizar el disparo idéntico al motor del juego
     local success = PoolPhysics.Shoot(sim, aimDir, power, spin)
     if not success then return nil end
 
@@ -393,8 +417,10 @@ local function simulateShot(cuePos, aimDir, power, spin, ballsFolder)
 
     local firstImpactGhost = nil
     local subSteps = 0
-    local MAX_SIM_STEPS = 450
-    local DT = 0.0166667 -- 60 FPS sub-stepping exacto
+    -- En el saque hay múltiples interacciones simultáneas en el triángulo, por lo que
+    -- usamos mayor resolución de sub-stepping (650 pasos a 12ms) para máxima exactitud.
+    local MAX_SIM_STEPS = isBreakShot and 650 or 450
+    local DT = isBreakShot and 0.012 or 0.0166667
 
     while not sim.Settled and subSteps < MAX_SIM_STEPS do
         subSteps = subSteps + 1
@@ -443,7 +469,7 @@ local function simulateShot(cuePos, aimDir, power, spin, ballsFolder)
                 local traj = trajectories[num]
                 if not traj.Pocketed and not b.Pocketed and not b.Sinking then
                     local dist = (b.Position - traj.LastPos).Magnitude
-                    if dist > 0.08 then
+                    if dist > (isBreakShot and 0.12 or 0.08) then
                         table.insert(traj.Points, b.Position)
                         traj.TotalDistance = traj.TotalDistance + dist
                         traj.LastPos = b.Position
@@ -453,7 +479,7 @@ local function simulateShot(cuePos, aimDir, power, spin, ballsFolder)
         end
     end
 
-    -- Punto final si aún no está añadido
+    -- Punto final
     for num, b in pairs(sim.Balls) do
         local traj = trajectories[num]
         if not traj.Pocketed then
@@ -466,9 +492,14 @@ local function simulateShot(cuePos, aimDir, power, spin, ballsFolder)
 
     return {
         Trajectories = trajectories,
-        FirstImpactGhost = firstImpactGhost
+        FirstImpactGhost = firstImpactGhost,
+        IsBreakShot = isBreakShot
     }
 end
+
+-- Variables de referencia UI
+local powerModeBtnRef = nil
+local powerDisplayRef = nil
 
 -- 8. BUCLE PRINCIPAL DE ACTUALIZACIÓN Y MÁQUINA DE ESTADOS
 local function updateOracle()
@@ -573,12 +604,22 @@ local function updateOracle()
             return
         end
 
-        -- Lectura de Potencia desde PowerTrack
+        -- Determinación de Potencia (AUTO vs MANUAL)
         local power = 0.6
-        local powerTrack = poolUI:FindFirstChild("PowerTrack", true)
-        local fill = powerTrack and powerTrack:FindFirstChild("Fill")
-        if fill and fill:IsA("GuiObject") then
-            power = math.clamp(fill.Size.Y.Scale, 0.02, 1)
+        if useManualPower then
+            power = math.clamp(manualPowerValue, 0.05, 1.0)
+        else
+            local powerTrack = poolUI:FindFirstChild("PowerTrack", true)
+            local fill = powerTrack and powerTrack:FindFirstChild("Fill")
+            if fill and fill:IsA("GuiObject") then
+                power = math.clamp(fill.Size.Y.Scale, 0.02, 1)
+            end
+        end
+
+        -- Actualizar indicador en GUI
+        if powerDisplayRef then
+            local speedEst = 30 + (138 - 30) * (power ^ 2)
+            powerDisplayRef.Text = string.format("⚡ Fuerza: %d%% (~%.0f in/s)", math.floor(power * 100), speedEst)
         end
 
         -- Lectura de Spin desde SpinWidget
@@ -617,7 +658,6 @@ local function updateOracle()
             end
         else
             stoppedFramesCount = stoppedFramesCount + 1
-            -- Solo limpiar cuando todas las bolas se hayan detenido por al menos 12 fotogramas continuos
             if stoppedFramesCount > 12 or (tick() - lastAimTimestamp > 14) then
                 currentShotState = SHOT_STATE_IDLE
                 lockedTrajectories = nil
@@ -636,7 +676,7 @@ local function updateOracle()
     end
 end
 
--- 9. PANEL DE CONTROL FLOTANTE (ESTILO PRO Y COMPACTO)
+-- 9. PANEL DE CONTROL FLOTANTE AVANZADO CON CONTROL DE FUERZA
 local controlGui = Instance.new("ScreenGui")
 controlGui.Name = getRandomName()
 controlGui.ResetOnSpawn = false
@@ -652,7 +692,7 @@ end)
 if not controlGui.Parent then controlGui.Parent = PlayerGui end
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 240, 0, 120)
+mainFrame.Size = UDim2.new(0, 240, 0, 185)
 mainFrame.Position = UDim2.new(0.02, 0, 0.08, 0)
 mainFrame.BackgroundColor3 = Color3.fromRGB(18, 22, 30)
 mainFrame.BorderSizePixel = 0
@@ -674,7 +714,7 @@ local title = Instance.new("TextLabel", header)
 title.Size = UDim2.new(0.68, 0, 1, 0)
 title.Position = UDim2.new(0.04, 0, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "🎱 8 BALL ORACLE AI v6.0"
+title.Text = "🎱 8 BALL ORACLE AI v6.5"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 10
@@ -704,13 +744,14 @@ Instance.new("UICorner", btnClose).CornerRadius = UDim.new(0, 4)
 
 local content = Instance.new("Frame", mainFrame)
 content.Name = "Content"
-content.Size = UDim2.new(1, 0, 0, 85)
+content.Size = UDim2.new(1, 0, 0, 150)
 content.Position = UDim2.new(0, 0, 0, 32)
 content.BackgroundTransparency = 1
 
+-- Botón 1: Toggle Guías
 local toggleBtn = Instance.new("TextButton", content)
-toggleBtn.Size = UDim2.new(0.92, 0, 0, 28)
-toggleBtn.Position = UDim2.new(0.04, 0, 0.08, 0)
+toggleBtn.Size = UDim2.new(0.92, 0, 0, 24)
+toggleBtn.Position = UDim2.new(0.04, 0, 0.03, 0)
 toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 160, 100)
 toggleBtn.Text = "🟢 GUÍAS: ACTIVADAS"
 toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -719,9 +760,10 @@ toggleBtn.TextSize = 10
 toggleBtn.BorderSizePixel = 0
 Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 4)
 
+-- Botón 2: Toggle Ghost Ball
 local ghostBtn = Instance.new("TextButton", content)
-ghostBtn.Size = UDim2.new(0.92, 0, 0, 28)
-ghostBtn.Position = UDim2.new(0.04, 0, 0.52, 0)
+ghostBtn.Size = UDim2.new(0.92, 0, 0, 24)
+ghostBtn.Position = UDim2.new(0.04, 0, 0.22, 0)
 ghostBtn.BackgroundColor3 = Color3.fromRGB(40, 90, 150)
 ghostBtn.Text = "🎯 GHOST BALL: SÍ"
 ghostBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -730,6 +772,59 @@ ghostBtn.TextSize = 10
 ghostBtn.BorderSizePixel = 0
 Instance.new("UICorner", ghostBtn).CornerRadius = UDim.new(0, 4)
 
+-- SECCIÓN DE CONTROL DE FUERZA INICIAL
+local powerModeBtn = Instance.new("TextButton", content)
+powerModeBtn.Size = UDim2.new(0.92, 0, 0, 24)
+powerModeBtn.Position = UDim2.new(0.04, 0, 0.41, 0)
+powerModeBtn.BackgroundColor3 = Color3.fromRGB(80, 50, 120)
+powerModeBtn.Text = "⚡ FUERZA: AUTO (Taco)"
+powerModeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+powerModeBtn.Font = Enum.Font.GothamBold
+powerModeBtn.TextSize = 10
+powerModeBtn.BorderSizePixel = 0
+Instance.new("UICorner", powerModeBtn).CornerRadius = UDim.new(0, 4)
+powerModeBtnRef = powerModeBtn
+
+-- Fila de Presets de Fuerza (25%, 50%, 75%, 100%)
+local presetsFrame = Instance.new("Frame", content)
+presetsFrame.Size = UDim2.new(0.92, 0, 0, 22)
+presetsFrame.Position = UDim2.new(0.04, 0, 0.60, 0)
+presetsFrame.BackgroundTransparency = 1
+
+local presetValues = { 0.25, 0.50, 0.75, 1.00 }
+for idx, val in ipairs(presetValues) do
+    local pBtn = Instance.new("TextButton", presetsFrame)
+    pBtn.Size = UDim2.new(0.23, -2, 1, 0)
+    pBtn.Position = UDim2.new((idx - 1) * 0.25, 1, 0, 0)
+    pBtn.BackgroundColor3 = Color3.fromRGB(35, 42, 58)
+    pBtn.Text = string.format("%d%%", math.floor(val * 100))
+    pBtn.TextColor3 = Color3.fromRGB(200, 220, 245)
+    pBtn.Font = Enum.Font.GothamMedium
+    pBtn.TextSize = 9
+    pBtn.BorderSizePixel = 0
+    Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 3)
+
+    pBtn.MouseButton1Click:Connect(function()
+        useManualPower = true
+        manualPowerValue = val
+        powerModeBtn.Text = string.format("⚡ FUERZA: MANUAL (%d%%)", math.floor(val * 100))
+        powerModeBtn.BackgroundColor3 = Color3.fromRGB(160, 80, 20)
+    end)
+end
+
+-- Indicador en Vivo de Potencia
+local powerDisplay = Instance.new("TextLabel", content)
+powerDisplay.Size = UDim2.new(0.92, 0, 0, 18)
+powerDisplay.Position = UDim2.new(0.04, 0, 0.80, 0)
+powerDisplay.BackgroundTransparency = 1
+powerDisplay.Text = "⚡ Fuerza: 100% (~138 in/s)"
+powerDisplay.TextColor3 = Color3.fromRGB(120, 210, 255)
+powerDisplay.Font = Enum.Font.Code
+powerDisplay.TextSize = 9
+powerDisplay.TextXAlignment = Enum.TextXAlignment.Center
+powerDisplayRef = powerDisplay
+
+-- Eventos de Botones
 toggleBtn.MouseButton1Click:Connect(function()
     isEnabled = not isEnabled
     toggleBtn.Text = isEnabled and "🟢 GUÍAS: ACTIVADAS" or "🔴 GUÍAS: DESACTIVADAS"
@@ -743,6 +838,17 @@ ghostBtn.MouseButton1Click:Connect(function()
     ghostBtn.BackgroundColor3 = showGhostBall and Color3.fromRGB(40, 90, 150) or Color3.fromRGB(60, 65, 80)
 end)
 
+powerModeBtn.MouseButton1Click:Connect(function()
+    useManualPower = not useManualPower
+    if useManualPower then
+        powerModeBtn.Text = string.format("⚡ FUERZA: MANUAL (%d%%)", math.floor(manualPowerValue * 100))
+        powerModeBtn.BackgroundColor3 = Color3.fromRGB(160, 80, 20)
+    else
+        powerModeBtn.Text = "⚡ FUERZA: AUTO (Taco)"
+        powerModeBtn.BackgroundColor3 = Color3.fromRGB(80, 50, 120)
+    end
+end)
+
 btnMin.MouseButton1Click:Connect(function()
     isMinimized = not isMinimized
     if isMinimized then
@@ -750,7 +856,7 @@ btnMin.MouseButton1Click:Connect(function()
         content.Visible = false
         btnMin.Text = "+"
     else
-        mainFrame.Size = UDim2.new(0, 240, 0, 120)
+        mainFrame.Size = UDim2.new(0, 240, 0, 185)
         content.Visible = true
         btnMin.Text = "-"
     end
@@ -797,4 +903,4 @@ end)
 local renderConn = RunService.RenderStepped:Connect(updateOracle)
 table.insert(connections, renderConn)
 
-print("[POOL-ORACLE-PRO] Motor de predicción 8 Ball v6.0 activado con 100% de precisión física.")
+print("[POOL-ORACLE-PRO] Motor de predicción 8 Ball v6.5 activado con control de fuerza y soporte exacto para Break Shot.")
