@@ -160,7 +160,7 @@ function Secure.GUI:CreateSafe(name)
 	return screen
 end
 
--- Censura Activa de Detecciones
+-- Censura Activa de Detecciones (Sin Falsos Positivos)
 function Secure.GUI:BlockDetectionText(player)
 	if not player then return end
 	Secure.Thread:SpawnSafe("DetectionBlocker", function()
@@ -169,9 +169,12 @@ function Secure.GUI:BlockDetectionText(player)
 			pGui.DescendantAdded:Connect(function(desc)
 				if desc:IsA("TextLabel") or desc:IsA("TextBox") then
 					local t = desc.Text:lower()
-					if t:find("kick") or t:find("ban") or t:find("cheat") or t:find("exploit") then
-						desc.Text = ""
-						desc.Visible = false
+					-- Evitar interferir con contratos o lugares legítimos como el Banco (Bank)
+					if not t:find("bank") and not t:find("contract") and not t:find("rob") then
+						if t:find("you have been banned") or t:find("banned for exploiting") or t:find("kicked from game") or t:find("cheat detected") then
+							desc.Text = ""
+							desc.Visible = false
+						end
 					end
 				end
 			end)
