@@ -1569,6 +1569,17 @@ function DumperView:Render()
     -- =========================================================================
     -- MODAL DE PROGRESO DE EXTRACCIÓN (DUMP PROGRESS MODAL OVERLAY)
     -- =========================================================================
+    local function formatComma(n)
+        local s = tostring(math.floor(tonumber(n) or 0))
+        local formatted = s
+        while true do
+            local k
+            formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", '%1,%2')
+            if k == 0 then break end
+        end
+        return formatted
+    end
+
     local progressOverlay = Instance.new("Frame")
     progressOverlay.Name = "DumpProgressOverlay"
     progressOverlay.Size = UDim2.new(1, 0, 1, 0)
@@ -1579,8 +1590,8 @@ function DumperView:Render()
     progressOverlay.Parent = frame
 
     local progressCard = Instance.new("Frame")
-    progressCard.Size = UDim2.new(0, 480, 0, 240)
-    progressCard.Position = UDim2.new(0.5, -240, 0.5, -120)
+    progressCard.Size = UDim2.new(0, 520, 0, 270)
+    progressCard.Position = UDim2.new(0.5, -260, 0.5, -135)
     progressCard.BackgroundColor3 = Color3.fromRGB(18, 22, 32)
     progressCard.ZIndex = 251
     progressCard.Parent = progressOverlay
@@ -1592,22 +1603,22 @@ function DumperView:Render()
     cardStroke.Parent = progressCard
 
     local modalTitle = Instance.new("TextLabel")
-    modalTitle.Size = UDim2.new(1, -24, 0, 28)
-    modalTitle.Position = UDim2.new(0, 12, 0, 14)
+    modalTitle.Size = UDim2.new(1, -120, 0, 26)
+    modalTitle.Position = UDim2.new(0, 14, 0, 14)
     modalTitle.BackgroundTransparency = 1
     modalTitle.Text = "📦 EXTRACCIÓN Y VOLCADO EN CURSO"
     modalTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
     modalTitle.Font = Enum.Font.GothamBold
-    modalTitle.TextSize = 14
+    modalTitle.TextSize = 13
     modalTitle.TextXAlignment = Enum.TextXAlignment.Left
     modalTitle.ZIndex = 252
     modalTitle.Parent = progressCard
 
     local modalSubTitle = Instance.new("TextLabel")
-    modalSubTitle.Size = UDim2.new(1, -24, 0, 18)
-    modalSubTitle.Position = UDim2.new(0, 12, 0, 42)
+    modalSubTitle.Size = UDim2.new(1, -120, 0, 18)
+    modalSubTitle.Position = UDim2.new(0, 14, 0, 40)
     modalSubTitle.BackgroundTransparency = 1
-    modalSubTitle.Text = "Modo: RUNTIME_INTERACTIONS | 8 Workers Concurrentes"
+    modalSubTitle.Text = "Modo: MANUAL_TREE | Multi-Worker Engine (8 Hilos)"
     modalSubTitle.TextColor3 = Color3.fromRGB(0, 215, 255)
     modalSubTitle.Font = Enum.Font.GothamMedium
     modalSubTitle.TextSize = 10
@@ -1616,8 +1627,8 @@ function DumperView:Render()
     modalSubTitle.Parent = progressCard
 
     local modalPctLabel = Instance.new("TextLabel")
-    modalPctLabel.Size = UDim2.new(0, 100, 0, 32)
-    modalPctLabel.Position = UDim2.new(1, -112, 0, 18)
+    modalPctLabel.Size = UDim2.new(0, 100, 0, 36)
+    modalPctLabel.Position = UDim2.new(1, -114, 0, 14)
     modalPctLabel.BackgroundTransparency = 1
     modalPctLabel.Text = "0%"
     modalPctLabel.TextColor3 = Color3.fromRGB(0, 230, 140)
@@ -1629,8 +1640,8 @@ function DumperView:Render()
 
     -- Barra de Progreso Track
     local modalTrack = Instance.new("Frame")
-    modalTrack.Size = UDim2.new(1, -24, 0, 12)
-    modalTrack.Position = UDim2.new(0, 12, 0, 72)
+    modalTrack.Size = UDim2.new(1, -28, 0, 10)
+    modalTrack.Position = UDim2.new(0, 14, 0, 68)
     modalTrack.BackgroundColor3 = Color3.fromRGB(28, 34, 48)
     modalTrack.ZIndex = 252
     modalTrack.Parent = progressCard
@@ -1645,22 +1656,34 @@ function DumperView:Render()
     Instance.new("UICorner", modalFill).CornerRadius = UDim.new(1, 0)
 
     local modalCounter = Instance.new("TextLabel")
-    modalCounter.Size = UDim2.new(1, -24, 0, 20)
-    modalCounter.Position = UDim2.new(0, 12, 0, 94)
+    modalCounter.Size = UDim2.new(1, -28, 0, 20)
+    modalCounter.Position = UDim2.new(0, 14, 0, 86)
     modalCounter.BackgroundTransparency = 1
-    modalCounter.Text = "Procesados: [0 / 0] Elementos"
-    modalCounter.TextColor3 = Color3.fromRGB(220, 230, 245)
+    modalCounter.Text = "Procesados: [ 0 / 0 ] Elementos (0.0%)"
+    modalCounter.TextColor3 = Color3.fromRGB(225, 235, 250)
     modalCounter.Font = Enum.Font.GothamBold
     modalCounter.TextSize = 11
     modalCounter.TextXAlignment = Enum.TextXAlignment.Left
     modalCounter.ZIndex = 252
     modalCounter.Parent = progressCard
 
+    local modalStatsLabel = Instance.new("TextLabel")
+    modalStatsLabel.Size = UDim2.new(1, -28, 0, 18)
+    modalStatsLabel.Position = UDim2.new(0, 14, 0, 108)
+    modalStatsLabel.BackgroundTransparency = 1
+    modalStatsLabel.Text = "📜 Scripts: 0  |  ⚡ Remotes: 0  |  📁 Nodos: 0"
+    modalStatsLabel.TextColor3 = Color3.fromRGB(120, 210, 255)
+    modalStatsLabel.Font = Enum.Font.Code
+    modalStatsLabel.TextSize = 10
+    modalStatsLabel.TextXAlignment = Enum.TextXAlignment.Left
+    modalStatsLabel.ZIndex = 252
+    modalStatsLabel.Parent = progressCard
+
     local modalMetrics = Instance.new("TextLabel")
-    modalMetrics.Size = UDim2.new(1, -24, 0, 18)
-    modalMetrics.Position = UDim2.new(0, 12, 0, 118)
+    modalMetrics.Size = UDim2.new(1, -28, 0, 18)
+    modalMetrics.Position = UDim2.new(0, 14, 0, 128)
     modalMetrics.BackgroundTransparency = 1
-    modalMetrics.Text = "⏱️ Transcurrido: 0.0s | ⏳ ETA: ~0.0s | ⚡ 0 items/s"
+    modalMetrics.Text = "⏱️ Transcurrido: 0.0s | ⏳ ETA: ~0.0s | ⚡ 0 elem/s"
     modalMetrics.TextColor3 = Color3.fromRGB(150, 175, 210)
     modalMetrics.Font = Enum.Font.Code
     modalMetrics.TextSize = 10
@@ -1669,10 +1692,10 @@ function DumperView:Render()
     modalMetrics.Parent = progressCard
 
     local modalCurrentItem = Instance.new("TextLabel")
-    modalCurrentItem.Size = UDim2.new(1, -24, 0, 36)
-    modalCurrentItem.Position = UDim2.new(0, 12, 0, 142)
+    modalCurrentItem.Size = UDim2.new(1, -28, 0, 36)
+    modalCurrentItem.Position = UDim2.new(0, 14, 0, 150)
     modalCurrentItem.BackgroundColor3 = Color3.fromRGB(12, 15, 22)
-    modalCurrentItem.Text = "  Iniciando análisis..."
+    modalCurrentItem.Text = "  Iniciando análisis y descubrimiento de nodos..."
     modalCurrentItem.TextColor3 = Color3.fromRGB(170, 185, 205)
     modalCurrentItem.Font = Enum.Font.Code
     modalCurrentItem.TextSize = 9
@@ -1682,9 +1705,21 @@ function DumperView:Render()
     modalCurrentItem.Parent = progressCard
     Instance.new("UICorner", modalCurrentItem).CornerRadius = UDim.new(0, 4)
 
+    local modalHint = Instance.new("TextLabel")
+    modalHint.Size = UDim2.new(0, 320, 0, 24)
+    modalHint.Position = UDim2.new(0, 14, 1, -36)
+    modalHint.BackgroundTransparency = 1
+    modalHint.Text = "⚡ Time-slicing cooperativo 12ms (Sin caídas de FPS)"
+    modalHint.TextColor3 = Color3.fromRGB(100, 120, 145)
+    modalHint.Font = Enum.Font.Gotham
+    modalHint.TextSize = 9
+    modalHint.TextXAlignment = Enum.TextXAlignment.Left
+    modalHint.ZIndex = 252
+    modalHint.Parent = progressCard
+
     local modalCloseBtn = Instance.new("TextButton")
     modalCloseBtn.Size = UDim2.new(0, 120, 0, 26)
-    modalCloseBtn.Position = UDim2.new(1, -132, 1, -36)
+    modalCloseBtn.Position = UDim2.new(1, -134, 1, -36)
     modalCloseBtn.BackgroundColor3 = Color3.fromRGB(40, 46, 62)
     modalCloseBtn.Text = "Ocultar"
     modalCloseBtn.TextColor3 = Color3.fromRGB(200, 215, 235)
@@ -1715,18 +1750,20 @@ function DumperView:Render()
         treeStatus.Text = "⏳ Procesando extracción multihilo en modo " .. self.CurrentMode .. "..."
 
         modalTitle.Text = "📦 EXTRACCIÓN Y VOLCADO: " .. self.CurrentMode
-        modalSubTitle.Text = "Formato de Salida: " .. exportMode:upper() .. " | Multihilo con 8 Workers"
+        modalSubTitle.Text = "Formato de Salida: " .. exportMode:upper() .. " | Multi-Worker Engine (8 Hilos)"
         modalPctLabel.Text = "0%"
         modalFill.Size = UDim2.new(0, 0, 1, 0)
-        modalCounter.Text = "Procesados: [0 / 0] Elementos"
-        modalCurrentItem.Text = "  Iniciando análisis..."
+        modalCounter.Text = "Procesados: [ 0 / 0 ] Elementos (0.0%)"
+        modalStatsLabel.Text = "📜 Scripts: 0  |  ⚡ Remotes: 0  |  📁 Nodos: 0"
+        modalMetrics.Text = "⏱️ Transcurrido: 0.0s | ⏳ ETA: ~0.0s | ⚡ 0 elem/s"
+        modalCurrentItem.Text = "  Iniciando análisis y descubrimiento..."
         progressOverlay.Visible = true
 
         task.spawn(function()
             local startTime = tick()
             local package = nil
 
-            local function onProgress(curr, total, name)
+            local function onProgress(curr, total, name, stats)
                 local elapsed = tick() - startTime
                 local speed = curr / math.max(elapsed, 0.001)
                 local eta = (total > curr and speed > 0) and ((total - curr) / speed) or 0
@@ -1734,10 +1771,19 @@ function DumperView:Render()
 
                 modalPctLabel.Text = string.format("%d%%", math.floor(pct * 100))
                 modalFill.Size = UDim2.new(pct, 0, 1, 0)
-                modalCounter.Text = string.format("Procesados: [%d / %d] Elementos (%.1f%%)", curr, total, pct * 100)
-                modalMetrics.Text = string.format("⏱️ %.1fs | ⏳ Restante: ~%.1fs | ⚡ %.0f items/s", elapsed, eta, speed)
-                modalCurrentItem.Text = "  📄 " .. tostring(name or "")
-                treeStatus.Text = string.format("⏳ [%d/%d] (%.0f%%) %s | ETA: ~%.1fs", curr, total, pct * 100, tostring(name or ""):sub(1, 20), eta)
+                modalCounter.Text = string.format("Procesados: [ %s / %s ] Elementos (%.1f%%)", formatComma(curr), formatComma(total), pct * 100)
+                
+                local scCount = stats and stats.scripts or 0
+                local rmCount = stats and stats.remotes or 0
+                local fdCount = stats and stats.folders or math.max(0, curr - scCount - rmCount)
+                
+                modalStatsLabel.Text = string.format("📜 Scripts: %s  |  ⚡ Remotes: %s  |  📁 Nodos: %s", formatComma(scCount), formatComma(rmCount), formatComma(fdCount))
+                modalMetrics.Text = string.format("⏱️ %.1fs | ⏳ Restante: ~%.1fs | ⚡ %.0f elem/s", elapsed, eta, speed)
+                
+                local actionType = stats and stats.action or "Analizando"
+                local fullPath = stats and (stats.currentPath or tostring(name or "")) or tostring(name or "")
+                modalCurrentItem.Text = string.format("  🔍 [%s] %s", actionType, fullPath:sub(-60))
+                treeStatus.Text = string.format("⏳ [%s/%s] (%.0f%%) %s | ETA: ~%.1fs", formatComma(curr), formatComma(total), pct * 100, tostring(name or ""):sub(1, 20), eta)
             end
 
             if self.CurrentMode == "RUNTIME_INTERACTIONS" then
@@ -1752,22 +1798,29 @@ function DumperView:Render()
             else
                 local queue = {}
                 for obj, isSel in pairs(self.SelectedNodes) do
-                    if isSel then table.insert(queue, obj) end
+                    if isSel and typeof(obj) == "Instance" then table.insert(queue, obj) end
                 end
 
                 if #queue == 0 then
-                    queue = { game:GetService("ReplicatedStorage"), game:GetService("StarterPlayer") }
+                    local rs = getgenv()._APEX_RESOLVER and getgenv()._APEX_RESOLVER.GetService("ReplicatedStorage") or game:GetService("ReplicatedStorage")
+                    local sp = getgenv()._APEX_RESOLVER and getgenv()._APEX_RESOLVER.GetService("StarterPlayer") or game:GetService("StarterPlayer")
+                    queue = { rs, sp }
                 end
                 package = dumper:DumpManualNodes(queue, onProgress)
             end
 
             self.LastExtractedPackage = package
             local duration = tick() - startTime
+            local totalCount = package.TotalExtracted or (package.TotalScriptsDumped or 0)
+            local totalSc = package.TotalScripts or package.TotalScriptsDumped or 0
+            local totalRm = package.TotalRemotes or package.TotalRemotesDumped or 0
 
             modalPctLabel.Text = "100%"
             modalFill.Size = UDim2.new(1, 0, 1, 0)
-            modalCounter.Text = string.format("✅ ¡COMPLETADO! Total: %d contenedores / scripts en %.2fs", package.TotalExtracted or (package.TotalScriptsDumped or 0), duration)
-            modalCurrentItem.Text = "  ✅ Formato generado: " .. tostring(exportMode:upper())
+            modalCounter.Text = string.format("✅ ¡VOLCADO COMPLETADO! Total: %s elementos", formatComma(totalCount))
+            modalStatsLabel.Text = string.format("📜 Scripts: %s  |  ⚡ Remotes: %s  |  ⏱️ %.2fs totales", formatComma(totalSc), formatComma(totalRm), duration)
+            modalMetrics.Text = string.format("🚀 Rendimiento: %.0f elem/s | 100%% procesado", totalCount / math.max(duration, 0.001))
+            modalCurrentItem.Text = "  ✅ Formato exportado con éxito: " .. tostring(exportMode:upper())
 
             if exportMode == "vfs" then
                 local s, path = exporter:ExportAsVFSArchive("Dump_" .. self.CurrentMode, package)
@@ -1804,16 +1857,21 @@ function DumperView:Render()
                 self:SelectRightTab("JSONOutput")
                 setInspectorText(jsonStr)
 
-                local s, path = exporter:SaveToFile("dump_" .. self.CurrentMode:lower() .. "_" .. math.floor(tick()) .. ".json", jsonStr)
-                treeStatus.Text = string.format("✅ JSON guardado en %.2fs (%d KB) → %s", duration, math.floor(#jsonStr / 1024), tostring(path))
+                local fname = "dump_" .. self.CurrentMode:lower() .. "_" .. math.floor(tick()) .. ".json"
+                local s, path = exporter:SaveToFile(fname, jsonStr)
+                if s then
+                    treeStatus.Text = string.format("✅ JSON guardado en %.2fs (%d KB) → %s", duration, math.floor(#jsonStr / 1024), tostring(path))
+                else
+                    treeStatus.Text = "Resultado JSON: " .. tostring(path)
+                end
             end
 
-            dumpJsonBtn.Text = "📂 JSON (.json)"
-            dumpMdBtn.Text = "📄 MARKDOWN (.md)"
-            dumpDiskBtn.Text = "💾 DISCO (.lua)"
-            dumpVfsBtn.Text = "📦 VFS ARCHIVE"
+            dumpJsonBtn.Text = "💾 EXPORTAR JSON"
+            dumpMdBtn.Text = "📝 EXPORTAR MARKDOWN"
+            dumpDiskBtn.Text = "📂 GUARDAR EN DISCO"
+            dumpVfsBtn.Text = "🗜️ VFS ARCHIVE"
 
-            task.wait(1.2)
+            task.wait(1.5)
             progressOverlay.Visible = false
         end)
     end
