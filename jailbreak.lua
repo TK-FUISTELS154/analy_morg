@@ -516,6 +516,7 @@ navBar.Parent = mainFrame
 Instance.new("UICorner", navBar).CornerRadius = UDim.new(0, 8)
 
 local navLayout = Instance.new("UIListLayout")
+navLayout.SortOrder = Enum.SortOrder.LayoutOrder
 navLayout.Padding = UDim.new(0, 4)
 navLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 navLayout.Parent = navBar
@@ -546,7 +547,7 @@ local TabDefs = {
 	{ Id = "Settings",  Title = "⚙️ Ajustes & Atajos" }
 }
 
-for _, t in ipairs(TabDefs) do
+for idx, t in ipairs(TabDefs) do
 	local page = Instance.new("ScrollingFrame")
 	page.Name = "Page_" .. t.Id
 	page.Size = UDim2.new(1, -16, 1, -16)
@@ -569,6 +570,7 @@ for _, t in ipairs(TabDefs) do
 
 	local btn = Instance.new("TextButton")
 	btn.Name = "TabBtn_" .. t.Id
+	btn.LayoutOrder = idx
 	btn.Size = UDim2.new(1, -12, 0, 36)
 	btn.BackgroundColor3 = PALETTE.Card
 	btn.Text = t.Title
