@@ -223,6 +223,7 @@ local State = {
 	AimbotEnabled = false,
 	IsAiming = false,
 	AimKey = Enum.UserInputType.MouseButton2,
+	AimMode = "Center", -- "Center" (Estable Centro) o "Mouse" (Dinámico Ratón)
 	FOV_Radius = 220,
 	ShowFOV = false,
 	FOVMouseFollow = false,
@@ -232,7 +233,7 @@ local State = {
 	TeamCheck = true,
 	TargetFFA = false,
 	OffsetX = 0,
-	OffsetY = -28, -- Predeterminado a -28
+	OffsetY = 0,
 
 	-- Visuales & ESP
 	ESPEnabled = true,
@@ -285,6 +286,7 @@ local function saveConfig()
 	pcall(function()
 		local data = {
 			AimbotEnabled = State.AimbotEnabled,
+			AimMode = State.AimMode,
 			FOV_Radius = State.FOV_Radius,
 			ShowFOV = State.ShowFOV,
 			FOVMouseFollow = State.FOVMouseFollow,
@@ -783,13 +785,51 @@ createToggle(pCombat, "🎯 Activar Auto-Apuntado Universal (Aimbot)", State.Aim
 	State.AimbotEnabled = v
 end)
 
+-- Selector de Modo de Apuntado (Centro Estable vs Ratón Dinámico)
+local aimModeCard = createCard(pCombat, "Modo de Puntería / FOV Target", 68)
+local modeCenterBtn = Instance.new("TextButton")
+modeCenterBtn.Size = UDim2.new(0.48, -4, 0, 24)
+modeCenterBtn.Position = UDim2.new(0, 10, 0, 32)
+modeCenterBtn.BackgroundColor3 = (State.AimMode == "Center") and PALETTE.Primary or PALETTE.InputBg
+modeCenterBtn.Text = "🎯 Centro Estable (X/Y-28)"
+modeCenterBtn.TextColor3 = PALETTE.Text
+modeCenterBtn.Font = Enum.Font.GothamBold
+modeCenterBtn.TextSize = 9
+modeCenterBtn.Parent = aimModeCard
+Instance.new("UICorner", modeCenterBtn).CornerRadius = UDim.new(0, 4)
+
+local modeMouseBtn = Instance.new("TextButton")
+modeMouseBtn.Size = UDim2.new(0.48, -4, 0, 24)
+modeMouseBtn.Position = UDim2.new(0.5, 2, 0, 32)
+modeMouseBtn.BackgroundColor3 = (State.AimMode == "Mouse") and PALETTE.Primary or PALETTE.InputBg
+modeMouseBtn.Text = "🖱️ Modo Ratón (Cursor)"
+modeMouseBtn.TextColor3 = PALETTE.Text
+modeMouseBtn.Font = Enum.Font.GothamBold
+modeMouseBtn.TextSize = 9
+modeMouseBtn.Parent = aimModeCard
+Instance.new("UICorner", modeMouseBtn).CornerRadius = UDim.new(0, 4)
+
+local function updateAimModeUI(mode)
+	State.AimMode = mode
+	State.FOVMouseFollow = (mode == "Mouse")
+	modeCenterBtn.BackgroundColor3 = (mode == "Center") and PALETTE.Primary or PALETTE.InputBg
+	modeMouseBtn.BackgroundColor3 = (mode == "Mouse") and PALETTE.Primary or PALETTE.InputBg
+	if mode == "Center" then
+		centerDot.Position = UDim2.new(0.5, State.OffsetX, 0.5, State.OffsetY)
+		fovFrame.Position = centerDot.Position
+		centerDot.Visible = true
+	else
+		centerDot.Visible = false
+	end
+	saveConfig()
+end
+
+modeCenterBtn.MouseButton1Click:Connect(function() updateAimModeUI("Center") end)
+modeMouseBtn.MouseButton1Click:Connect(function() updateAimModeUI("Mouse") end)
+
 createToggle(pCombat, "⭕ Mostrar Círculo FOV en Pantalla", State.ShowFOV, function(v)
 	State.ShowFOV = v
 	fovFrame.Visible = v
-end)
-
-createToggle(pCombat, "🖱️ Círculo FOV Sigue al Puntero del Ratón", State.FOVMouseFollow, function(v)
-	State.FOVMouseFollow = v
 end)
 
 createSlider(pCombat, "Radio de Campo de Visión (FOV Píxeles)", 60, 450, State.FOV_Radius, function(v)
@@ -800,7 +840,7 @@ end)
 createSlider(pCombat, "Desplazamiento Vertical Y del FOV (Offset Y)", -80, 50, State.OffsetY, function(v)
 	State.OffsetY = v
 	centerDot.Position = UDim2.new(0.5, State.OffsetX, 0.5, State.OffsetY)
-	if not State.FOVMouseFollow then
+	if State.AimMode == "Center" then
 		fovFrame.Position = centerDot.Position
 	end
 end)
@@ -1289,7 +1329,8 @@ local function getBestAimbotTarget()
 	if not myHrp then return nil end
 
 	local fovCenter
-	if State.FOVMouseFollow then
+	local isMouseMode = (State.AimMode == "Mouse" or State.FOVMouseFollow)
+	if isMouseMode then
 		fovCenter = UserInputService:GetMouseLocation()
 	else
 		local vp = Camera.ViewportSize
@@ -1304,11 +1345,9 @@ local function getBestAimbotTarget()
 		local isSameTeam = false
 
 		if State.TeamCheck and entity.Player and LocalPlayer then
-			local myTeamVal = LocalPlayer:FindFirstChild("TeamValue")
-			local myRawTeam = (myTeamVal and myTeamVal.Value) or (LocalPlayer.Team and LocalPlayer.Team.Name) or ""
-			local hisTeamVal = entity.Player:FindFirstChild("TeamValue")
-			local hisRawTeam = (hisTeamVal and hisTeamVal.Value) or (entity.Player.Team and entity.Player.Team.Name) or ""
-			if myRawTeam ~= "" and hisRawTeam ~= "" and myRawTeam == hisRawTeam then
+			local myTeam = getPlayerTeam(LocalPlayer, LocalPlayer.Character)
+			local hisTeam = getPlayerTeam(entity.Player, entity.Character)
+			if myTeam ~= "" and hisTeam ~= "" and myTeam == hisTeam then
 				isSameTeam = true
 			end
 		end
@@ -1355,30 +1394,55 @@ Connections.RenderStepped = RunService.RenderStepped:Connect(function(dt)
 		telemetryBar.Text = string.format("FPS: %d | Toggle: Ctrl+%s | Salto: %s | Dash: %s", fps, State.ToggleKey.Name, State.InfiniteJumpKey.Name, State.HorizontalJumpKey.Name)
 	end
 
-	-- Manejo dinámico del Círculo FOV y Punto Central Estable
-	centerDot.Position = UDim2.new(0.5, State.OffsetX, 0.5, State.OffsetY)
-	if State.ShowFOV then
-		if State.FOVMouseFollow then
-			local mousePos = UserInputService:GetMouseLocation()
+	local isMouseMode = (State.AimMode == "Mouse" or State.FOVMouseFollow)
+
+	-- Manejo dinámico del Círculo FOV y Punto Central según Modo
+	if isMouseMode then
+		local mousePos = UserInputService:GetMouseLocation()
+		centerDot.Visible = false
+		if State.ShowFOV then
 			fovFrame.Position = UDim2.new(0, mousePos.X, 0, mousePos.Y)
+			fovFrame.Visible = true
 		else
+			fovFrame.Visible = false
+		end
+	else
+		centerDot.Position = UDim2.new(0.5, State.OffsetX, 0.5, State.OffsetY)
+		centerDot.Visible = true
+		if State.ShowFOV then
 			fovFrame.Position = centerDot.Position
+			fovFrame.Visible = true
+		else
+			fovFrame.Visible = false
 		end
 	end
 
-	-- Aimbot / Lock-On con alineación angular directa
+	-- Aimbot / Lock-On con orientación precisa según el modo
 	if (State.AimbotEnabled and State.IsAiming) or State.LockOnEnabled then
 		local target = getBestAimbotTarget()
 		if target and target.Part then
-			local targetCFrame = CFrame.lookAt(Camera.CFrame.Position, target.Part.Position)
+			local targetCFrame
+			if isMouseMode then
+				local mousePos = UserInputService:GetMouseLocation()
+				local mouseRay = Camera:ViewportPointToRay(mousePos.X, mousePos.Y).Direction
+				local targetDir = (target.Part.Position - Camera.CFrame.Position).Unit
+				local mouseLocalOffset = Camera.CFrame:VectorToObjectSpace(mouseRay)
+				local desiredLookDir = (CFrame.lookAt(Vector3.zero, targetDir) * CFrame.lookAt(Vector3.zero, mouseLocalOffset):Inverse()).LookVector
+				targetCFrame = CFrame.lookAt(Camera.CFrame.Position, Camera.CFrame.Position + desiredLookDir)
+			else
+				targetCFrame = CFrame.lookAt(Camera.CFrame.Position, target.Part.Position)
+			end
+
 			if State.AimSpeed >= 1 then
 				Camera.CFrame = targetCFrame
 			else
 				Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, math.clamp(State.AimSpeed, 0.05, 1.0))
 			end
 			centerDot.BackgroundColor3 = State.ColorLockOn
+			fovStroke.Color = State.ColorLockOn
 		else
 			centerDot.BackgroundColor3 = State.ColorFOV
+			fovStroke.Color = State.ColorFOV
 		end
 	end
 end)
