@@ -1,14 +1,14 @@
 --[[
 	=============================================================================
-	JAILBREAK ULTIMATE COMBAT, ROBBERY & ADMIN SUITE PRO v5.0
+	JAILBREAK ULTIMATE COMBAT, ROBBERY & ADMIN SUITE PRO v5.0 (LEVEL 3-5 SECURE)
 	=============================================================================
-	Desarrollado con Arquitectura Apex Suite v5.0 y Resolución Anti-Ofuscación.
-	Especialmente adaptado para Jailbreak (Badimo) con bypass de detección.
+	Desarrollado con Arquitectura Apex Suite v5.0 y Núcleo de Seguridad Nivel 3-5.
+	Especialmente adaptado para Jailbreak (Badimo) con bypass de detección y sigilo.
 
 	Módulos Principales:
 	1. 🏃 Movimiento & Físicas Seguras:
-	   - Speed Bypass (CFrame Delta / Physics Engine sin disparar anti-cheat de WalkSpeed).
-	   - Preservación de velocidad al conducir o montar vehículos.
+	   - Speed Engine Seguro por CFrame Delta (sin alterar Humanoid.WalkSpeed).
+	   - Preservación de velocidad al conducir vehículos.
 	   - Salto Infinito en el Aire (ESPACIO).
 	   - Impulso Vertical (Tecla F) y Dash Horizontal (Tecla G).
 	   - Noclip Seguro y Modo Vuelo 3D (Fly).
@@ -28,77 +28,191 @@
 	   - Toggles para excluir bandos específicos del Aimbot y del Radar ESP.
 	6. ☀️ Iluminación & Clima:
 	   - Fullbright sin sombras y control de hora del día.
-	7. ⚙️ Ajustes & Configuración Persistente (JSON):
-	   - Guardado y carga automática de TODAS las configuraciones y atajos en 'jailbreak_config.json'.
-	   - Sistema completo de Reasignación de Teclas (Keybinds) interactivo en tiempo real.
-	   - Selectores de color para radar y FOV.
-	   - Botón de Finalización Total Limpia (Kill Process).
+	7. 🛡️ Núcleo de Seguridad Nivel 3-5 (Scan Secure Core):
+	   - GUI Protegida con nombres invisibles aleatorios y DisplayOrder 2e9.
+	   - Anti-AFK por VirtualUser no invasivo.
+	   - Aislamiento de errores en hilos (Thread:SpawnSafe) sin logs rojos en consola F9.
+	   - Censura activa de textos de detección (BlockDetectionText).
+	   - Persistencia completa en JSON (jailbreak_config.json) y reasignación interactiva de atajos.
 --]]
 
 -- =============================================================================
--- RESOLUTOR UNIVERSAL DE SERVICIOS ANTI-OFUSCACIÓN (APEX RESOLVER v5.0)
+-- 1. NÚCLEO DE SEGURIDAD Y BYPASS NIVEL 3-5 (SECURE CORE)
 -- =============================================================================
-local rawGame = (typeof(workspace) == "Instance" and workspace.Parent) or game
+local Secure = {}
+local realGame = (typeof(workspace) == "Instance" and workspace.Parent) or game
 
-local function resolveService(className)
-	if className == "Workspace" and typeof(workspace) == "Instance" then return workspace end
-	local ok, s = pcall(function() return rawGame:GetService(className) end)
-	if ok and s then return s end
-	local ok2, s2 = pcall(function() return rawGame:FindFirstChildOfClass(className) end)
-	if ok2 and s2 then return s2 end
-	local ok3, s3 = pcall(function() return rawGame:FindFirstChildWhichIsA(className) end)
-	if ok3 and s3 then return s3 end
-	local sChildren = pcall(function() return rawGame:GetChildren() end)
-	if sChildren then
-		for _, child in ipairs(rawGame:GetChildren()) do
-			if child.ClassName == className then return child end
-		end
-	end
-	return nil
+-- Detección segura de APIs de exploit Nivel 3-5 con fallbacks nativos
+local function checkFunc(fn, fallback)
+	return (type(fn) == "function" and fn) or fallback or function(...) return ... end
 end
 
-local HttpService = resolveService("HttpService")
-local Players = resolveService("Players")
-local Workspace = resolveService("Workspace") or workspace
-local UserInputService = resolveService("UserInputService")
-local RunService = resolveService("RunService")
-local Lighting = resolveService("Lighting")
-local Teams = resolveService("Teams")
-local TweenService = resolveService("TweenService")
-local Stats = resolveService("Stats")
+Secure.API = {
+	cloneref = checkFunc(cloneref, function(x) return x end),
+	clonefunction = checkFunc(clonefunction, checkFunc(clonefunc, function(f) return f end)),
+	gethui = checkFunc(gethui, checkFunc(get_hidden_gui)),
+	protect_gui = checkFunc(protect_gui, checkFunc(protectgui, syn and syn.protect_gui)),
+	writefile = checkFunc(writefile),
+	readfile = checkFunc(readfile),
+	isfile = checkFunc(isfile, function() return false end),
+	isfolder = checkFunc(isfolder, function() return false end),
+	makefolder = checkFunc(makefolder, function() end),
+	newcclosure = checkFunc(newcclosure, function(f) return f end),
+	checkcaller = checkFunc(checkcaller, function() return true end),
+	getgenv = checkFunc(getgenv, function() return _G end),
+}
+
+-- Resolutor de Servicios de 4 Niveles con Caché Blindado
+Secure.Services = setmetatable({}, {
+	__index = function(self, serviceName)
+		local cached = rawget(self, serviceName)
+		if cached then return cached end
+
+		if serviceName == "Workspace" and typeof(workspace) == "Instance" then
+			rawset(self, serviceName, workspace)
+			return workspace
+		end
+
+		local srv = nil
+		-- Nivel 1: GetService
+		local ok1, s1 = pcall(function() return realGame:GetService(serviceName) end)
+		if ok1 and s1 then srv = s1 end
+		-- Nivel 2: FindFirstChildOfClass
+		if not srv then
+			local ok2, s2 = pcall(function() return realGame:FindFirstChildOfClass(serviceName) end)
+			if ok2 and s2 then srv = s2 end
+		end
+		-- Nivel 3: FindFirstChildWhichIsA
+		if not srv then
+			local ok3, s3 = pcall(function() return realGame:FindFirstChildWhichIsA(serviceName) end)
+			if ok3 and s3 then srv = s3 end
+		end
+		-- Nivel 4: Escaneo directo de hijos
+		if not srv then
+			pcall(function()
+				for _, c in ipairs(realGame:GetChildren()) do
+					if c.ClassName == serviceName then srv = c; break end
+				end
+			end)
+		end
+
+		local finalSrv = srv and Secure.API.cloneref(srv) or srv
+		if finalSrv then rawset(self, serviceName, finalSrv) end
+		return finalSrv
+	end
+})
+
+local HttpService = Secure.Services.HttpService
+local Players = Secure.Services.Players
+local Workspace = Secure.Services.Workspace or workspace
+local UserInputService = Secure.Services.UserInputService
+local RunService = Secure.Services.RunService
+local Lighting = Secure.Services.Lighting
+local Teams = Secure.Services.Teams
+local VirtualUser = Secure.Services.VirtualUser
 
 local LocalPlayer = Players and (Players.LocalPlayer or Players:FindFirstChildOfClass("Player"))
 local Camera = Workspace.CurrentCamera or Workspace:FindFirstChildOfClass("Camera")
+
+-- Gestión de Hilos Seguros (Aislamiento de Errores)
+Secure.Thread = {}
+function Secure.Thread:SpawnSafe(name, func, ...)
+	local args = { ... }
+	return task.spawn(function()
+		local s, err = pcall(func, table.unpack(args))
+		if not s and _G.SECURE_DEBUG then
+			warn("[SECURE-FAIL][" .. tostring(name) .. "]: " .. tostring(err))
+		end
+	end)
+end
+
+-- Gestión de Interfaz Segura Nivel 3-5
+Secure.GUI = {}
+local function generateInvisibleName()
+	local str = ""
+	for i = 1, math.random(16, 26) do str = str .. string.char(math.random(128, 254)) end
+	return str
+end
+
+function Secure.GUI:CreateSafe(name)
+	local finalName = name or generateInvisibleName()
+	local screen = Instance.new("ScreenGui")
+	screen.Name = finalName
+	screen.ResetOnSpawn = false
+	screen.DisplayOrder = 2e9
+	screen.IgnoreGuiInset = true
+	screen.Archivable = false
+	screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+	local parent = nil
+	if Secure.API.gethui then
+		local s, res = pcall(function() return Secure.API.gethui() end)
+		if s and res then parent = res end
+	end
+	if not parent and Secure.API.protect_gui then
+		local cg = Secure.Services.CoreGui
+		if cg then
+			pcall(function() Secure.API.protect_gui(screen) end)
+			parent = cg
+		end
+	end
+	if not parent then parent = Secure.Services.CoreGui end
+	if not parent and LocalPlayer then
+		parent = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 3)
+	end
+
+	screen.Parent = parent or Secure.Services.StarterGui
+	return screen
+end
+
+-- Bloqueador de Textos de Detección (Anti-OCR / Anti-Prompt)
+function Secure.GUI:BlockDetectionText(player)
+	if not player then return end
+	Secure.Thread:SpawnSafe("DetectionBlocker", function()
+		local pGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 4)
+		if pGui then
+			pGui.DescendantAdded:Connect(function(desc)
+				if desc:IsA("TextLabel") or desc:IsA("TextBox") then
+					local t = desc.Text:lower()
+					if t:find("kick") or t:find("ban") or t:find("cheat") or t:find("exploit") then
+						desc.Text = ""
+						desc.Visible = false
+					end
+				end
+			end)
+		end
+	end)
+end
+
+-- Anti-AFK Nivel 3 (No invasivo)
+Secure.Presence = {}
+function Secure.Presence:EnableAntiAFK()
+	if not LocalPlayer then return end
+	Secure.Thread:SpawnSafe("AntiAFK_Loop", function()
+		LocalPlayer.Idled:Connect(function()
+			if VirtualUser then
+				pcall(function()
+					VirtualUser:CaptureController()
+					VirtualUser:ClickButton2(Vector2.new(0, 0))
+				end)
+			end
+		end)
+	end)
+end
+
+Secure.Presence:EnableAntiAFK()
+Secure.GUI:BlockDetectionText(LocalPlayer)
 
 -- =============================================================================
 -- SINGLETON GUARD: DESTRUIR INSTANCIAS PREVIAS
 -- =============================================================================
 if _G.JailbreakAdminSuiteInstance then
-	pcall(function()
-		_G.JailbreakAdminSuiteInstance:Destroy()
-	end)
+	pcall(function() _G.JailbreakAdminSuiteInstance:Destroy() end)
 	_G.JailbreakAdminSuiteInstance = nil
 end
 
--- Contenedor Seguro
-local function getSecureGuiParent()
-	local parent = nil
-	if typeof(gethui) == "function" then
-		pcall(function() parent = gethui() end)
-	end
-	if not parent and typeof(cloneref) == "function" then
-		local cg = resolveService("CoreGui")
-		if cg then pcall(function() parent = cloneref(cg) end) end
-	end
-	if not parent then parent = resolveService("CoreGui") end
-	if not parent and LocalPlayer then
-		parent = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 3)
-	end
-	return parent or resolveService("StarterGui")
-end
-
 -- =============================================================================
--- ESTADO Y CONFIGURACIÓN PERSISTENTE
+-- ESTADO Y CONFIGURACIÓN PERSISTENTE (CONFIG MANAGER)
 -- =============================================================================
 local CONFIG_FILE = "jailbreak_config.json"
 
@@ -108,8 +222,6 @@ local State = {
 	SpeedValue = 55,
 	SprintOnly = false,
 	IsSprinting = false,
-	WalkSpeed = 16,
-	JumpPower = 50,
 	InfiniteJump = false,
 	ForwardJump = false,
 	ForwardJumpPower = 65,
@@ -118,7 +230,6 @@ local State = {
 	Noclip = false,
 	FlyEnabled = false,
 	FlySpeed = 50,
-	Gravity = 196.2,
 
 	-- Auto-Apuntado (Aimbot)
 	AimbotEnabled = false,
@@ -139,7 +250,6 @@ local State = {
 	SpectateEnabled = false,
 	Fullbright = false,
 	LockOnEnabled = false,
-	SelectedPlayer = nil,
 
 	-- Colores Marcador Spy
 	ColorLockOnTarget = Color3.fromRGB(255, 215, 0),
@@ -166,14 +276,12 @@ local State = {
 }
 
 local function saveConfig()
-	if typeof(writefile) ~= "function" or not HttpService then return end
+	if typeof(Secure.API.writefile) ~= "function" or not HttpService then return end
 	pcall(function()
 		local data = {
 			SpeedEngineEnabled = State.SpeedEngineEnabled,
 			SpeedValue = State.SpeedValue,
 			SprintOnly = State.SprintOnly,
-			WalkSpeed = State.WalkSpeed,
-			JumpPower = State.JumpPower,
 			InfiniteJump = State.InfiniteJump,
 			ForwardJump = State.ForwardJump,
 			ForwardJumpPower = State.ForwardJumpPower,
@@ -201,7 +309,6 @@ local function saveConfig()
 			IgnoredAimTeams = State.IgnoredAimTeams,
 			IgnoredESPTeams = State.IgnoredESPTeams,
 
-			-- Serialización de Atajos
 			ToggleKey = State.ToggleKey.Name,
 			AimbotToggleKey = State.AimbotToggleKey.Name,
 			InfiniteJumpKey = State.InfiniteJumpKey.Name,
@@ -212,15 +319,15 @@ local function saveConfig()
 			ESPKey = State.ESPKey.Name,
 			FullbrightKey = State.FullbrightKey.Name,
 		}
-		writefile(CONFIG_FILE, HttpService:JSONEncode(data))
+		Secure.API.writefile(CONFIG_FILE, HttpService:JSONEncode(data))
 	end)
 end
 
 local function loadConfig()
-	if typeof(readfile) ~= "function" or typeof(isfile) ~= "function" or not HttpService then return end
+	if typeof(Secure.API.readfile) ~= "function" or typeof(Secure.API.isfile) ~= "function" or not HttpService then return end
 	pcall(function()
-		if isfile(CONFIG_FILE) then
-			local content = readfile(CONFIG_FILE)
+		if Secure.API.isfile(CONFIG_FILE) then
+			local content = Secure.API.readfile(CONFIG_FILE)
 			local data = HttpService:JSONDecode(content)
 			if type(data) == "table" then
 				for k, v in pairs(data) do
@@ -280,14 +387,9 @@ local PALETTE = {
 }
 
 -- =============================================================================
--- INTERFAZ GRÁFICA PRINCIPAL (GUI)
+-- 2. CREACIÓN DE INTERFAZ GRÁFICA (MATERIAL DESIGN 3)
 -- =============================================================================
-local secureParent = getSecureGuiParent()
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "JailbreakAdminSuitePro"
-screenGui.ResetOnSpawn = false
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screenGui.Parent = secureParent
+local screenGui = Secure.GUI:CreateSafe("JailbreakAdminSuitePro")
 _G.JailbreakAdminSuiteInstance = screenGui
 
 -- Crosshair Center Dot
@@ -353,10 +455,10 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 16, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "⚡ JAILBREAK COMBAT & ROBBERY SUITE PRO"
+title.Text = "⚡ JAILBREAK COMBAT & ROBBERY SUITE PRO (L3-5 SECURE)"
 title.TextColor3 = PALETTE.Text
 title.Font = Enum.Font.GothamBold
-title.TextSize = 13
+title.TextSize = 12
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = header
 
@@ -1047,7 +1149,7 @@ Connections.Heartbeat = RunService.Heartbeat:Connect(function(dt)
 end)
 
 -- Radar ESP Updater
-task.spawn(function()
+Secure.Thread:SpawnSafe("RadarESPUpdater", function()
 	while screenGui and screenGui.Parent do
 		if State.ESPEnabled then
 			for _, plr in ipairs(Players:GetPlayers()) do
@@ -1164,4 +1266,4 @@ Connections.InputEnded = UserInputService.InputEnded:Connect(function(input)
 	end
 end)
 
-print("[JAILBREAK SUITE] Inicializado y configurado exitosamente.")
+print("[JAILBREAK SUITE] Inicializado con Núcleo Seguro Nivel 3-5 y Bypasses Activos.")
