@@ -271,8 +271,8 @@ local State = {
 	ToggleKey = Enum.KeyCode.F, -- Ctrl + F para mostrar/ocultar
 	AimbotToggleKey = Enum.KeyCode.E,
 	InfiniteJumpKey = Enum.KeyCode.Space,
-	ForwardJumpKey = Enum.KeyCode.X,
-	HorizontalJumpKey = Enum.KeyCode.G,
+	ForwardJumpKey = Enum.KeyCode.F, -- Tecla F directa para impulso vertical
+	HorizontalJumpKey = Enum.KeyCode.G, -- Tecla G directa para dash
 	NoclipKey = Enum.KeyCode.N,
 	FlyKey = Enum.KeyCode.V,
 	ESPKey = Enum.KeyCode.H,
@@ -349,9 +349,6 @@ local function loadConfig()
 	end)
 	if State.ToggleKey == Enum.KeyCode.LeftControl or State.ToggleKey == Enum.KeyCode.RightControl or State.ToggleKey == Enum.KeyCode.Unknown then
 		State.ToggleKey = Enum.KeyCode.F
-	end
-	if State.ForwardJumpKey == Enum.KeyCode.F then
-		State.ForwardJumpKey = Enum.KeyCode.X
 	end
 end
 
@@ -996,15 +993,15 @@ createSlider(pMovement, "Potencia del Salto en el Aire (Jump Power)", 30, 160, S
 	State.InfiniteJumpPower = v
 end)
 
-createToggle(pMovement, "🚀 Impulso Vertical (Ctrl + X)", State.ForwardJump, function(v)
+createToggle(pMovement, "🚀 Impulso Vertical (Tecla F)", State.ForwardJump, function(v)
 	State.ForwardJump = v
 end)
 
-createSlider(pMovement, "Fuerza de Impulso Vertical (X)", 40, 150, State.ForwardJumpPower, function(v)
+createSlider(pMovement, "Fuerza de Impulso Vertical (F)", 40, 150, State.ForwardJumpPower, function(v)
 	State.ForwardJumpPower = v
 end)
 
-createToggle(pMovement, "💨 Dash Horizontal (Ctrl + G)", State.HorizontalJump, function(v)
+createToggle(pMovement, "💨 Dash Horizontal (Tecla G)", State.HorizontalJump, function(v)
 	State.HorizontalJump = v
 end)
 
@@ -1084,8 +1081,8 @@ createKeybindRow(pSettings, "Atajo Modo Vuelo / Fly (Ctrl + Key):", State.FlyKey
 createKeybindRow(pSettings, "Atajo Modo Noclip (Ctrl + Key):", State.NoclipKey, function(k) State.NoclipKey = k end)
 createKeybindRow(pSettings, "Atajo Radar ESP / Spy (Ctrl + Key):", State.ESPKey, function(k) State.ESPKey = k end)
 createKeybindRow(pSettings, "Atajo Fullbright (Ctrl + Key):", State.FullbrightKey, function(k) State.FullbrightKey = k end)
-createKeybindRow(pSettings, "Atajo Impulso Vertical (Ctrl + Key):", State.ForwardJumpKey, function(k) State.ForwardJumpKey = k end)
-createKeybindRow(pSettings, "Atajo Dash Horizontal (Ctrl + Key):", State.HorizontalJumpKey, function(k) State.HorizontalJumpKey = k end)
+createKeybindRow(pSettings, "Tecla Impulso Vertical (F):", State.ForwardJumpKey, function(k) State.ForwardJumpKey = k end)
+createKeybindRow(pSettings, "Tecla Dash Horizontal (G):", State.HorizontalJumpKey, function(k) State.HorizontalJumpKey = k end)
 createKeybindRow(pSettings, "Tecla Salto Infinito en Aire (Space):", State.InfiniteJumpKey, function(k) State.InfiniteJumpKey = k end)
 
 createActionButton(pSettings, "💾 FORZAR GUARDADO DE CONFIGURACIÓN", PALETTE.Success, function()
@@ -1358,14 +1355,13 @@ Connections.RenderStepped = RunService.RenderStepped:Connect(function(dt)
 		telemetryBar.Text = string.format("FPS: %d | Toggle: Ctrl+%s | Salto: %s | Dash: %s", fps, State.ToggleKey.Name, State.InfiniteJumpKey.Name, State.HorizontalJumpKey.Name)
 	end
 
-	-- Manejo dinámico del Círculo FOV
+	-- Manejo dinámico del Círculo FOV y Punto Central Estable
+	centerDot.Position = UDim2.new(0.5, State.OffsetX, 0.5, State.OffsetY)
 	if State.ShowFOV then
 		if State.FOVMouseFollow then
 			local mousePos = UserInputService:GetMouseLocation()
 			fovFrame.Position = UDim2.new(0, mousePos.X, 0, mousePos.Y)
-			centerDot.Position = fovFrame.Position
 		else
-			centerDot.Position = UDim2.new(0.5, State.OffsetX, 0.5, State.OffsetY)
 			fovFrame.Position = centerDot.Position
 		end
 	end
@@ -1643,7 +1639,7 @@ Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gam
 
 	if gameProcessed then return end
 
-	-- 3. Atajos de Funcionalidades (REQUERIMIENTO ESTRICTO: CTRL + TECLA)
+	-- 3. Atajos de Funcionalidades (Atajos de Suite que requieren Ctrl)
 	if ctrlActive then
 		if input.KeyCode == State.AimbotToggleKey then
 			State.AimbotEnabled = not State.AimbotEnabled
@@ -1655,7 +1651,7 @@ Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gam
 			State.ESPEnabled = not State.ESPEnabled
 			if not State.ESPEnabled then
 				for _, esp in pairs(ESPCache) do
-					if esp.Billboard then esp.Billboard.Visible = false end
+					if esp.Billboard then esp.Billboard.Enabled = false end
 					if esp.Highlight then esp.Highlight.Enabled = false end
 				end
 			end
@@ -1673,7 +1669,10 @@ Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gam
 					end
 				end)
 			end
-		elseif input.KeyCode == State.ForwardJumpKey and State.ForwardJump then
+		end
+	else
+		-- Teclas directas de movimiento fluido (Tecla F para Impulso Vertical, Tecla G para Dash)
+		if input.KeyCode == State.ForwardJumpKey and State.ForwardJump then
 			local char = LocalPlayer and LocalPlayer.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
 			if hrp then
@@ -1690,7 +1689,7 @@ Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gam
 		end
 	end
 
-	-- Salto Infinito en el Aire con Potencia Editable (ESPACIO sin requerir Ctrl)
+	-- Salto Infinito en el Aire con Potencia Editable (ESPACIO)
 	if input.KeyCode == State.InfiniteJumpKey and State.InfiniteJump then
 		local char = LocalPlayer and LocalPlayer.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
