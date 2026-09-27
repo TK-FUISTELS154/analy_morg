@@ -264,7 +264,7 @@ local State = {
 	ToggleKey = Enum.KeyCode.F, -- Ctrl + F para mostrar/ocultar
 	AimbotToggleKey = Enum.KeyCode.E,
 	InfiniteJumpKey = Enum.KeyCode.Space,
-	ForwardJumpKey = Enum.KeyCode.F,
+	ForwardJumpKey = Enum.KeyCode.X,
 	HorizontalJumpKey = Enum.KeyCode.G,
 	NoclipKey = Enum.KeyCode.N,
 	FlyKey = Enum.KeyCode.V,
@@ -909,11 +909,11 @@ createSlider(pMovement, "Potencia del Salto en el Aire (Jump Power)", 30, 160, S
 	State.InfiniteJumpPower = v
 end)
 
-createToggle(pMovement, "🚀 Impulso Vertical (Tecla F)", State.ForwardJump, function(v)
+createToggle(pMovement, "🚀 Impulso Vertical (Tecla X)", State.ForwardJump, function(v)
 	State.ForwardJump = v
 end)
 
-createSlider(pMovement, "Fuerza de Impulso Vertical (F)", 40, 150, State.ForwardJumpPower, function(v)
+createSlider(pMovement, "Fuerza de Impulso Vertical (X)", 40, 150, State.ForwardJumpPower, function(v)
 	State.ForwardJumpPower = v
 end)
 
@@ -969,26 +969,48 @@ local function refreshTeamsList()
 
 	if Teams then
 		for _, tm in ipairs(Teams:GetTeams()) do
-			local card = createCard(pTeams, "Bando: " .. tm.Name, 44)
+			local card = createCard(pTeams, "Bando: " .. tm.Name, 52)
 			table.insert(teamCards, card)
 
-			local ignBtn = Instance.new("TextButton")
-			ignBtn.Size = UDim2.new(0, 95, 0, 24)
-			ignBtn.Position = UDim2.new(1, -105, 0.5, -12)
-			local isIgnored = State.IgnoredAimTeams[tm.Name] or false
-			ignBtn.BackgroundColor3 = isIgnored and PALETTE.Danger or PALETTE.Success
-			ignBtn.Text = isIgnored and "IGNORADO" or "APUNTAR"
-			ignBtn.TextColor3 = PALETTE.Text
-			ignBtn.Font = Enum.Font.GothamBold
-			ignBtn.TextSize = 9
-			ignBtn.Parent = card
-			Instance.new("UICorner", ignBtn).CornerRadius = UDim.new(0, 4)
+			-- Botón de Aim
+			local isAimIgnored = State.IgnoredAimTeams[tm.Name] or false
+			local aimBtn = Instance.new("TextButton")
+			aimBtn.Size = UDim2.new(0, 95, 0, 24)
+			aimBtn.Position = UDim2.new(1, -202, 0.5, -12)
+			aimBtn.BackgroundColor3 = isAimIgnored and PALETTE.Danger or PALETTE.Success
+			aimBtn.Text = isAimIgnored and "🎯 AIM: OFF" or "🎯 AIM: ON"
+			aimBtn.TextColor3 = PALETTE.Text
+			aimBtn.Font = Enum.Font.GothamBold
+			aimBtn.TextSize = 9
+			aimBtn.Parent = card
+			Instance.new("UICorner", aimBtn).CornerRadius = UDim.new(0, 4)
 
-			ignBtn.MouseButton1Click:Connect(function()
+			aimBtn.MouseButton1Click:Connect(function()
 				State.IgnoredAimTeams[tm.Name] = not State.IgnoredAimTeams[tm.Name]
 				local ign = State.IgnoredAimTeams[tm.Name]
-				ignBtn.BackgroundColor3 = ign and PALETTE.Danger or PALETTE.Success
-				ignBtn.Text = ign and "IGNORADO" or "APUNTAR"
+				aimBtn.BackgroundColor3 = ign and PALETTE.Danger or PALETTE.Success
+				aimBtn.Text = ign and "🎯 AIM: OFF" or "🎯 AIM: ON"
+				saveConfig()
+			end)
+
+			-- Botón de ESP
+			local isEspIgnored = State.IgnoredESPTeams[tm.Name] or false
+			local espBtn = Instance.new("TextButton")
+			espBtn.Size = UDim2.new(0, 95, 0, 24)
+			espBtn.Position = UDim2.new(1, -102, 0.5, -12)
+			espBtn.BackgroundColor3 = isEspIgnored and PALETTE.Danger or PALETTE.Success
+			espBtn.Text = isEspIgnored and "👁️ ESP: OFF" or "👁️ ESP: ON"
+			espBtn.TextColor3 = PALETTE.Text
+			espBtn.Font = Enum.Font.GothamBold
+			espBtn.TextSize = 9
+			espBtn.Parent = card
+			Instance.new("UICorner", espBtn).CornerRadius = UDim.new(0, 4)
+
+			espBtn.MouseButton1Click:Connect(function()
+				State.IgnoredESPTeams[tm.Name] = not State.IgnoredESPTeams[tm.Name]
+				local ign = State.IgnoredESPTeams[tm.Name]
+				espBtn.BackgroundColor3 = ign and PALETTE.Danger or PALETTE.Success
+				espBtn.Text = ign and "👁️ ESP: OFF" or "👁️ ESP: ON"
 				saveConfig()
 			end)
 		end
@@ -1038,7 +1060,7 @@ end)
 
 createKeybindRow(pSettings, "Atajo Activar Auto-Apuntado:", State.AimbotToggleKey, function(k) State.AimbotToggleKey = k end)
 createKeybindRow(pSettings, "Tecla Salto Infinito en Aire:", State.InfiniteJumpKey, function(k) State.InfiniteJumpKey = k end)
-createKeybindRow(pSettings, "Tecla Impulso Vertical (F):", State.ForwardJumpKey, function(k) State.ForwardJumpKey = k end)
+createKeybindRow(pSettings, "Tecla Impulso Vertical (X):", State.ForwardJumpKey, function(k) State.ForwardJumpKey = k end)
 createKeybindRow(pSettings, "Tecla Dash Horizontal (G):", State.HorizontalJumpKey, function(k) State.HorizontalJumpKey = k end)
 createKeybindRow(pSettings, "Atajo Modo Noclip:", State.NoclipKey, function(k) State.NoclipKey = k end)
 createKeybindRow(pSettings, "Atajo Modo Vuelo (Fly):", State.FlyKey, function(k) State.FlyKey = k end)
@@ -1170,7 +1192,7 @@ Connections.RenderStepped = RunService.RenderStepped:Connect(function(dt)
 	end
 end)
 
--- Heartbeat Loop (Speed Engine Seguro & Noclip)
+-- Heartbeat Loop (Speed Engine Seguro, Noclip & 3D Fly)
 Connections.Heartbeat = RunService.Heartbeat:Connect(function(dt)
 	local char = LocalPlayer and LocalPlayer.Character
 	if not char then return end
@@ -1178,8 +1200,24 @@ Connections.Heartbeat = RunService.Heartbeat:Connect(function(dt)
 	local hrp = char:FindFirstChild("HumanoidRootPart")
 	local hum = char:FindFirstChildOfClass("Humanoid")
 
+	-- Modo Vuelo 3D Seguro
+	if State.FlyEnabled and hrp then
+		local flyDir = Vector3.zero
+		if UserInputService:IsKeyDown(Enum.KeyCode.W) then flyDir = flyDir + Camera.CFrame.LookVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.S) then flyDir = flyDir - Camera.CFrame.LookVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.A) then flyDir = flyDir - Camera.CFrame.RightVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.D) then flyDir = flyDir + Camera.CFrame.RightVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.Space) then flyDir = flyDir + Vector3.new(0, 1, 0) end
+		if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then flyDir = flyDir - Vector3.new(0, 1, 0) end
+
+		hrp.AssemblyLinearVelocity = Vector3.zero
+		if flyDir.Magnitude > 0.05 then
+			hrp.CFrame = hrp.CFrame + (flyDir.Unit * (State.FlySpeed * dt))
+		end
+	end
+
 	-- Speed Bypass Seguro por CFrame Delta
-	if State.SpeedEngineEnabled and hrp and hum then
+	if State.SpeedEngineEnabled and not State.FlyEnabled and hrp and hum then
 		local isMoving = hum.MoveDirection.Magnitude > 0.1
 		local shouldSpeed = not State.SprintOnly or State.IsSprinting
 		if isMoving and shouldSpeed then
@@ -1300,15 +1338,34 @@ Connections.PlayerRemoving = Players.PlayerRemoving:Connect(function(plr)
 	end
 end)
 
--- Manejo de Teclado con Soporte Ctrl + Key
+-- Manejo de Teclado con Detección Blindada de Ctrl + F
+local isCtrlHeld = false
+
 Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	-- Ocultar / Mostrar Panel mediante Ctrl + ToggleKey
-	local isCtrl = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
-	if input.KeyCode == State.ToggleKey and isCtrl then
+	if input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
+		isCtrlHeld = true
+	end
+
+	local ctrlActive = isCtrlHeld
+		or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+		or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+
+	-- 1. Atajo Maestro Mostrar / Ocultar (Ctrl + ToggleKey o RightShift)
+	local isToggleTriggered = false
+	if input.KeyCode == State.ToggleKey and ctrlActive then
+		isToggleTriggered = true
+	elseif (input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl) and UserInputService:IsKeyDown(State.ToggleKey) then
+		isToggleTriggered = true
+	elseif input.KeyCode == Enum.KeyCode.RightShift then
+		isToggleTriggered = true
+	end
+
+	if isToggleTriggered then
 		mainFrame.Visible = not mainFrame.Visible
 		return
 	end
 
+	-- 2. Mouse Aiming & Sprinting
 	if input.UserInputType == State.AimKey then
 		State.IsAiming = true
 	end
@@ -1317,15 +1374,22 @@ Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gam
 		State.IsSprinting = true
 	end
 
-	if input.KeyCode == State.AimbotToggleKey and not gameProcessed then
+	if gameProcessed then return end
+
+	-- 3. Atajos de Funcionalidades
+	if input.KeyCode == State.AimbotToggleKey then
 		State.AimbotEnabled = not State.AimbotEnabled
 	end
 
-	if input.KeyCode == State.NoclipKey and not gameProcessed then
+	if input.KeyCode == State.NoclipKey then
 		State.Noclip = not State.Noclip
 	end
 
-	if input.KeyCode == State.ESPKey and not gameProcessed then
+	if input.KeyCode == State.FlyKey then
+		State.FlyEnabled = not State.FlyEnabled
+	end
+
+	if input.KeyCode == State.ESPKey then
 		State.ESPEnabled = not State.ESPEnabled
 		if not State.ESPEnabled then
 			for _, esp in pairs(ESPCache) do
@@ -1336,7 +1400,7 @@ Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gam
 	end
 
 	-- Salto Infinito en el Aire con Potencia Editable
-	if input.KeyCode == State.InfiniteJumpKey and State.InfiniteJump and not gameProcessed then
+	if input.KeyCode == State.InfiniteJumpKey and State.InfiniteJump then
 		local char = LocalPlayer and LocalPlayer.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -1346,8 +1410,8 @@ Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gam
 		end
 	end
 
-	-- Impulso Vertical (F)
-	if input.KeyCode == State.ForwardJumpKey and State.ForwardJump and not gameProcessed then
+	-- Impulso Vertical (Tecla X)
+	if input.KeyCode == State.ForwardJumpKey and State.ForwardJump then
 		local char = LocalPlayer and LocalPlayer.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
 		if hrp then
@@ -1355,8 +1419,8 @@ Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gam
 		end
 	end
 
-	-- Dash Horizontal (G)
-	if input.KeyCode == State.HorizontalJumpKey and State.HorizontalJump and not gameProcessed then
+	-- Dash Horizontal (Tecla G)
+	if input.KeyCode == State.HorizontalJumpKey and State.HorizontalJump then
 		local char = LocalPlayer and LocalPlayer.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -1368,6 +1432,9 @@ Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gam
 end)
 
 Connections.InputEnded = UserInputService.InputEnded:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
+		isCtrlHeld = false
+	end
 	if input.UserInputType == State.AimKey then
 		State.IsAiming = false
 	end
@@ -1376,4 +1443,4 @@ Connections.InputEnded = UserInputService.InputEnded:Connect(function(input)
 	end
 end)
 
-print("[JAILBREAK SUITE v5.5] Listo. Presiona Ctrl + " .. State.ToggleKey.Name .. " para abrir/cerrar.")
+print("[JAILBREAK SUITE v5.5] Listo. Presiona Ctrl + " .. State.ToggleKey.Name .. " (o RightShift) para abrir/cerrar.")
