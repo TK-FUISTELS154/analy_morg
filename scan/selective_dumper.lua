@@ -1158,7 +1158,11 @@ rebuildFlatTree()
 local isDumping = false
 
 local function runSelectiveDump(exportToDisk)
-    if isDumping then return end
+    if isDumping then
+        progressOverlay.Visible = true
+        treeStatusLabel.Text = "⏳ Volcado en segundo plano en curso... Monitor reabierto."
+        return
+    end
 
     local hasSelection = false
     for _, isSelected in pairs(selectedNodes) do if isSelected then hasSelection = true break end end

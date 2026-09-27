@@ -1717,9 +1717,26 @@ function DumperView:Render()
     modalHint.ZIndex = 252
     modalHint.Parent = progressCard
 
+    local isDumping = false
+    local activeDumpMode = nil
+    local activeDumpExport = nil
+    local currentDumpTracker = nil
+
+    local modalCancelBtn = Instance.new("TextButton")
+    modalCancelBtn.Size = UDim2.new(0, 100, 0, 26)
+    modalCancelBtn.Position = UDim2.new(1, -220, 1, -36)
+    modalCancelBtn.BackgroundColor3 = Color3.fromRGB(75, 30, 40)
+    modalCancelBtn.Text = "🛑 Cancelar"
+    modalCancelBtn.TextColor3 = Color3.fromRGB(255, 180, 180)
+    modalCancelBtn.Font = Enum.Font.GothamMedium
+    modalCancelBtn.TextSize = 10
+    modalCancelBtn.ZIndex = 252
+    modalCancelBtn.Parent = progressCard
+    Instance.new("UICorner", modalCancelBtn).CornerRadius = UDim.new(0, 4)
+
     local modalCloseBtn = Instance.new("TextButton")
-    modalCloseBtn.Size = UDim2.new(0, 120, 0, 26)
-    modalCloseBtn.Position = UDim2.new(1, -134, 1, -36)
+    modalCloseBtn.Size = UDim2.new(0, 100, 0, 26)
+    modalCloseBtn.Position = UDim2.new(1, -114, 1, -36)
     modalCloseBtn.BackgroundColor3 = Color3.fromRGB(40, 46, 62)
     modalCloseBtn.Text = "Ocultar"
     modalCloseBtn.TextColor3 = Color3.fromRGB(200, 215, 235)
@@ -1728,14 +1745,56 @@ function DumperView:Render()
     modalCloseBtn.ZIndex = 252
     modalCloseBtn.Parent = progressCard
     Instance.new("UICorner", modalCloseBtn).CornerRadius = UDim.new(0, 4)
+
     modalCloseBtn.MouseButton1Click:Connect(function()
         progressOverlay.Visible = false
+        if isDumping then
+            treeStatus.Text = string.format("⏳ Volcado en segundo plano (%s)... Haz clic en 'VOLCANDO...' para reabrir.", tostring(activeDumpExport or "dump"):upper())
+        end
     end)
+
+    modalCancelBtn.MouseButton1Click:Connect(function()
+        if isDumping and currentDumpTracker then
+            currentDumpTracker:Cancel()
+            modalCurrentItem.Text = "  🛑 Cancelando extracción..."
+            treeStatus.Text = "🛑 Cancelando volcado..."
+        end
+    end)
+
+    local function setButtonsDumpingState(dumping)
+        if dumping then
+            dumpJsonBtn.Text = "⏳ VOLCANDO..."
+            dumpMdBtn.Text = "⏳ VOLCANDO..."
+            dumpDiskBtn.Text = "⏳ VOLCANDO..."
+            dumpVfsBtn.Text = "⏳ VOLCANDO..."
+            dumpJsonBtn.BackgroundColor3 = Color3.fromRGB(35, 80, 110)
+            dumpMdBtn.BackgroundColor3 = Color3.fromRGB(30, 95, 75)
+            dumpDiskBtn.BackgroundColor3 = Color3.fromRGB(90, 45, 110)
+            dumpVfsBtn.BackgroundColor3 = Color3.fromRGB(25, 85, 60)
+        else
+            dumpJsonBtn.Text = "💾 EXPORTAR JSON"
+            dumpMdBtn.Text = "📝 EXPORTAR MARKDOWN"
+            dumpDiskBtn.Text = "📂 GUARDAR EN DISCO"
+            dumpVfsBtn.Text = "🗜️ VFS ARCHIVE"
+            dumpJsonBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
+            dumpMdBtn.BackgroundColor3 = Color3.fromRGB(0, 170, 130)
+            dumpDiskBtn.BackgroundColor3 = Color3.fromRGB(140, 65, 175)
+            dumpVfsBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 95)
+        end
+    end
 
     -- =========================================================================
     -- EJECUCIÓN DE VOLCADOS MULTIHILO (JSON, MARKDOWN, DISCO, VFS)
     -- =========================================================================
     local function executeDump(exportMode)
+        -- Si ya hay un volcado activo en curso, simplemente reabrimos la ventana de progreso
+        -- y EVITAMOS que se cree un segundo proceso o escaneo doble en paralelo.
+        if isDumping then
+            progressOverlay.Visible = true
+            treeStatus.Text = string.format("⏳ Volcado en progreso (%s)... Monitor de progreso reabierto.", tostring(activeDumpExport or exportMode):upper())
+            return
+        end
+
         local dumper = self.Registry:Get("SelectiveDumper")
         local exporter = self.Registry:Get("ReportExporter")
         local heuristic = self.Registry:Get("HeuristicEngine")
@@ -1743,10 +1802,12 @@ function DumperView:Render()
 
         if not dumper or not exporter then return end
 
-        dumpJsonBtn.Text = "⏳ VOLCANDO..."
-        dumpMdBtn.Text = "⏳ VOLCANDO..."
-        dumpDiskBtn.Text = "⏳ VOLCANDO..."
-        dumpVfsBtn.Text = "⏳ VOLCANDO..."
+        isDumping = true
+        activeDumpMode = self.CurrentMode
+        activeDumpExport = exportMode
+        currentDumpTracker = nil
+
+        setButtonsDumpingState(true)
         treeStatus.Text = "⏳ Procesando extracción multihilo en modo " .. self.CurrentMode .. "..."
 
         modalTitle.Text = "📦 EXTRACCIÓN Y VOLCADO: " .. self.CurrentMode
@@ -1763,7 +1824,10 @@ function DumperView:Render()
             local startTime = tick()
             local package = nil
 
-            local function onProgress(curr, total, name, stats)
+            local function onProgress(curr, total, name, stats, trackerRef)
+                if trackerRef then currentDumpTracker = trackerRef end
+                if currentDumpTracker and currentDumpTracker:IsCancelled() then return end
+
                 local elapsed = tick() - startTime
                 local speed = curr / math.max(elapsed, 0.001)
                 local eta = (total > curr and speed > 0) and ((total - curr) / speed) or 0
@@ -1786,27 +1850,46 @@ function DumperView:Render()
                 treeStatus.Text = string.format("⏳ [%s/%s] (%.0f%%) %s | ETA: ~%.1fs", formatComma(curr), formatComma(total), pct * 100, tostring(name or ""):sub(1, 20), eta)
             end
 
-            if self.CurrentMode == "RUNTIME_INTERACTIONS" then
-                package = dumper:DumpRuntimeInteractions(onProgress)
-            elseif self.CurrentMode == "HEURISTIC_FINDINGS" then
-                local audit = heuristic and heuristic:RunFullAudit(nil, onProgress)
-                package = dumper:DumpHeuristicFindings(audit, onProgress)
-            elseif self.CurrentMode == "DEPENDENCY_CHAIN" then
-                package = dumper:DumpDependencyChain(actionRecorder and actionRecorder.RecentAction, onProgress)
-            elseif self.CurrentMode == "FULL_ENVIRONMENT" then
-                package = dumper:DumpFullEnvironment(onProgress)
-            else
-                local queue = {}
-                for obj, isSel in pairs(self.SelectedNodes) do
-                    if isSel and typeof(obj) == "Instance" then table.insert(queue, obj) end
-                end
+            local ok, err = pcall(function()
+                if self.CurrentMode == "RUNTIME_INTERACTIONS" then
+                    package = dumper:DumpRuntimeInteractions(onProgress)
+                elseif self.CurrentMode == "HEURISTIC_FINDINGS" then
+                    local audit = heuristic and heuristic:RunFullAudit(nil, onProgress)
+                    package = dumper:DumpHeuristicFindings(audit, onProgress)
+                elseif self.CurrentMode == "DEPENDENCY_CHAIN" then
+                    package = dumper:DumpDependencyChain(actionRecorder and actionRecorder.RecentAction, onProgress)
+                elseif self.CurrentMode == "FULL_ENVIRONMENT" then
+                    package = dumper:DumpFullEnvironment(onProgress)
+                else
+                    local queue = {}
+                    for obj, isSel in pairs(self.SelectedNodes) do
+                        if isSel and typeof(obj) == "Instance" then table.insert(queue, obj) end
+                    end
 
-                if #queue == 0 then
-                    local rs = getgenv()._APEX_RESOLVER and getgenv()._APEX_RESOLVER.GetService("ReplicatedStorage") or game:GetService("ReplicatedStorage")
-                    local sp = getgenv()._APEX_RESOLVER and getgenv()._APEX_RESOLVER.GetService("StarterPlayer") or game:GetService("StarterPlayer")
-                    queue = { rs, sp }
+                    if #queue == 0 then
+                        local rs = getgenv()._APEX_RESOLVER and getgenv()._APEX_RESOLVER.GetService("ReplicatedStorage") or game:GetService("ReplicatedStorage")
+                        local sp = getgenv()._APEX_RESOLVER and getgenv()._APEX_RESOLVER.GetService("StarterPlayer") or game:GetService("StarterPlayer")
+                        queue = { rs, sp }
+                    end
+                    package = dumper:DumpManualNodes(queue, onProgress)
                 end
-                package = dumper:DumpManualNodes(queue, onProgress)
+            end)
+
+            if not ok or not package or (currentDumpTracker and currentDumpTracker:IsCancelled()) then
+                isDumping = false
+                currentDumpTracker = nil
+                setButtonsDumpingState(false)
+                
+                if currentDumpTracker and currentDumpTracker:IsCancelled() then
+                    treeStatus.Text = "🛑 Volcado cancelado por el usuario."
+                    modalCounter.Text = "🛑 Volcado cancelado"
+                else
+                    treeStatus.Text = "❌ Error en volcado: " .. tostring(err)
+                    modalCounter.Text = "❌ Error: " .. tostring(err)
+                end
+                task.wait(1.5)
+                progressOverlay.Visible = false
+                return
             end
 
             self.LastExtractedPackage = package
@@ -1866,10 +1949,9 @@ function DumperView:Render()
                 end
             end
 
-            dumpJsonBtn.Text = "💾 EXPORTAR JSON"
-            dumpMdBtn.Text = "📝 EXPORTAR MARKDOWN"
-            dumpDiskBtn.Text = "📂 GUARDAR EN DISCO"
-            dumpVfsBtn.Text = "🗜️ VFS ARCHIVE"
+            isDumping = false
+            currentDumpTracker = nil
+            setButtonsDumpingState(false)
 
             task.wait(1.5)
             progressOverlay.Visible = false

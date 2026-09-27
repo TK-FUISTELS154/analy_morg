@@ -151,9 +151,19 @@ local function createProgressTracker(totalExpected, onProgress)
         onProgress = onProgress,
         lastReport = 0,
         lastYield = tick(),
+        isCancelled = false,
     }
     
+    function tracker:Cancel()
+        self.isCancelled = true
+    end
+    
+    function tracker:IsCancelled()
+        return self.isCancelled == true
+    end
+    
     function tracker:Step(instance, isScript, isRemote, action)
+        if self.isCancelled then return false end
         self.completed = self.completed + 1
         if isScript then
             self.scripts = self.scripts + 1
@@ -174,23 +184,24 @@ local function createProgressTracker(totalExpected, onProgress)
                 folders = self.folders,
                 currentPath = fullPath,
                 action = action or (isScript and "Decompilando" or (isRemote and "Mapeando Remote" or "Extrayendo")),
-            })
+            }, self)
         end
         
         if now - self.lastYield >= 0.012 then
             task.wait()
             self.lastYield = tick()
         end
+        return true
     end
     
     function tracker:Finish(summaryName)
-        if self.onProgress then
+        if self.onProgress and not self.isCancelled then
             pcall(self.onProgress, self.total, self.total, summaryName or "Completado", {
                 scripts = self.scripts,
                 remotes = self.remotes,
                 folders = self.folders,
                 action = "Finalizado",
-            })
+            }, self)
         end
     end
     
@@ -198,6 +209,7 @@ local function createProgressTracker(totalExpected, onProgress)
 end
 
 function SelectiveDumper:DumpInstance(instance, scriptsOnly, depthLimit, currentDepth, tracker)
+    if tracker and tracker:IsCancelled() then return nil end
     currentDepth = currentDepth or 0
     if depthLimit and currentDepth > depthLimit then return nil end
     if self:IsPrunedBranch(instance) then return nil end
@@ -271,10 +283,13 @@ function SelectiveDumper:DumpInstance(instance, scriptsOnly, depthLimit, current
         end
     end
     
+    if tracker and tracker:IsCancelled() then return nil end
+    
     -- 5. Hijos recursivos con poda
     local s, children = pcall(function() return instance:GetChildren() end)
     if s and children then
         for _, child in ipairs(children) do
+            if tracker and tracker:IsCancelled() then break end
             if not self:IsPrunedBranch(child) then
                 local childDump = self:DumpInstance(child, scriptsOnly, depthLimit, currentDepth + 1, tracker)
                 if childDump then
@@ -288,6 +303,107 @@ function SelectiveDumper:DumpInstance(instance, scriptsOnly, depthLimit, current
     end
     
     return dump
+end
+
+-- =========================================================================
+-- MOTOR DE DISTRIBUCIÓN MULTIHILO POR COLA DE TRABAJO (8 WORKERS)
+-- =========================================================================
+function SelectiveDumper:DumpSubtreesParallel(containerList, scriptsOnly, depthLimit, tracker, maxWorkers)
+    local maxThreads = maxWorkers or 8
+    local taskQueue = {}
+    local containerResults = {}
+    
+    for idx, item in ipairs(containerList) do
+        local instance = item.Instance or item
+        if typeof(instance) == "Instance" and not self:IsPrunedBranch(instance) then
+            local isScript = instance:IsA("LuaSourceContainer")
+            local isRemote = instance:IsA("RemoteEvent") or instance:IsA("RemoteFunction") or instance:IsA("UnreliableRemoteEvent")
+            
+            local cDump = {
+                Name = instance.Name,
+                ClassName = instance.ClassName,
+                Path = instance:GetFullName(),
+                Tags = {},
+                Attributes = {},
+                Properties = {},
+                Children = {},
+                Source = nil,
+                BytecodeSize = 0,
+                _originalIndex = idx,
+                _meta = item.Meta or nil,
+            }
+            
+            pcall(function()
+                local tags = game:GetService("CollectionService"):GetTags(instance)
+                if tags and #tags > 0 then cDump.Tags = tags end
+            end)
+            local sAttr, attrs = pcall(function() return instance:GetAttributes() end)
+            if sAttr and attrs and next(attrs) then cDump.Attributes = attrs end
+            
+            if isScript then
+                if tracker then tracker:Step(instance, true, false, "Decompilando Script") end
+                local src = self:SafeDecompile(instance)
+                cDump.Source = src
+                if src then cDump.BytecodeSize = #src end
+            else
+                if tracker then tracker:Step(instance, false, isRemote, isRemote and "Mapeando Remote" or "Extrayendo Contenedor") end
+            end
+            
+            table.insert(containerResults, cDump)
+            
+            local s, children = pcall(function() return instance:GetChildren() end)
+            if s and children and #children > 0 then
+                for _, child in ipairs(children) do
+                    if not self:IsPrunedBranch(child) then
+                        table.insert(taskQueue, {
+                            targetChildren = cDump.Children,
+                            childInstance = child,
+                            scriptsOnly = scriptsOnly,
+                            depthLimit = depthLimit or 8,
+                        })
+                    end
+                end
+            end
+        end
+    end
+    
+    if #taskQueue > 0 then
+        local numWorkers = math.clamp(math.min(#taskQueue, maxThreads), 1, maxThreads)
+        local activeWorkers = numWorkers
+        local nextQueueIdx = 1
+        
+        for wId = 1, numWorkers do
+            task.spawn(function()
+                while not (tracker and tracker:IsCancelled()) do
+                    local curTask = nil
+                    if nextQueueIdx <= #taskQueue then
+                        curTask = taskQueue[nextQueueIdx]
+                        nextQueueIdx = nextQueueIdx + 1
+                    else
+                        break
+                    end
+                    
+                    if curTask then
+                        local s, cResult = pcall(function()
+                            return self:DumpInstance(curTask.childInstance, curTask.scriptsOnly, curTask.depthLimit, 1, tracker)
+                        end)
+                        if s and cResult then
+                            if not curTask.scriptsOnly or cResult.Source or #cResult.Children > 0 then
+                                table.insert(curTask.targetChildren, cResult)
+                            end
+                        end
+                    end
+                end
+                activeWorkers = activeWorkers - 1
+            end)
+        end
+        
+        while activeWorkers > 0 and not (tracker and tracker:IsCancelled()) do
+            task.wait()
+        end
+    end
+    
+    return containerResults
 end
 
 -- =========================================================================
@@ -312,7 +428,6 @@ function SelectiveDumper:DumpHeuristicFindings(auditResults, onProgress)
         if not finding then return end
         local inst = finding.Instance
         
-        -- Si no hay Instance directa pero hay Path, intentar resolver objeto
         if not inst and finding.Path then
             pcall(function()
                 local parts = string.split(finding.Path, ".")
@@ -389,17 +504,24 @@ function SelectiveDumper:DumpHeuristicFindings(auditResults, onProgress)
     local totalWork = self:CalculateTotalWork(targetFolders, true, 4)
     local tracker = createProgressTracker(totalWork, onProgress)
     
+    local containerItems = {}
     for _, parentFolder in ipairs(targetFolders) do
-        local containerDump = self:DumpInstance(parentFolder, true, 4, 0, tracker)
-        if containerDump then
-            local meta = folderMeta[parentFolder] or {}
-            table.insert(dumpPackage.Containers, {
-                FindingCategory = meta.FindingCategory or {"Detected"},
-                Score = meta.Score or 0,
-                Path = meta.Path or parentFolder:GetFullName(),
-                Data = containerDump,
-            })
-        end
+        table.insert(containerItems, {
+            Instance = parentFolder,
+            Meta = folderMeta[parentFolder],
+        })
+    end
+    
+    local containerDumps = self:DumpSubtreesParallel(containerItems, true, 4, tracker, 8)
+    
+    for _, cDump in ipairs(containerDumps) do
+        local meta = cDump._meta or {}
+        table.insert(dumpPackage.Containers, {
+            FindingCategory = meta.FindingCategory or {"Detected"},
+            Score = meta.Score or 0,
+            Path = meta.Path or cDump.Path,
+            Data = cDump,
+        })
     end
     
     tracker:Finish("Hallazgos Heurísticos Extraídos")
@@ -455,6 +577,7 @@ function SelectiveDumper:DumpDependencyChain(actionEntry, onProgress)
     end
     
     for _, obj in ipairs(intermediateObjs) do
+        if tracker:IsCancelled() then break end
         tracker:Step(obj, true, false, "Decompilando Script Intermedio")
         table.insert(dumpPackage.IntermediateScripts, {
             Path = obj:GetFullName(),
@@ -464,6 +587,7 @@ function SelectiveDumper:DumpDependencyChain(actionEntry, onProgress)
     end
     
     for _, rem in ipairs(correlatedRemotes) do
+        if tracker:IsCancelled() then break end
         tracker:Step(nil, false, true, "Mapeando Remote Vinculado")
         table.insert(dumpPackage.RelatedRemotes, {
             Path = rem.Path,
@@ -485,7 +609,7 @@ function SelectiveDumper:DumpDependencyChain(actionEntry, onProgress)
     return dumpPackage
 end
 
--- MODO 3: Extracción manual de lista de nodos (Multihilo Concurrente con Conteo Exacto de Descendientes)
+-- MODO 3: Extracción manual de lista de nodos (Multihilo Concurrente con Cola Balanceada 8 Workers)
 function SelectiveDumper:DumpManualNodes(nodeList, onProgress)
     local results = {
         Mode = SelectiveDumper.DumpModes.MANUAL_TREE,
@@ -504,62 +628,31 @@ function SelectiveDumper:DumpManualNodes(nodeList, onProgress)
     local totalWork, totalSc, totalRm = self:CalculateTotalWork(list, false, 8)
     local tracker = createProgressTracker(totalWork, onProgress)
     
-    -- Inicializar slots preservando el orden
-    local rawResults = table.create(total)
-    local nextIndex = 1
-    local numWorkers = math.clamp(math.min(total, 8), 1, 8)
-    local activeWorkers = numWorkers
-    
-    for workerId = 1, numWorkers do
-        task.spawn(function()
-            while true do
-                local currentIdx = nil
-                -- Asignación atómica de tarea
-                if nextIndex <= total then
-                    currentIdx = nextIndex
-                    nextIndex = nextIndex + 1
-                else
-                    break
-                end
-                
-                local node = list[currentIdx]
-                if node then
-                    local s, d = pcall(function()
-                        return self:DumpInstance(node, false, 8, 0, tracker)
-                    end)
-                    if s and d then
-                        rawResults[currentIdx] = d
-                    end
-                end
-            end
-            activeWorkers = activeWorkers - 1
-        end)
+    local containerItems = {}
+    for _, node in ipairs(list) do
+        table.insert(containerItems, { Instance = node })
     end
     
-    -- Esperar a que todos los workers completen
-    while activeWorkers > 0 do
-        task.wait()
+    local nodeDumps = self:DumpSubtreesParallel(containerItems, false, 8, tracker, 8)
+    
+    for _, d in ipairs(nodeDumps) do
+        table.insert(results.Nodes, d)
     end
     
     tracker:Finish("Volcado Manual Finalizado")
-    
-    for _, d in ipairs(rawResults) do
-        if d then table.insert(results.Nodes, d) end
-    end
-    
     results.TotalExtracted = tracker.completed
     results.TotalScripts = tracker.scripts
     results.TotalRemotes = tracker.remotes
     
     if self.Logger then
-        self.Logger:Info("DUMPER", string.format("Volcado Manual completado: %d elementos (%d scripts, %d remotes) procesados con %d hilos.",
-            tracker.completed, tracker.scripts, tracker.remotes, numWorkers))
+        self.Logger:Info("DUMPER", string.format("Volcado Manual completado: %d elementos (%d scripts, %d remotes) procesados con 8 hilos balanceados.",
+            tracker.completed, tracker.scripts, tracker.remotes))
     end
     
     return results
 end
 
--- MODO 4: Extracción total del entorno de scripts del juego (Multihilo Concurrente y Podado)
+-- MODO 4: Extracción total del entorno de scripts del juego (Multihilo Concurrente con 8 Workers Distribuidos)
 function SelectiveDumper:DumpFullEnvironment(onProgress)
     local resolveSrv = function(name)
         if getgenv()._APEX_RESOLVER then
@@ -591,11 +684,11 @@ function SelectiveDumper:DumpFullEnvironment(onProgress)
     }
     
     -- Filtrar servicios disponibles
-    local validServices = {}
+    local srvItems = {}
     local srvInstances = {}
     for _, item in ipairs(targetServices) do
         if item.Service then
-            table.insert(validServices, item)
+            table.insert(srvItems, { Instance = item.Service, Meta = { Name = item.Name } })
             table.insert(srvInstances, item.Service)
         end
     end
@@ -614,56 +707,19 @@ function SelectiveDumper:DumpFullEnvironment(onProgress)
     local totalWork, totalSc, totalRm = self:CalculateTotalWork(srvInstances, true, 10)
     local tracker = createProgressTracker(totalWork, onProgress)
     
-    local totalServices = #validServices
-    local rawServiceResults = table.create(totalServices)
-    local nextServiceIdx = 1
-    local numWorkers = math.clamp(math.min(totalServices, 6), 1, 6)
-    local activeWorkers = numWorkers
+    local srvDumps = self:DumpSubtreesParallel(srvItems, true, 10, tracker, 8)
     
-    for workerId = 1, numWorkers do
-        task.spawn(function()
-            while true do
-                local currentIdx = nil
-                if nextServiceIdx <= totalServices then
-                    currentIdx = nextServiceIdx
-                    nextServiceIdx = nextServiceIdx + 1
-                else
-                    break
-                end
-                
-                local srvEntry = validServices[currentIdx]
-                if srvEntry and srvEntry.Service then
-                    local s, srvDump = pcall(function()
-                        return self:DumpInstance(srvEntry.Service, true, 10, 0, tracker)
-                    end)
-                    
-                    if s and srvDump then
-                        rawServiceResults[currentIdx] = srvDump
-                    end
-                end
-            end
-            activeWorkers = activeWorkers - 1
-        end)
-    end
-    
-    while activeWorkers > 0 do
-        task.wait()
+    for _, srvDump in ipairs(srvDumps) do
+        table.insert(dumpPackage.Services, srvDump)
     end
     
     tracker:Finish("Volcado Total Finalizado")
-    
-    for _, srvDump in ipairs(rawServiceResults) do
-        if srvDump then
-            table.insert(dumpPackage.Services, srvDump)
-        end
-    end
-    
     dumpPackage.TotalExtracted = tracker.completed
     dumpPackage.TotalScriptsDumped = tracker.scripts
     dumpPackage.TotalRemotesDumped = tracker.remotes
     
     if self.Logger then
-        self.Logger:Info("DUMPER", string.format("Volcado Total Multihilo completado: %d scripts y %d remotes extraídos de %d servicios.",
+        self.Logger:Info("DUMPER", string.format("Volcado Total Multihilo completado: %d scripts y %d remotes extraídos de %d servicios con 8 hilos.",
             dumpPackage.TotalScriptsDumped, dumpPackage.TotalRemotesDumped, #dumpPackage.Services))
     end
     
@@ -764,6 +820,7 @@ function SelectiveDumper:DumpRuntimeInteractions(onProgress)
     local tracker = createProgressTracker(totalWork, onProgress)
     
     for _, item in ipairs(timelineScripts) do
+        if tracker:IsCancelled() then break end
         tracker:Step(item.ctrl.Instance, true, false, "Decompilando Script de Acción")
         local code = self:SafeDecompile(item.ctrl.Instance)
         table.insert(dumpPackage.ExtractedScripts, {
@@ -776,6 +833,7 @@ function SelectiveDumper:DumpRuntimeInteractions(onProgress)
     end
     
     for _, rem in ipairs(timelineRemotes) do
+        if tracker:IsCancelled() then break end
         tracker:Step(nil, false, true, "Mapeando Remote de Acción")
         table.insert(dumpPackage.CorrelatedRemotes, {
             Name = rem.Name,
@@ -788,16 +846,19 @@ function SelectiveDumper:DumpRuntimeInteractions(onProgress)
         })
     end
     
+    local containerItems = {}
     for _, parentFolder in ipairs(targetFolders) do
-        local containerDump = self:DumpInstance(parentFolder, true, 4, 0, tracker)
-        if containerDump then
-            table.insert(dumpPackage.ExtractedContainers, {
-                Tags = { "LiveInteraction" },
-                Score = 100,
-                Path = parentFolder:GetFullName(),
-                Data = containerDump,
-            })
-        end
+        table.insert(containerItems, { Instance = parentFolder })
+    end
+    
+    local containerDumps = self:DumpSubtreesParallel(containerItems, true, 4, tracker, 8)
+    for _, containerDump in ipairs(containerDumps) do
+        table.insert(dumpPackage.ExtractedContainers, {
+            Tags = { "LiveInteraction" },
+            Score = 100,
+            Path = containerDump.Path,
+            Data = containerDump,
+        })
     end
     
     tracker:Finish("Interacciones en Vivo Extraídas")
