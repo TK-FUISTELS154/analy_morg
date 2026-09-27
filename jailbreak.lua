@@ -1,50 +1,38 @@
 --[[
 	=============================================================================
-	JAILBREAK ULTIMATE COMBAT & ADMIN SUITE PRO (MATERIAL DESIGN 3)
+	JAILBREAK ULTIMATE COMBAT, ROBBERY & ADMIN SUITE PRO v5.0
 	=============================================================================
 	Desarrollado con Arquitectura Apex Suite v5.0 y Resolución Anti-Ofuscación.
-	Especialmente adaptado para Jailbreak y juegos de combate / mundo abierto.
+	Especialmente adaptado para Jailbreak (Badimo) con bypass de detección.
 
-	Módulos y Funcionalidades Integradas:
-	1. 🏃 Movimiento & Físicas:
-	   - WalkSpeed y JumpPower configurables con preservación dinámica de velocidad.
+	Módulos Principales:
+	1. 🏃 Movimiento & Físicas Seguras:
+	   - Speed Bypass (CFrame Delta / Physics Engine sin disparar anti-cheat de WalkSpeed).
+	   - Preservación de velocidad al conducir o montar vehículos.
 	   - Salto Infinito en el Aire (ESPACIO).
-	   - Salto de Desplazamiento Vertical de Impulso (Tecla F).
-	   - Salto de Desplazamiento Horizontal / Dash (Tecla G).
-	   - Physics Speed Engine (Aceleración por vectores AssemblyLinearVelocity sin rubberbanding).
-	   - Noclip Inteligente y Fly Mode con control direccional 3D.
-	   - Control de Gravedad personalizable.
-	2. 🖱️ Herramientas de Clic & Ratón:
-	   - Auto Clicker con CPS ajustable y Modo Hold Click continuo.
-	   - Click-to-Teleport con raycast de impacto.
-	   - Click-to-Select para inspección inmediata de jugadores u objetos.
-	3. ⌨️ Macro Combate & Acciones:
-	   - Grabador y reproductor de combinaciones de teclas y clics.
-	   - Control de velocidad de reproducción (0.5x a 3.0x) y recorte de silencio inicial.
-	4. 🎯 Auto-Apuntado (Aimbot) & Spy Radar:
-	   - Aimbot Universal (Círculo FOV dinámico, Raycast WallCheck de coberturas, suavizado, offsets).
-	   - Prioridad de objetivo: Cabeza (Head), Torso (UpperTorso), o el más Cercano (Closest).
-	   - Marcador Spy ESP sincronizado: Verde (Visible), Rojo (Tras Cobertura), Dorado (Fijado/Lock-On).
-	5. 👁️ Visuales & Radar ESP:
-	   - Player ESP / NameTags con distancia, barra de vida y bando/equipo.
-	   - Hitbox Highlights y Modo Espectador (Spectate).
-	6. ⚔️ Combate & Dev Tools:
-	   - Camera Lock-On hacia enemigos dentro del radio FOV.
-	   - Modificador de FOV de Cámara (60° a 120°).
-	   - Admin Heal y Hitbox Inspector.
-	7. ☀️ Iluminación & Clima:
-	   - Modos Día, Noche, Atardecer y Fullbright (Sin sombras).
-	8. 📍 Waypoints & Robos de Jailbreak:
-	   - Banco (Bank), Joyería (Jewelry), Museo (Museum), Casino, Planta de Energía (Power Plant).
-	   - Mansión del CEO (Mansion Boss), Tumba (Tomb), Avión de Carga (Cargo Plane).
-	   - Base Criminal Volcán, Base Criminal Ciudad, Cuartel de Policía y Prisión.
-	   - Tiendas de Armas, Garajes y Teleport a Coordenadas XYZ o Jugadores.
-	9. 👥 Equipos & Filtrado Táctico:
-	   - Detección dinámica de Policías (Police), Criminales (Criminals) y Prisioneros (Prisoners).
-	   - Toggles para excluir aliados o equipos enteros del Aimbot y del ESP.
-	10. ⚙️ Ajustes & Seguridad:
-	    - Atajos de teclado completos (Ctrl + Key o teclas directas).
-	    - Patrón Singleton anti-duplicados y botón de Finalización Limpia (Kill Process).
+	   - Impulso Vertical (Tecla F) y Dash Horizontal (Tecla G).
+	   - Noclip Seguro y Modo Vuelo 3D (Fly).
+	2. 🎯 Auto-Apuntado Universal (Aimbot) & Spy Radar:
+	   - Círculo FOV dinámico con Suavizado Humano (evita detección de snap 1-frame).
+	   - Raycast WallCheck de coberturas y estructuras.
+	   - Prioridad: Cabeza, Torso o Jugador más Cercano.
+	   - Sincronización de color con el Marcador Spy: Verde (Visible), Rojo (Oculto), Dorado (Apuntado).
+	3. 👁️ Visuales & Radar ESP:
+	   - Player ESP / NameTags con barra de vida, bando y distancia en metros.
+	   - Highlights de silueta y Modo Espectador (Spectate).
+	4. 📍 Robos & Waypoints de Jailbreak:
+	   - Teleport a Bóvedas, Techos y Salidas de: Banco, Joyería, Museo, Casino, Planta de Energía,
+	     Mansión del CEO, Tumba, Aeropuerto, Bases Criminales, Cuarteles de Policía y Prisión.
+	5. 👥 Bandos & Equipos:
+	   - Detección en vivo de Policías, Criminales y Prisioneros.
+	   - Toggles para excluir bandos específicos del Aimbot y del Radar ESP.
+	6. ☀️ Iluminación & Clima:
+	   - Fullbright sin sombras y control de hora del día.
+	7. ⚙️ Ajustes & Configuración Persistente (JSON):
+	   - Guardado y carga automática de TODAS las configuraciones y atajos en 'jailbreak_config.json'.
+	   - Sistema completo de Reasignación de Teclas (Keybinds) interactivo en tiempo real.
+	   - Selectores de color para radar y FOV.
+	   - Botón de Finalización Total Limpia (Kill Process).
 --]]
 
 -- =============================================================================
@@ -69,6 +57,7 @@ local function resolveService(className)
 	return nil
 end
 
+local HttpService = resolveService("HttpService")
 local Players = resolveService("Players")
 local Workspace = resolveService("Workspace") or workspace
 local UserInputService = resolveService("UserInputService")
@@ -77,8 +66,6 @@ local Lighting = resolveService("Lighting")
 local Teams = resolveService("Teams")
 local TweenService = resolveService("TweenService")
 local Stats = resolveService("Stats")
-local VirtualUser = resolveService("VirtualUser")
-local VirtualInputManager = resolveService("VirtualInputManager")
 
 local LocalPlayer = Players and (Players.LocalPlayer or Players:FindFirstChildOfClass("Player"))
 local Camera = Workspace.CurrentCamera or Workspace:FindFirstChildOfClass("Camera")
@@ -93,7 +80,7 @@ if _G.JailbreakAdminSuiteInstance then
 	_G.JailbreakAdminSuiteInstance = nil
 end
 
--- Contenedor Seguro para la GUI
+-- Contenedor Seguro
 local function getSecureGuiParent()
 	local parent = nil
 	if typeof(gethui) == "function" then
@@ -103,9 +90,7 @@ local function getSecureGuiParent()
 		local cg = resolveService("CoreGui")
 		if cg then pcall(function() parent = cloneref(cg) end) end
 	end
-	if not parent then
-		parent = resolveService("CoreGui")
-	end
+	if not parent then parent = resolveService("CoreGui") end
 	if not parent and LocalPlayer then
 		parent = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 3)
 	end
@@ -113,52 +98,27 @@ local function getSecureGuiParent()
 end
 
 -- =============================================================================
--- ESTADO GLOBAL Y CONFIGURACIÓN
+-- ESTADO Y CONFIGURACIÓN PERSISTENTE
 -- =============================================================================
+local CONFIG_FILE = "jailbreak_config.json"
+
 local State = {
-	-- Movimiento
-	WalkSpeed = 32,
-	DefaultSpeed = 16,
-	JumpPower = 60,
-	DefaultJump = 50,
-	Gravity = 196.2,
-	DefaultGravity = 196.2,
-	FOV = 70,
-	DefaultFOV = 70,
-
-	-- Saltos & Desplazamiento
-	InfiniteJump = false,
-	SpaceJumpKey = Enum.KeyCode.Space,
-	InfiniteJumpKey = Enum.KeyCode.J,
-
-	ForwardJump = false,
-	JumpKey = Enum.KeyCode.F,
-	ForwardJumpDistance = 80,
-	ForwardJumpPower = 65,
-
-	HorizontalJump = false,
-	HorizontalJumpKey = Enum.KeyCode.G,
-	HorizontalJumpPower = 120,
-
-	-- Physics Speed Engine
-	PhysicsSpeedEnabled = false,
-	PhysicsSpeedValue = 65,
-	PhysicsSpeedSprintOnly = false,
+	-- Movimiento & Físicas
+	SpeedEngineEnabled = false,
+	SpeedValue = 55,
+	SprintOnly = false,
 	IsSprinting = false,
-
+	WalkSpeed = 16,
+	JumpPower = 50,
+	InfiniteJump = false,
+	ForwardJump = false,
+	ForwardJumpPower = 65,
+	HorizontalJump = false,
+	HorizontalJumpPower = 110,
 	Noclip = false,
 	FlyEnabled = false,
-	FlySpeed = 55,
-
-	-- Clic & Mouse
-	AutoClickEnabled = false,
-	HoldClickMode = false,
-	AutoClickOnlyWhileHolding = false,
-	AutoClickCPS = 12,
-	LastClickTime = 0,
-	ClickTeleport = false,
-	ClickSelect = false,
-	AutoActivateTool = false,
+	FlySpeed = 50,
+	Gravity = 196.2,
 
 	-- Auto-Apuntado (Aimbot)
 	AimbotEnabled = false,
@@ -167,68 +127,120 @@ local State = {
 	FOV_Radius = 220,
 	ShowFOV = false,
 	TargetPart = "Head", -- "Head", "UpperTorso", "Closest"
-	AimSpeed = 0.8,
+	AimSpeed = 0.75,
 	WallCheck = true,
-	OffsetX = 0,
-	OffsetY = -28,
-
-	-- Equipos & Filtrado
 	TeamCheck = true,
 	TargetFFA = false,
-	TargetedTeams = {},
-	IgnoredAimTeams = {},
-	IgnoredESPTeams = {},
-	CurrentLockedTargetPlayer = nil,
+	OffsetX = 0,
+	OffsetY = -20,
 
-	-- Colores Marcador Spy ESP
+	-- Visuales & ESP
+	ESPEnabled = false,
+	SpectateEnabled = false,
+	Fullbright = false,
+	LockOnEnabled = false,
+	SelectedPlayer = nil,
+
+	-- Colores Marcador Spy
 	ColorLockOnTarget = Color3.fromRGB(255, 215, 0),
 	ColorVisible = Color3.fromRGB(50, 255, 100),
 	ColorHidden = Color3.fromRGB(255, 50, 50),
 	ColorAlly = Color3.fromRGB(50, 150, 255),
 	ColorFOV = Color3.fromRGB(255, 255, 255),
 
-	-- Macro Combate
-	IsRecordingMacro = false,
-	IsPlayingMacro = false,
-	MacroLoop = false,
-	MacroPlaybackSpeed = 1.0,
-	MacroData = {},
-	RecordStartTime = 0,
-	FirstInputTime = nil,
-	MacroTrimDelay = true,
+	-- Equipos Ignorados
+	IgnoredAimTeams = {},
+	IgnoredESPTeams = {},
 
-	-- Visuales & Dev
-	ESPEnabled = false,
-	SpectateEnabled = false,
-	Fullbright = false,
-	LockOnEnabled = false,
-	HitboxInspector = false,
-
-	-- Atajos de Teclado
+	-- Atajos de Teclado (Keybinds)
 	ToggleKey = Enum.KeyCode.RightControl,
-	RecordKey = Enum.KeyCode.X,
-	PlayKey = Enum.KeyCode.M,
-	AutoClickKey = Enum.KeyCode.C,
-	AimbotToggleKey = Enum.KeyCode.A,
+	AimbotToggleKey = Enum.KeyCode.E,
+	InfiniteJumpKey = Enum.KeyCode.Space,
+	ForwardJumpKey = Enum.KeyCode.F,
+	HorizontalJumpKey = Enum.KeyCode.G,
 	NoclipKey = Enum.KeyCode.N,
 	FlyKey = Enum.KeyCode.V,
-	ESPKey = Enum.KeyCode.E,
-	LockOnKey = Enum.KeyCode.L,
+	ESPKey = Enum.KeyCode.H,
 	FullbrightKey = Enum.KeyCode.B,
-	ClickTPKey = Enum.KeyCode.T,
-	HealKey = Enum.KeyCode.H,
-	SpeedKey = Enum.KeyCode.LeftShift,
-
-	-- Selección
-	SelectedPlayer = nil,
-	CurrentTarget = nil
+	SprintKey = Enum.KeyCode.LeftShift,
 }
+
+local function saveConfig()
+	if typeof(writefile) ~= "function" or not HttpService then return end
+	pcall(function()
+		local data = {
+			SpeedEngineEnabled = State.SpeedEngineEnabled,
+			SpeedValue = State.SpeedValue,
+			SprintOnly = State.SprintOnly,
+			WalkSpeed = State.WalkSpeed,
+			JumpPower = State.JumpPower,
+			InfiniteJump = State.InfiniteJump,
+			ForwardJump = State.ForwardJump,
+			ForwardJumpPower = State.ForwardJumpPower,
+			HorizontalJump = State.HorizontalJump,
+			HorizontalJumpPower = State.HorizontalJumpPower,
+			Noclip = State.Noclip,
+			FlyEnabled = State.FlyEnabled,
+			FlySpeed = State.FlySpeed,
+
+			AimbotEnabled = State.AimbotEnabled,
+			FOV_Radius = State.FOV_Radius,
+			ShowFOV = State.ShowFOV,
+			TargetPart = State.TargetPart,
+			AimSpeed = State.AimSpeed,
+			WallCheck = State.WallCheck,
+			TeamCheck = State.TeamCheck,
+			TargetFFA = State.TargetFFA,
+			OffsetX = State.OffsetX,
+			OffsetY = State.OffsetY,
+
+			ESPEnabled = State.ESPEnabled,
+			Fullbright = State.Fullbright,
+			LockOnEnabled = State.LockOnEnabled,
+
+			IgnoredAimTeams = State.IgnoredAimTeams,
+			IgnoredESPTeams = State.IgnoredESPTeams,
+
+			-- Serialización de Atajos
+			ToggleKey = State.ToggleKey.Name,
+			AimbotToggleKey = State.AimbotToggleKey.Name,
+			InfiniteJumpKey = State.InfiniteJumpKey.Name,
+			ForwardJumpKey = State.ForwardJumpKey.Name,
+			HorizontalJumpKey = State.HorizontalJumpKey.Name,
+			NoclipKey = State.NoclipKey.Name,
+			FlyKey = State.FlyKey.Name,
+			ESPKey = State.ESPKey.Name,
+			FullbrightKey = State.FullbrightKey.Name,
+		}
+		writefile(CONFIG_FILE, HttpService:JSONEncode(data))
+	end)
+end
+
+local function loadConfig()
+	if typeof(readfile) ~= "function" or typeof(isfile) ~= "function" or not HttpService then return end
+	pcall(function()
+		if isfile(CONFIG_FILE) then
+			local content = readfile(CONFIG_FILE)
+			local data = HttpService:JSONDecode(content)
+			if type(data) == "table" then
+				for k, v in pairs(data) do
+					if k:find("Key") and type(v) == "string" and Enum.KeyCode[v] then
+						State[k] = Enum.KeyCode[v]
+					elseif State[k] ~= nil and type(State[k]) == type(v) then
+						State[k] = v
+					end
+				end
+			end
+		end
+	end)
+end
+
+loadConfig()
 
 local Connections = {}
 local ESPCache = {}
-local HighlightInstance = nil
 
--- Waypoints Especiales de Jailbreak
+-- Ubicaciones y Robos de Jailbreak
 local JAILBREAK_LOCATIONS = {
 	{ Name = "🏦 Banco (Bóveda Principal)", Pos = Vector3.new(10, 18, 785) },
 	{ Name = "🏦 Banco (Exterior)", Pos = Vector3.new(20, 18, 850) },
@@ -236,7 +248,7 @@ local JAILBREAK_LOCATIONS = {
 	{ Name = "💎 Joyería (Entrada)", Pos = Vector3.new(105, 18, 1310) },
 	{ Name = "🏛️ Museo (Techo)", Pos = Vector3.new(1075, 140, 1245) },
 	{ Name = "🏛️ Museo (Entrada Frontal)", Pos = Vector3.new(1065, 102, 1200) },
-	{ Name = "🎰 Casino (Seguridad)", Pos = Vector3.new(-180, 22, -4710) },
+	{ Name = "🎰 Casino (Bóveda / Seguridad)", Pos = Vector3.new(-180, 22, -4710) },
 	{ Name = "🎰 Casino (Entrada)", Pos = Vector3.new(-190, 22, -4640) },
 	{ Name = "⚡ Planta de Energía (Núcleo)", Pos = Vector3.new(60, 40, 2330) },
 	{ Name = "⚡ Planta de Energía (Salida)", Pos = Vector3.new(80, 38, 2390) },
@@ -251,7 +263,7 @@ local JAILBREAK_LOCATIONS = {
 	{ Name = "🔧 Garaje Principal (Ciudad)", Pos = Vector3.new(-340, 18, 1200) },
 }
 
--- Paleta Material Design 3 (Dark Theme)
+-- Paleta Material Design 3
 local PALETTE = {
 	Background = Color3.fromRGB(15, 18, 26),
 	Surface = Color3.fromRGB(24, 28, 40),
@@ -267,16 +279,8 @@ local PALETTE = {
 	Stroke = Color3.fromRGB(50, 60, 85)
 }
 
-local function isCtrlPressed()
-	if not UserInputService then return false end
-	local s, res = pcall(function()
-		return UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
-	end)
-	return s and res or false
-end
-
 -- =============================================================================
--- INTERFAZ GRÁFICA PRINCIPAL
+-- INTERFAZ GRÁFICA PRINCIPAL (GUI)
 -- =============================================================================
 local secureParent = getSecureGuiParent()
 local screenGui = Instance.new("ScreenGui")
@@ -323,8 +327,8 @@ ESPFolder.Parent = screenGui
 -- Ventana Principal
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 680, 0, 510)
-mainFrame.Position = UDim2.new(0.5, -340, 0.5, -255)
+mainFrame.Size = UDim2.new(0, 660, 0, 490)
+mainFrame.Position = UDim2.new(0.5, -330, 0.5, -245)
 mainFrame.BackgroundColor3 = PALETTE.Background
 mainFrame.Active = true
 mainFrame.Draggable = true
@@ -349,7 +353,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 16, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "⚡ JAILBREAK ULTIMATE COMBAT & ADMIN SUITE PRO"
+title.Text = "⚡ JAILBREAK COMBAT & ROBBERY SUITE PRO"
 title.TextColor3 = PALETTE.Text
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -367,12 +371,12 @@ closeBtn.TextSize = 13
 closeBtn.Parent = header
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
 
--- Barra Inferior de Telemetría
+-- Telemetría Inferior
 local telemetryBar = Instance.new("TextLabel")
 telemetryBar.Size = UDim2.new(1, -24, 0, 22)
 telemetryBar.Position = UDim2.new(0, 12, 1, -26)
 telemetryBar.BackgroundTransparency = 1
-telemetryBar.Text = "FPS: -- | Atajo Panel (RightControl) | Sprint (Shift) | Salto Aire (Space) | Dash (G)"
+telemetryBar.Text = "FPS: -- | Ocultar (" .. State.ToggleKey.Name .. ") | Sprint (Shift) | Salto (Space) | Dash (" .. State.HorizontalJumpKey.Name .. ")"
 telemetryBar.TextColor3 = PALETTE.TextMuted
 telemetryBar.Font = Enum.Font.Code
 telemetryBar.TextSize = 9
@@ -382,7 +386,7 @@ telemetryBar.Parent = mainFrame
 -- Navegación Lateral (Sidebar Tabs)
 local navBar = Instance.new("ScrollingFrame")
 navBar.Name = "NavBar"
-navBar.Size = UDim2.new(0, 160, 1, -76)
+navBar.Size = UDim2.new(0, 155, 1, -76)
 navBar.Position = UDim2.new(0, 10, 0, 52)
 navBar.BackgroundColor3 = PALETTE.Surface
 navBar.BorderSizePixel = 0
@@ -397,11 +401,11 @@ navLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 navLayout.Parent = navBar
 Instance.new("UIPadding", navBar).PaddingTop = UDim.new(0, 6)
 
--- Contenedor de Páginas (Content Area)
+-- Contenedor de Páginas
 local contentArea = Instance.new("Frame")
 contentArea.Name = "ContentArea"
-contentArea.Size = UDim2.new(1, -190, 1, -76)
-contentArea.Position = UDim2.new(0, 178, 0, 52)
+contentArea.Size = UDim2.new(1, -185, 1, -76)
+contentArea.Position = UDim2.new(0, 172, 0, 52)
 contentArea.BackgroundColor3 = PALETTE.Surface
 contentArea.Parent = mainFrame
 Instance.new("UICorner", contentArea).CornerRadius = UDim.new(0, 8)
@@ -413,15 +417,13 @@ local Tabs = {}
 local TabButtons = {}
 
 local TabDefs = {
-	{ Id = "Movement",  Title = "🏃 Movimiento",   Desc = "Velocidad, Saltos y Físicas" },
-	{ Id = "Combat",    Title = "🎯 Auto-Apuntado", Desc = "Aimbot, FOV y Spy Radar" },
-	{ Id = "Visuals",   Title = "👁️ Visuales & ESP",Desc = "Radar de Jugadores y Wallhack" },
-	{ Id = "Robberies", Title = "📍 Robos & TP",    Desc = "Waypoints de Jailbreak y Arenas" },
-	{ Id = "Teams",     Title = "👥 Bandos & Equipos",Desc = "Filtros Policías y Criminales" },
-	{ Id = "Click",     Title = "🖱️ Clic Tools",    Desc = "Auto Clicker y Click-TP" },
-	{ Id = "Macro",     Title = "⌨️ Macro Combate", Desc = "Grabador y Reproductor" },
-	{ Id = "Lighting",  Title = "☀️ Iluminación",   Desc = "Fullbright y Clima" },
-	{ Id = "Settings",  Title = "⚙️ Ajustes",       Desc = "Atajos y Seguridad" }
+	{ Id = "Movement",  Title = "🏃 Movimiento" },
+	{ Id = "Combat",    Title = "🎯 Auto-Apuntado" },
+	{ Id = "Visuals",   Title = "👁️ Visuales & ESP" },
+	{ Id = "Robberies", Title = "📍 Robos & TP" },
+	{ Id = "Teams",     Title = "👥 Bandos & Equipos" },
+	{ Id = "Lighting",  Title = "☀️ Iluminación" },
+	{ Id = "Settings",  Title = "⚙️ Ajustes & Atajos" }
 }
 
 for _, t in ipairs(TabDefs) do
@@ -445,10 +447,9 @@ for _, t in ipairs(TabDefs) do
 
 	Tabs[t.Id] = page
 
-	-- Botón en NavBar
 	local btn = Instance.new("TextButton")
 	btn.Name = "TabBtn_" .. t.Id
-	btn.Size = UDim2.new(1, -12, 0, 34)
+	btn.Size = UDim2.new(1, -12, 0, 36)
 	btn.BackgroundColor3 = PALETTE.Card
 	btn.Text = t.Title
 	btn.TextColor3 = PALETTE.TextMuted
@@ -458,9 +459,7 @@ for _, t in ipairs(TabDefs) do
 	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
 
 	btn.MouseButton1Click:Connect(function()
-		for id, p in pairs(Tabs) do
-			p.Visible = (id == t.Id)
-		end
+		for id, p in pairs(Tabs) do p.Visible = (id == t.Id) end
 		for id, b in pairs(TabButtons) do
 			if id == t.Id then
 				b.BackgroundColor3 = PALETTE.Primary
@@ -486,7 +485,7 @@ local function selectTab(tabId)
 end
 
 -- =============================================================================
--- COMPONENTES DE UI REUTILIZABLES (HELPERS)
+-- COMPONENTES DE UI REUTILIZABLES
 -- =============================================================================
 local function createCard(parent, titleText, height)
 	local card = Instance.new("Frame")
@@ -529,6 +528,7 @@ local function createToggle(parent, titleText, defaultVal, callback)
 		toggleBtn.BackgroundColor3 = isEnabled and PALETTE.Success or PALETTE.InputBg
 		toggleBtn.Text = isEnabled and "ACTIVO" or "INACTIVO"
 		pcall(callback, isEnabled)
+		saveConfig()
 	end)
 
 	return card, function(newVal)
@@ -575,6 +575,7 @@ local function createSlider(parent, titleText, minVal, maxVal, defaultVal, callb
 		sliderFill.Size = UDim2.new(rel, 0, 1, 0)
 		valLabel.Text = tostring(val)
 		pcall(callback, val)
+		saveConfig()
 	end
 
 	sliderTrack.InputBegan:Connect(function(input)
@@ -599,6 +600,46 @@ local function createSlider(parent, titleText, minVal, maxVal, defaultVal, callb
 	return card
 end
 
+local function createKeybindRow(parent, labelText, currentKey, callback)
+	local card = createCard(parent, labelText, 44)
+
+	local bindBtn = Instance.new("TextButton")
+	bindBtn.Size = UDim2.new(0, 110, 0, 24)
+	bindBtn.Position = UDim2.new(1, -120, 0.5, -12)
+	bindBtn.BackgroundColor3 = PALETTE.InputBg
+	bindBtn.Text = currentKey and currentKey.Name or "None"
+	bindBtn.TextColor3 = PALETTE.Secondary
+	bindBtn.Font = Enum.Font.GothamBold
+	bindBtn.TextSize = 10
+	bindBtn.Parent = card
+	Instance.new("UICorner", bindBtn).CornerRadius = UDim.new(0, 4)
+
+	local listening = false
+	bindBtn.MouseButton1Click:Connect(function()
+		if listening then return end
+		listening = true
+		bindBtn.Text = "Presiona Tecla..."
+		bindBtn.TextColor3 = PALETTE.Danger
+
+		local conn
+		conn = UserInputService.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.Keyboard then
+				local newKey = input.KeyCode
+				if newKey ~= Enum.KeyCode.Unknown then
+					bindBtn.Text = newKey.Name
+					bindBtn.TextColor3 = PALETTE.Secondary
+					listening = false
+					conn:Disconnect()
+					if callback then callback(newKey) end
+					saveConfig()
+				end
+			end
+		end)
+	end)
+
+	return card
+end
+
 local function createActionButton(parent, text, color, callback)
 	local btn = Instance.new("TextButton")
 	btn.Size = UDim2.new(1, 0, 0, 32)
@@ -610,67 +651,56 @@ local function createActionButton(parent, text, color, callback)
 	btn.Parent = parent
 	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
 
-	btn.MouseButton1Click:Connect(function()
-		pcall(callback)
-	end)
+	btn.MouseButton1Click:Connect(function() pcall(callback) end)
 	return btn
 end
 
 -- =============================================================================
--- PESTAÑA 1: 🏃 MOVIMIENTO & FÍSICAS
+-- PESTAÑA 1: 🏃 MOVIMIENTO & FÍSICAS SEGURAS
 -- =============================================================================
 local pMovement = Tabs["Movement"]
 
-createToggle(pMovement, "⚡ Super Velocidad Física (Physics Speed Engine)", State.PhysicsSpeedEnabled, function(v)
-	State.PhysicsSpeedEnabled = v
+createToggle(pMovement, "⚡ Super Velocidad (Speed Engine Seguro)", State.SpeedEngineEnabled, function(v)
+	State.SpeedEngineEnabled = v
 end)
 
-createSlider(pMovement, "Fuerza de Desplazamiento Continuo (studs/s)", 16, 250, State.PhysicsSpeedValue, function(v)
-	State.PhysicsSpeedValue = v
+createSlider(pMovement, "Fuerza de Desplazamiento (studs/s)", 16, 250, State.SpeedValue, function(v)
+	State.SpeedValue = v
 end)
 
-createToggle(pMovement, "Activar Solo al Mantener Presionado SHIFT (Sprint)", State.PhysicsSpeedSprintOnly, function(v)
-	State.PhysicsSpeedSprintOnly = v
-end)
-
-createSlider(pMovement, "WalkSpeed Estándar de Personaje", 16, 150, State.WalkSpeed, function(v)
-	State.WalkSpeed = v
-	local char = LocalPlayer and LocalPlayer.Character
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	if hum then hum.WalkSpeed = v end
-end)
-
-createSlider(pMovement, "Fuerza de Salto Estándar (JumpPower)", 50, 200, State.JumpPower, function(v)
-	State.JumpPower = v
-	local char = LocalPlayer and LocalPlayer.Character
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	if hum then
-		hum.UseJumpPower = true
-		hum.JumpPower = v
-	end
+createToggle(pMovement, "Activar Solo al Mantener Presionado SHIFT", State.SprintOnly, function(v)
+	State.SprintOnly = v
 end)
 
 createToggle(pMovement, "🦘 Salto Infinito en el Aire (ESPACIO)", State.InfiniteJump, function(v)
 	State.InfiniteJump = v
 end)
 
-createToggle(pMovement, "🚀 Salto Vertical de Impulso (Tecla F)", State.ForwardJump, function(v)
+createToggle(pMovement, "🚀 Impulso Vertical (Tecla F)", State.ForwardJump, function(v)
 	State.ForwardJump = v
 end)
 
-createToggle(pMovement, "💨 Dash / Salto Horizontal (Tecla G)", State.HorizontalJump, function(v)
+createSlider(pMovement, "Fuerza de Impulso Vertical", 40, 150, State.ForwardJumpPower, function(v)
+	State.ForwardJumpPower = v
+end)
+
+createToggle(pMovement, "💨 Dash Horizontal (Tecla G)", State.HorizontalJump, function(v)
 	State.HorizontalJump = v
+end)
+
+createSlider(pMovement, "Fuerza de Dash Horizontal", 50, 200, State.HorizontalJumpPower, function(v)
+	State.HorizontalJumpPower = v
 end)
 
 createToggle(pMovement, "👻 Noclip (Atravesar Paredes)", State.Noclip, function(v)
 	State.Noclip = v
 end)
 
-createToggle(pMovement, "🦅 Modo Vuelo (Fly Mode)", State.FlyEnabled, function(v)
+createToggle(pMovement, "🦅 Modo Vuelo 3D (Fly Mode)", State.FlyEnabled, function(v)
 	State.FlyEnabled = v
 end)
 
-createSlider(pMovement, "Velocidad de Vuelo (FlySpeed)", 20, 150, State.FlySpeed, function(v)
+createSlider(pMovement, "Velocidad de Vuelo", 20, 160, State.FlySpeed, function(v)
 	State.FlySpeed = v
 end)
 
@@ -683,17 +713,17 @@ createToggle(pCombat, "🎯 Activar Auto-Apuntado Universal (Aimbot)", State.Aim
 	State.AimbotEnabled = v
 end)
 
-createToggle(pCombat, "⭕ Mostrar Círculo de Campo de Visión (FOV)", State.ShowFOV, function(v)
+createToggle(pCombat, "⭕ Mostrar Círculo FOV", State.ShowFOV, function(v)
 	State.ShowFOV = v
 	fovFrame.Visible = v
 end)
 
-createSlider(pCombat, "Radio del Círculo FOV (Píxeles)", 50, 450, State.FOV_Radius, function(v)
+createSlider(pCombat, "Radio de Campo de Visión (Píxeles)", 60, 450, State.FOV_Radius, function(v)
 	State.FOV_Radius = v
 	fovFrame.Size = UDim2.new(0, v * 2, 0, v * 2)
 end)
 
-createSlider(pCombat, "Suavizado de Puntería (Aim Smoothing)", 1, 10, math.floor(State.AimSpeed * 10), function(v)
+createSlider(pCombat, "Suavizado de Puntería (Smoothing)", 1, 10, math.floor(State.AimSpeed * 10), function(v)
 	State.AimSpeed = v / 10
 end)
 
@@ -701,7 +731,7 @@ createToggle(pCombat, "🧱 Comprobador de Paredes (Raycast WallCheck)", State.W
 	State.WallCheck = v
 end)
 
-createToggle(pCombat, "🛡️ No Apuntar a Miembros del Mismo Equipo (Team Check)", State.TeamCheck, function(v)
+createToggle(pCombat, "🛡️ Team Check (No apuntar a aliados)", State.TeamCheck, function(v)
 	State.TeamCheck = v
 end)
 
@@ -710,7 +740,7 @@ local partCard = createCard(pCombat, "Parte del Cuerpo Objetivo", 68)
 local pHeadBtn = Instance.new("TextButton")
 pHeadBtn.Size = UDim2.new(0.3, -4, 0, 24)
 pHeadBtn.Position = UDim2.new(0, 10, 0, 32)
-pHeadBtn.BackgroundColor3 = PALETTE.Primary
+pHeadBtn.BackgroundColor3 = (State.TargetPart == "Head") and PALETTE.Primary or PALETTE.InputBg
 pHeadBtn.Text = "Cabeza"
 pHeadBtn.TextColor3 = PALETTE.Text
 pHeadBtn.Font = Enum.Font.GothamBold
@@ -721,9 +751,9 @@ Instance.new("UICorner", pHeadBtn).CornerRadius = UDim.new(0, 4)
 local pTorsoBtn = Instance.new("TextButton")
 pTorsoBtn.Size = UDim2.new(0.3, -4, 0, 24)
 pTorsoBtn.Position = UDim2.new(0.33, 0, 0, 32)
-pTorsoBtn.BackgroundColor3 = PALETTE.InputBg
+pTorsoBtn.BackgroundColor3 = (State.TargetPart == "UpperTorso") and PALETTE.Primary or PALETTE.InputBg
 pTorsoBtn.Text = "Torso"
-pTorsoBtn.TextColor3 = PALETTE.TextMuted
+pTorsoBtn.TextColor3 = PALETTE.Text
 pTorsoBtn.Font = Enum.Font.GothamBold
 pTorsoBtn.TextSize = 9
 pTorsoBtn.Parent = partCard
@@ -732,43 +762,25 @@ Instance.new("UICorner", pTorsoBtn).CornerRadius = UDim.new(0, 4)
 local pClosestBtn = Instance.new("TextButton")
 pClosestBtn.Size = UDim2.new(0.3, -4, 0, 24)
 pClosestBtn.Position = UDim2.new(0.66, 0, 0, 32)
-pClosestBtn.BackgroundColor3 = PALETTE.InputBg
+pClosestBtn.BackgroundColor3 = (State.TargetPart == "Closest") and PALETTE.Primary or PALETTE.InputBg
 pClosestBtn.Text = "Cercano"
-pClosestBtn.TextColor3 = PALETTE.TextMuted
+pClosestBtn.TextColor3 = PALETTE.Text
 pClosestBtn.Font = Enum.Font.GothamBold
 pClosestBtn.TextSize = 9
 pClosestBtn.Parent = partCard
 Instance.new("UICorner", pClosestBtn).CornerRadius = UDim.new(0, 4)
 
-pHeadBtn.MouseButton1Click:Connect(function()
-	State.TargetPart = "Head"
-	pHeadBtn.BackgroundColor3 = PALETTE.Primary
-	pHeadBtn.TextColor3 = PALETTE.Text
-	pTorsoBtn.BackgroundColor3 = PALETTE.InputBg
-	pTorsoBtn.TextColor3 = PALETTE.TextMuted
-	pClosestBtn.BackgroundColor3 = PALETTE.InputBg
-	pClosestBtn.TextColor3 = PALETTE.TextMuted
-end)
+local function updateTargetPartUI(part)
+	State.TargetPart = part
+	pHeadBtn.BackgroundColor3 = (part == "Head") and PALETTE.Primary or PALETTE.InputBg
+	pTorsoBtn.BackgroundColor3 = (part == "UpperTorso") and PALETTE.Primary or PALETTE.InputBg
+	pClosestBtn.BackgroundColor3 = (part == "Closest") and PALETTE.Primary or PALETTE.InputBg
+	saveConfig()
+end
 
-pTorsoBtn.MouseButton1Click:Connect(function()
-	State.TargetPart = "UpperTorso"
-	pTorsoBtn.BackgroundColor3 = PALETTE.Primary
-	pTorsoBtn.TextColor3 = PALETTE.Text
-	pHeadBtn.BackgroundColor3 = PALETTE.InputBg
-	pHeadBtn.TextColor3 = PALETTE.TextMuted
-	pClosestBtn.BackgroundColor3 = PALETTE.InputBg
-	pClosestBtn.TextColor3 = PALETTE.TextMuted
-end)
-
-pClosestBtn.MouseButton1Click:Connect(function()
-	State.TargetPart = "Closest"
-	pClosestBtn.BackgroundColor3 = PALETTE.Primary
-	pClosestBtn.TextColor3 = PALETTE.Text
-	pHeadBtn.BackgroundColor3 = PALETTE.InputBg
-	pHeadBtn.TextColor3 = PALETTE.TextMuted
-	pTorsoBtn.BackgroundColor3 = PALETTE.InputBg
-	pTorsoBtn.TextColor3 = PALETTE.TextMuted
-end)
+pHeadBtn.MouseButton1Click:Connect(function() updateTargetPartUI("Head") end)
+pTorsoBtn.MouseButton1Click:Connect(function() updateTargetPartUI("UpperTorso") end)
+pClosestBtn.MouseButton1Click:Connect(function() updateTargetPartUI("Closest") end)
 
 -- =============================================================================
 -- PESTAÑA 3: 👁️ VISUALES & RADAR ESP
@@ -785,13 +797,8 @@ createToggle(pVisuals, "👁️ Radar ESP de Jugadores y Marcador Spy", State.ES
 	end
 end)
 
-createToggle(pVisuals, "🔒 Camera Lock-On Continuo al Apuntar", State.LockOnEnabled, function(v)
+createToggle(pVisuals, "🔒 Camera Lock-On al Apuntar", State.LockOnEnabled, function(v)
 	State.LockOnEnabled = v
-end)
-
-createSlider(pVisuals, "Campo de Visión de Cámara (Camera FOV)", 60, 120, State.FOV, function(v)
-	State.FOV = v
-	if Camera then Camera.FieldOfView = v end
 end)
 
 -- =============================================================================
@@ -799,7 +806,7 @@ end)
 -- =============================================================================
 local pRobberies = Tabs["Robberies"]
 
-local wpHeader = createCard(pRobberies, "Teleport Directo a Zonas de Robo y Arenas", 36)
+createCard(pRobberies, "Teleport Directo a Zonas de Robo y Salidas", 36)
 for _, loc in ipairs(JAILBREAK_LOCATIONS) do
 	createActionButton(pRobberies, loc.Name, PALETTE.Card, function()
 		local char = LocalPlayer and LocalPlayer.Character
@@ -846,6 +853,7 @@ local function refreshTeamsList()
 				local ign = State.IgnoredAimTeams[tm.Name]
 				ignBtn.BackgroundColor3 = ign and PALETTE.Danger or PALETTE.Success
 				ignBtn.Text = ign and "IGNORADO" or "APUNTAR"
+				saveConfig()
 			end)
 		end
 	end
@@ -855,81 +863,11 @@ createActionButton(pTeams, "🔄 Actualizar Lista de Bandos", PALETTE.Primary, r
 refreshTeamsList()
 
 -- =============================================================================
--- PESTAÑA 6: 🖱️ CLIC TOOLS
--- =============================================================================
-local pClick = Tabs["Click"]
-
-createToggle(pClick, "⚡ Auto Clicker Continuo", State.AutoClickEnabled, function(v)
-	State.AutoClickEnabled = v
-end)
-
-createSlider(pClick, "Velocidad de Clics por Segundo (CPS)", 2, 40, State.AutoClickCPS, function(v)
-	State.AutoClickCPS = v
-end)
-
-createToggle(pClick, "Solo Hacer Clic al Mantener Presionado el Ratón", State.AutoClickOnlyWhileHolding, function(v)
-	State.AutoClickOnlyWhileHolding = v
-end)
-
-createToggle(pClick, "📍 Click-to-Teleport (Teletransportar al hacer Clic)", State.ClickTeleport, function(v)
-	State.ClickTeleport = v
-end)
-
--- =============================================================================
--- PESTAÑA 7: ⌨️ MACRO COMBATE
--- =============================================================================
-local pMacro = Tabs["Macro"]
-
-local macroStatusCard = createCard(pMacro, "Estado de Macro: DETENIDO (0 acciones)", 44)
-local function updateMacroStatus(text)
-	local l = macroStatusCard:FindFirstChildOfClass("TextLabel")
-	if l then l.Text = text end
-end
-
-createActionButton(pMacro, "⏺️ Grabar Macro (Ctrl + X)", PALETTE.Danger, function()
-	State.IsRecordingMacro = not State.IsRecordingMacro
-	if State.IsRecordingMacro then
-		State.MacroData = {}
-		State.RecordStartTime = tick()
-		updateMacroStatus("🔴 GRABANDO MACRO...")
-	else
-		updateMacroStatus(string.format("✅ Macro guardada (%d acciones)", #State.MacroData))
-	end
-end)
-
-createActionButton(pMacro, "▶️ Reproducir Macro (Ctrl + M)", PALETTE.Success, function()
-	if #State.MacroData == 0 then
-		updateMacroStatus("⚠️ No hay datos grabados")
-		return
-	end
-	task.spawn(function()
-		updateMacroStatus("▶️ REPRODUCIENDO...")
-		for _, act in ipairs(State.MacroData) do
-			task.wait(act.Delay / math.max(State.MacroPlaybackSpeed, 0.1))
-			if act.Type == "Key" and VirtualInputManager then
-				pcall(function()
-					VirtualInputManager:SendKeyEvent(act.Down, act.Key, false, game)
-				end)
-			elseif act.Type == "Mouse" and VirtualUser then
-				pcall(function()
-					if act.Button == "Left" then
-						VirtualUser:Button1Down(Vector2.new(0, 0))
-						task.wait(0.02)
-						VirtualUser:Button1Up(Vector2.new(0, 0))
-					end
-				end)
-			end
-		end
-		updateMacroStatus(string.format("✅ Macro finalizada (%d acciones)", #State.MacroData))
-	end)
-end)
-
--- =============================================================================
--- PESTAÑA 8: ☀️ ILUMINACIÓN & CLIMA
+-- PESTAÑA 6: ☀️ ILUMINACIÓN & CLIMA
 -- =============================================================================
 local pLighting = Tabs["Lighting"]
 
-createToggle(pLighting, "💡 Fullbright (Iluminación Total Sin Sombras)", State.Fullbright, function(v)
+createToggle(pLighting, "💡 Fullbright (Sin Sombras)", State.Fullbright, function(v)
 	State.Fullbright = v
 	if Lighting then
 		if v then
@@ -952,19 +890,31 @@ createActionButton(pLighting, "🌙 Ajustar a Noche (00:00)", PALETTE.Card, func
 	if Lighting then Lighting.ClockTime = 0 end
 end)
 
-createActionButton(pLighting, "🌅 Ajustar a Atardecer (18:00)", PALETTE.Card, function()
-	if Lighting then Lighting.ClockTime = 18 end
-end)
-
 -- =============================================================================
--- PESTAÑA 9: ⚙️ AJUSTES & SEGURIDAD
+-- PESTAÑA 7: ⚙️ AJUSTES & CONFIGURACIÓN PERSISTENTE
 -- =============================================================================
 local pSettings = Tabs["Settings"]
 
-createActionButton(pSettings, "❌ CERRAR Y FINALIZAR SUITE (KILL PROCESS)", PALETTE.Danger, function()
-	for _, conn in pairs(Connections) do
-		pcall(function() conn:Disconnect() end)
-	end
+createKeybindRow(pSettings, "Atajo Mostrar / Ocultar Panel:", State.ToggleKey, function(k)
+	State.ToggleKey = k
+	telemetryBar.Text = "FPS: -- | Ocultar (" .. k.Name .. ") | Sprint (Shift) | Salto (Space) | Dash (" .. State.HorizontalJumpKey.Name .. ")"
+end)
+
+createKeybindRow(pSettings, "Atajo Activar Auto-Apuntado:", State.AimbotToggleKey, function(k) State.AimbotToggleKey = k end)
+createKeybindRow(pSettings, "Tecla Salto Infinito en Aire:", State.InfiniteJumpKey, function(k) State.InfiniteJumpKey = k end)
+createKeybindRow(pSettings, "Tecla Impulso Vertical (F):", State.ForwardJumpKey, function(k) State.ForwardJumpKey = k end)
+createKeybindRow(pSettings, "Tecla Dash Horizontal (G):", State.HorizontalJumpKey, function(k) State.HorizontalJumpKey = k end)
+createKeybindRow(pSettings, "Atajo Modo Noclip:", State.NoclipKey, function(k) State.NoclipKey = k end)
+createKeybindRow(pSettings, "Atajo Modo Vuelo (Fly):", State.FlyKey, function(k) State.FlyKey = k end)
+createKeybindRow(pSettings, "Atajo Radar ESP / Spy:", State.ESPKey, function(k) State.ESPKey = k end)
+createKeybindRow(pSettings, "Atajo Fullbright:", State.FullbrightKey, function(k) State.FullbrightKey = k end)
+
+createActionButton(pSettings, "💾 FORZAR GUARDADO DE CONFIGURACIÓN", PALETTE.Success, function()
+	saveConfig()
+end)
+
+createActionButton(pSettings, "❌ FINALIZAR SUITE (KILL PROCESS)", PALETTE.Danger, function()
+	for _, conn in pairs(Connections) do pcall(function() conn:Disconnect() end) end
 	for _, esp in pairs(ESPCache) do
 		if esp.Billboard then pcall(function() esp.Billboard:Destroy() end) end
 		if esp.Highlight then pcall(function() esp.Highlight:Destroy() end) end
@@ -973,19 +923,15 @@ createActionButton(pSettings, "❌ CERRAR Y FINALIZAR SUITE (KILL PROCESS)", PAL
 	_G.JailbreakAdminSuiteInstance = nil
 end)
 
--- Seleccionar pestaña inicial
 selectTab("Movement")
 
--- Botón cerrar en Header
 closeBtn.MouseButton1Click:Connect(function()
 	mainFrame.Visible = not mainFrame.Visible
 end)
 
 -- =============================================================================
--- MOTOR DE FÍSICAS, AIMBOT Y ESP EN TIEMPO REAL (RENDERSTEPPED / HEARTBEAT)
+-- MOTOR DE EJECUCIÓN: AIMBOT, RADAR Y MOVIMIENTO SEGURO
 -- =============================================================================
-
--- 1. Helper: Obtener Jugador Más Cercano al Cursor dentro de FOV
 local function getBestAimbotTarget()
 	if not LocalPlayer or not Camera then return nil end
 	local myChar = LocalPlayer.Character
@@ -1003,7 +949,6 @@ local function getBestAimbotTarget()
 			local hrp = char:FindFirstChild("HumanoidRootPart")
 
 			if hum and hum.Health > 0 and hrp then
-				-- Filtro de Equipos
 				local sameTeam = (State.TeamCheck and LocalPlayer.Team and plr.Team and LocalPlayer.Team == plr.Team)
 				local ignored = State.IgnoredAimTeams[plr.Team and plr.Team.Name or ""] or false
 
@@ -1017,7 +962,6 @@ local function getBestAimbotTarget()
 						if onScreen then
 							local mouseDist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
 							if mouseDist <= bestDist then
-								-- Raycast WallCheck
 								local isVisible = true
 								if State.WallCheck then
 									local origin = Camera.CFrame.Position
@@ -1047,7 +991,7 @@ local function getBestAimbotTarget()
 	return bestTarget
 end
 
--- 2. Loop de RenderStepped (Aimbot & Telemetría)
+-- RenderStepped Loop (Aimbot & Telemetría)
 local frameCounter = 0
 local lastFpsUpdate = tick()
 
@@ -1057,15 +1001,15 @@ Connections.RenderStepped = RunService.RenderStepped:Connect(function(dt)
 		local fps = math.floor(frameCounter / (tick() - lastFpsUpdate))
 		frameCounter = 0
 		lastFpsUpdate = tick()
-		telemetryBar.Text = string.format("FPS: %d | Panel: RightControl | Sprint: Shift | Salto: Space | Dash: G", fps)
+		telemetryBar.Text = string.format("FPS: %d | Ocultar: %s | Salto: %s | Dash: %s", fps, State.ToggleKey.Name, State.InfiniteJumpKey.Name, State.HorizontalJumpKey.Name)
 	end
 
 	-- Aimbot / Lock-On
 	if (State.AimbotEnabled and State.IsAiming) or State.LockOnEnabled then
 		local target = getBestAimbotTarget()
 		if target and target.Part then
-			local aimPos = target.Part.Position
-			local targetCFrame = CFrame.new(Camera.CFrame.Position, aimPos)
+			local aimOffset = (Camera.CFrame.RightVector * (State.OffsetX * 0.05)) + (Camera.CFrame.UpVector * (State.OffsetY * 0.05))
+			local targetCFrame = CFrame.lookAt(Camera.CFrame.Position, target.Part.Position + aimOffset)
 			Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, math.clamp(State.AimSpeed, 0.1, 1.0))
 			centerDot.BackgroundColor3 = State.ColorLockOnTarget
 		else
@@ -1074,21 +1018,21 @@ Connections.RenderStepped = RunService.RenderStepped:Connect(function(dt)
 	end
 end)
 
--- 3. Loop de Heartbeat (Physics Speed Engine & Noclip)
-Connections.Heartbeat = RunService.Heartbeat:Connect(function()
+-- Heartbeat Loop (Speed Engine Seguro & Noclip)
+Connections.Heartbeat = RunService.Heartbeat:Connect(function(dt)
 	local char = LocalPlayer and LocalPlayer.Character
 	if not char then return end
 
 	local hrp = char:FindFirstChild("HumanoidRootPart")
 	local hum = char:FindFirstChildOfClass("Humanoid")
 
-	-- Physics Speed Engine
-	if State.PhysicsSpeedEnabled and hrp and hum then
+	-- Speed Bypass Seguro por CFrame Delta
+	if State.SpeedEngineEnabled and hrp and hum then
 		local isMoving = hum.MoveDirection.Magnitude > 0.1
-		local shouldSpeed = not State.PhysicsSpeedSprintOnly or State.IsSprinting
+		local shouldSpeed = not State.SprintOnly or State.IsSprinting
 		if isMoving and shouldSpeed then
-			local targetVelocity = hum.MoveDirection.Unit * State.PhysicsSpeedValue
-			hrp.AssemblyLinearVelocity = Vector3.new(targetVelocity.X, hrp.AssemblyLinearVelocity.Y, targetVelocity.Z)
+			local moveVector = hum.MoveDirection.Unit * (State.SpeedValue * dt)
+			hrp.CFrame = hrp.CFrame + Vector3.new(moveVector.X, 0, moveVector.Z)
 		end
 	end
 
@@ -1100,25 +1044,9 @@ Connections.Heartbeat = RunService.Heartbeat:Connect(function()
 			end
 		end
 	end
-
-	-- Auto Clicker
-	if State.AutoClickEnabled then
-		local now = tick()
-		local interval = 1 / math.max(State.AutoClickCPS, 1)
-		if now - State.LastClickTime >= interval then
-			State.LastClickTime = now
-			if VirtualUser then
-				pcall(function()
-					VirtualUser:Button1Down(Vector2.new(0, 0))
-					task.wait(0.01)
-					VirtualUser:Button1Up(Vector2.new(0, 0))
-				end)
-			end
-		end
-	end
 end)
 
--- 4. Radar ESP Updater Loop
+-- Radar ESP Updater
 task.spawn(function()
 	while screenGui and screenGui.Parent do
 		if State.ESPEnabled then
@@ -1133,7 +1061,7 @@ task.spawn(function()
 						if not esp then
 							local bb = Instance.new("BillboardGui")
 							bb.Name = "ESP_" .. plr.Name
-							bb.Size = UDim2.new(0, 140, 0, 30)
+							bb.Size = UDim2.new(0, 140, 0, 32)
 							bb.AlwaysOnTop = true
 							bb.Adornee = hrp
 							bb.Parent = ESPFolder
@@ -1168,11 +1096,11 @@ task.spawn(function()
 				end
 			end
 		end
-		task.wait(0.2)
+		task.wait(0.25)
 	end
 end)
 
--- 5. Manejo de Entrada de Teclado y Ratón (UserInputService)
+-- Manejo de Teclado
 Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if input.KeyCode == State.ToggleKey then
 		mainFrame.Visible = not mainFrame.Visible
@@ -1183,19 +1111,31 @@ Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gam
 		State.IsAiming = true
 	end
 
-	if input.KeyCode == State.SpeedKey then
+	if input.KeyCode == State.SprintKey then
 		State.IsSprinting = true
 	end
 
+	if input.KeyCode == State.AimbotToggleKey and not gameProcessed then
+		State.AimbotEnabled = not State.AimbotEnabled
+	end
+
+	if input.KeyCode == State.NoclipKey and not gameProcessed then
+		State.Noclip = not State.Noclip
+	end
+
+	if input.KeyCode == State.ESPKey and not gameProcessed then
+		State.ESPEnabled = not State.ESPEnabled
+	end
+
 	-- Salto Infinito en el Aire
-	if input.KeyCode == State.SpaceJumpKey and State.InfiniteJump and not gameProcessed then
+	if input.KeyCode == State.InfiniteJumpKey and State.InfiniteJump and not gameProcessed then
 		local char = LocalPlayer and LocalPlayer.Character
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
 		if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
 	end
 
-	-- Salto Vertical de Impulso (F)
-	if input.KeyCode == State.JumpKey and State.ForwardJump and not gameProcessed then
+	-- Impulso Vertical (F)
+	if input.KeyCode == State.ForwardJumpKey and State.ForwardJump and not gameProcessed then
 		local char = LocalPlayer and LocalPlayer.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
 		if hrp then
@@ -1213,26 +1153,15 @@ Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gam
 			hrp.AssemblyLinearVelocity = moveDir * State.HorizontalJumpPower + Vector3.new(0, 15, 0)
 		end
 	end
-
-	-- Click-to-Teleport
-	if input.UserInputType == Enum.UserInputType.MouseButton1 and State.ClickTeleport and not gameProcessed then
-		local mouse = LocalPlayer:GetMouse()
-		local hit = mouse and mouse.Hit
-		local char = LocalPlayer and LocalPlayer.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		if hit and hrp then
-			hrp.CFrame = CFrame.new(hit.Position + Vector3.new(0, 3, 0))
-		end
-	end
 end)
 
 Connections.InputEnded = UserInputService.InputEnded:Connect(function(input)
 	if input.UserInputType == State.AimKey then
 		State.IsAiming = false
 	end
-	if input.KeyCode == State.SpeedKey then
+	if input.KeyCode == State.SprintKey then
 		State.IsSprinting = false
 	end
 end)
 
-print("[JAILBREAK SUITE] Inicializado correctamente con resolución universal de servicios y 9 módulos tácticos.")
+print("[JAILBREAK SUITE] Inicializado y configurado exitosamente.")
