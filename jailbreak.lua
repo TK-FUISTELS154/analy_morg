@@ -233,7 +233,7 @@ local State = {
 	TeamCheck = true,
 	TargetFFA = false,
 	OffsetX = 0,
-	OffsetY = 0,
+	OffsetY = -28,
 
 	-- Visuales & ESP
 	ESPEnabled = true,
@@ -352,6 +352,7 @@ local function loadConfig()
 	if State.ToggleKey == Enum.KeyCode.LeftControl or State.ToggleKey == Enum.KeyCode.RightControl or State.ToggleKey == Enum.KeyCode.Unknown then
 		State.ToggleKey = Enum.KeyCode.F
 	end
+	State.FOVMouseFollow = (State.AimMode == "Mouse")
 end
 
 loadConfig()
@@ -913,7 +914,7 @@ createToggle(pVisuals, "👁️ Radar ESP Avanzado de Jugadores y Bandos", State
 	State.ESPEnabled = v
 	if not v then
 		for _, esp in pairs(ESPCache) do
-			if esp.Billboard then esp.Billboard.Visible = false end
+			if esp.Billboard then esp.Billboard.Enabled = false end
 			if esp.Highlight then esp.Highlight.Enabled = false end
 		end
 	end
@@ -1254,7 +1255,7 @@ local function getEntityInfo(char)
 	}
 end
 
--- Descubrimiento Centralizado de Entidades
+-- Descubrimiento Centralizado y Eficiente de Entidades
 local function getAllEntities()
 	local list = {}
 	local seen = {}
@@ -1273,47 +1274,13 @@ local function getAllEntities()
 		end
 	end
 
-	-- 2. NPCs de OilRig
-	local oilRig = Workspace and Workspace:FindFirstChild("OilRig")
-	if oilRig then
-		local gf = oilRig:FindFirstChild("GuardsFolder") or oilRig:FindFirstChild("Guards")
-		if gf then
-			for _, g in ipairs(gf:GetChildren()) do
-				if g:IsA("Model") and not seen[g] then
-					local info = getEntityInfo(g)
-					if info then
-						seen[g] = true
-						table.insert(list, info)
-					end
-				end
-			end
-		end
-	end
-
-	-- 3. NPCs de Mansión y Jefes
-	local mansion = Workspace and Workspace:FindFirstChild("MansionRobbery")
-	if mansion then
-		for _, m in ipairs(mansion:GetChildren()) do
-			if m:IsA("Model") and not seen[m] then
-				local info = getEntityInfo(m)
-				if info then
-					seen[m] = true
-					table.insert(list, info)
-				end
-			end
-		end
-	end
-
-	-- 4. Otros NPCs en Workspace (Airdrop Guards, Roaming NPCs)
-	for _, child in ipairs(Workspace:GetChildren()) do
-		if child:IsA("Model") and not seen[child] and child ~= (LocalPlayer and LocalPlayer.Character) then
-			local hum = child:FindFirstChildOfClass("Humanoid")
-			if hum and hum.Health > 0 then
-				local info = getEntityInfo(child)
-				if info then
-					seen[child] = true
-					table.insert(list, info)
-				end
+	-- 2. Entidades y NPCs en ESPCache
+	for char, esp in pairs(ESPCache) do
+		if char and char.Parent and not seen[char] then
+			local info = getEntityInfo(char)
+			if info then
+				seen[char] = true
+				table.insert(list, info)
 			end
 		end
 	end
