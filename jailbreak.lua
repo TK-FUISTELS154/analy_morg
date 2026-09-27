@@ -972,58 +972,63 @@ createToggle(pTeams, "Modo Todos Contra Todos (Target FFA)", State.TargetFFA, fu
 	State.TargetFFA = v
 end)
 
+local JAILBREAK_TEAMS = {
+	{ Id = "Police",    Name = "👮 Policías (Police)" },
+	{ Id = "Criminal",  Name = "🔴 Criminales (Criminals)" },
+	{ Id = "Prisoner",  Name = "⛓️ Prisioneros (Prisoners)" },
+	{ Id = "NPC",       Name = "🤖 Guardias & Jefes (NPCs)" },
+}
+
 local teamCards = {}
 local function refreshTeamsList()
 	for _, c in ipairs(teamCards) do pcall(function() c:Destroy() end) end
 	teamCards = {}
 
-	if Teams then
-		for _, tm in ipairs(Teams:GetTeams()) do
-			local card = createCard(pTeams, "Bando: " .. tm.Name, 52)
-			table.insert(teamCards, card)
+	for _, tm in ipairs(JAILBREAK_TEAMS) do
+		local card = createCard(pTeams, tm.Name, 52)
+		table.insert(teamCards, card)
 
-			-- Botón de Aim
-			local isAimIgnored = State.IgnoredAimTeams[tm.Name] or false
-			local aimBtn = Instance.new("TextButton")
-			aimBtn.Size = UDim2.new(0, 95, 0, 24)
-			aimBtn.Position = UDim2.new(1, -202, 0.5, -12)
-			aimBtn.BackgroundColor3 = isAimIgnored and PALETTE.Danger or PALETTE.Success
-			aimBtn.Text = isAimIgnored and "🎯 AIM: OFF" or "🎯 AIM: ON"
-			aimBtn.TextColor3 = PALETTE.Text
-			aimBtn.Font = Enum.Font.GothamBold
-			aimBtn.TextSize = 9
-			aimBtn.Parent = card
-			Instance.new("UICorner", aimBtn).CornerRadius = UDim.new(0, 4)
+		-- Botón de Aim
+		local isAimIgnored = State.IgnoredAimTeams[tm.Id] or false
+		local aimBtn = Instance.new("TextButton")
+		aimBtn.Size = UDim2.new(0, 95, 0, 24)
+		aimBtn.Position = UDim2.new(1, -202, 0.5, -12)
+		aimBtn.BackgroundColor3 = isAimIgnored and PALETTE.Danger or PALETTE.Success
+		aimBtn.Text = isAimIgnored and "🎯 AIM: OFF" or "🎯 AIM: ON"
+		aimBtn.TextColor3 = PALETTE.Text
+		aimBtn.Font = Enum.Font.GothamBold
+		aimBtn.TextSize = 9
+		aimBtn.Parent = card
+		Instance.new("UICorner", aimBtn).CornerRadius = UDim.new(0, 4)
 
-			aimBtn.MouseButton1Click:Connect(function()
-				State.IgnoredAimTeams[tm.Name] = not State.IgnoredAimTeams[tm.Name]
-				local ign = State.IgnoredAimTeams[tm.Name]
-				aimBtn.BackgroundColor3 = ign and PALETTE.Danger or PALETTE.Success
-				aimBtn.Text = ign and "🎯 AIM: OFF" or "🎯 AIM: ON"
-				saveConfig()
-			end)
+		aimBtn.MouseButton1Click:Connect(function()
+			State.IgnoredAimTeams[tm.Id] = not State.IgnoredAimTeams[tm.Id]
+			local ign = State.IgnoredAimTeams[tm.Id]
+			aimBtn.BackgroundColor3 = ign and PALETTE.Danger or PALETTE.Success
+			aimBtn.Text = ign and "🎯 AIM: OFF" or "🎯 AIM: ON"
+			saveConfig()
+		end)
 
-			-- Botón de ESP
-			local isEspIgnored = State.IgnoredESPTeams[tm.Name] or false
-			local espBtn = Instance.new("TextButton")
-			espBtn.Size = UDim2.new(0, 95, 0, 24)
-			espBtn.Position = UDim2.new(1, -102, 0.5, -12)
-			espBtn.BackgroundColor3 = isEspIgnored and PALETTE.Danger or PALETTE.Success
-			espBtn.Text = isEspIgnored and "👁️ ESP: OFF" or "👁️ ESP: ON"
-			espBtn.TextColor3 = PALETTE.Text
-			espBtn.Font = Enum.Font.GothamBold
-			espBtn.TextSize = 9
-			espBtn.Parent = card
-			Instance.new("UICorner", espBtn).CornerRadius = UDim.new(0, 4)
+		-- Botón de ESP
+		local isEspIgnored = State.IgnoredESPTeams[tm.Id] or false
+		local espBtn = Instance.new("TextButton")
+		espBtn.Size = UDim2.new(0, 95, 0, 24)
+		espBtn.Position = UDim2.new(1, -102, 0.5, -12)
+		espBtn.BackgroundColor3 = isEspIgnored and PALETTE.Danger or PALETTE.Success
+		espBtn.Text = isEspIgnored and "👁️ ESP: OFF" or "👁️ ESP: ON"
+		espBtn.TextColor3 = PALETTE.Text
+		espBtn.Font = Enum.Font.GothamBold
+		espBtn.TextSize = 9
+		espBtn.Parent = card
+		Instance.new("UICorner", espBtn).CornerRadius = UDim.new(0, 4)
 
-			espBtn.MouseButton1Click:Connect(function()
-				State.IgnoredESPTeams[tm.Name] = not State.IgnoredESPTeams[tm.Name]
-				local ign = State.IgnoredESPTeams[tm.Name]
-				espBtn.BackgroundColor3 = ign and PALETTE.Danger or PALETTE.Success
-				espBtn.Text = ign and "👁️ ESP: OFF" or "👁️ ESP: ON"
-				saveConfig()
-			end)
-		end
+		espBtn.MouseButton1Click:Connect(function()
+			State.IgnoredESPTeams[tm.Id] = not State.IgnoredESPTeams[tm.Id]
+			local ign = State.IgnoredESPTeams[tm.Id]
+			espBtn.BackgroundColor3 = ign and PALETTE.Danger or PALETTE.Success
+			espBtn.Text = ign and "👁️ ESP: OFF" or "👁️ ESP: ON"
+			saveConfig()
+		end)
 	end
 end
 
@@ -1038,24 +1043,25 @@ local pLighting = Tabs["Lighting"]
 createToggle(pLighting, "💡 Fullbright (Sin Sombras)", State.Fullbright, function(v)
 	State.Fullbright = v
 	if Lighting then
-		if v then
-			Lighting.Brightness = 2
-			Lighting.ClockTime = 14
-			Lighting.FogEnd = 100000
-			Lighting.GlobalShadows = false
-		else
-			Lighting.Brightness = 1
-			Lighting.GlobalShadows = true
-		end
+		pcall(function()
+			if v then
+				Lighting.Brightness = 2
+				Lighting.FogEnd = 100000
+				Lighting.GlobalShadows = false
+			else
+				Lighting.Brightness = 1
+				Lighting.GlobalShadows = true
+			end
+		end)
 	end
 end)
 
 createActionButton(pLighting, "☀️ Ajustar a Día (14:00)", PALETTE.Card, function()
-	if Lighting then Lighting.ClockTime = 14 end
+	if Lighting then pcall(function() Lighting.ClockTime = 14 end) end
 end)
 
 createActionButton(pLighting, "🌙 Ajustar a Noche (00:00)", PALETTE.Card, function()
-	if Lighting then Lighting.ClockTime = 0 end
+	if Lighting then pcall(function() Lighting.ClockTime = 0 end) end
 end)
 
 -- =============================================================================
@@ -1065,17 +1071,17 @@ local pSettings = Tabs["Settings"]
 
 createKeybindRow(pSettings, "Atajo Mostrar / Ocultar Panel (Ctrl + Key):", State.ToggleKey, function(k)
 	State.ToggleKey = k
-	telemetryBar.Text = "FPS: -- | Toggle (Ctrl + " .. k.Name .. ") | Sprint (Shift) | Salto (Space) | Dash (" .. State.HorizontalJumpKey.Name .. ")"
+	telemetryBar.Text = "FPS: -- | Menu (Ctrl+" .. k.Name .. ") | Fly (Ctrl+" .. State.FlyKey.Name .. ") | ESP (Ctrl+" .. State.ESPKey.Name .. ") | Noclip (Ctrl+" .. State.NoclipKey.Name .. ")"
 end)
 
-createKeybindRow(pSettings, "Atajo Activar Auto-Apuntado:", State.AimbotToggleKey, function(k) State.AimbotToggleKey = k end)
-createKeybindRow(pSettings, "Tecla Salto Infinito en Aire:", State.InfiniteJumpKey, function(k) State.InfiniteJumpKey = k end)
-createKeybindRow(pSettings, "Tecla Impulso Vertical (X):", State.ForwardJumpKey, function(k) State.ForwardJumpKey = k end)
-createKeybindRow(pSettings, "Tecla Dash Horizontal (G):", State.HorizontalJumpKey, function(k) State.HorizontalJumpKey = k end)
-createKeybindRow(pSettings, "Atajo Modo Noclip:", State.NoclipKey, function(k) State.NoclipKey = k end)
-createKeybindRow(pSettings, "Atajo Modo Vuelo (Fly):", State.FlyKey, function(k) State.FlyKey = k end)
-createKeybindRow(pSettings, "Atajo Radar ESP / Spy:", State.ESPKey, function(k) State.ESPKey = k end)
-createKeybindRow(pSettings, "Atajo Fullbright:", State.FullbrightKey, function(k) State.FullbrightKey = k end)
+createKeybindRow(pSettings, "Atajo Auto-Apuntado (Ctrl + Key):", State.AimbotToggleKey, function(k) State.AimbotToggleKey = k end)
+createKeybindRow(pSettings, "Atajo Modo Vuelo / Fly (Ctrl + Key):", State.FlyKey, function(k) State.FlyKey = k end)
+createKeybindRow(pSettings, "Atajo Modo Noclip (Ctrl + Key):", State.NoclipKey, function(k) State.NoclipKey = k end)
+createKeybindRow(pSettings, "Atajo Radar ESP / Spy (Ctrl + Key):", State.ESPKey, function(k) State.ESPKey = k end)
+createKeybindRow(pSettings, "Atajo Fullbright (Ctrl + Key):", State.FullbrightKey, function(k) State.FullbrightKey = k end)
+createKeybindRow(pSettings, "Atajo Impulso Vertical (Ctrl + Key):", State.ForwardJumpKey, function(k) State.ForwardJumpKey = k end)
+createKeybindRow(pSettings, "Atajo Dash Horizontal (Ctrl + Key):", State.HorizontalJumpKey, function(k) State.HorizontalJumpKey = k end)
+createKeybindRow(pSettings, "Tecla Salto Infinito en Aire (Space):", State.InfiniteJumpKey, function(k) State.InfiniteJumpKey = k end)
 
 createActionButton(pSettings, "💾 FORZAR GUARDADO DE CONFIGURACIÓN", PALETTE.Success, function()
 	saveConfig()
@@ -1124,23 +1130,127 @@ local function isPartVisible(origin, targetPart, targetChar)
 	return false
 end
 
--- Determina si un modelo debe ser considerado objetivo válido de Aimbot
-local function isValidAimTarget(plr, char, hum, hrp)
-	if plr == LocalPlayer then return false end
-	if not hum or hum.Health <= 0 or not hrp then return false end
+-- Clasificador Universal de Entidades para Jailbreak (Badimo Architecture)
+local function getEntityInfo(char)
+	if not char or not char.Parent then return nil end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+	if not hum or hum.Health <= 0 or not hrp then return nil end
+	if char == (LocalPlayer and LocalPlayer.Character) then return nil end
 
-	if State.TargetFFA then return true end
+	local plr = Players:GetPlayerFromCharacter(char) or Players:FindFirstChild(char.Name)
+	if plr and plr == LocalPlayer then return nil end
 
-	local teamName = plr and plr.Team and plr.Team.Name or "Neutral"
-	if State.IgnoredAimTeams[teamName] == true then
-		return false
+	local teamId = "NPC"
+	local teamBadge = "🤖 Guardia"
+	local teamColor = Color3.fromRGB(180, 80, 255)
+	local displayName = char.Name
+
+	if plr then
+		displayName = plr.Name
+		local teamVal = plr:FindFirstChild("TeamValue")
+		local rawTeam = (teamVal and teamVal:IsA("StringValue") and teamVal.Value ~= "" and teamVal.Value)
+			or (plr.Team and plr.Team.Name)
+			or ""
+		local lower = rawTeam:lower()
+
+		if lower:find("police") or lower:find("guard") or lower:find("polic") then
+			teamId = "Police"
+			teamBadge = "👮 Policía"
+			teamColor = State.ColorPolice
+		elseif lower:find("crim") then
+			teamId = "Criminal"
+			teamBadge = "🔴 Criminal"
+			teamColor = State.ColorCriminal
+		elseif lower:find("prison") or lower:find("pris") then
+			teamId = "Prisoner"
+			teamBadge = "⛓️ Prisionero"
+			teamColor = State.ColorPrisoner
+		else
+			teamId = "Police" -- Fallback Jailbreak team
+			teamBadge = "👮 Policía"
+			teamColor = State.ColorPolice
+		end
+
+		local myTeamVal = LocalPlayer and LocalPlayer:FindFirstChild("TeamValue")
+		local myRawTeam = (myTeamVal and myTeamVal.Value) or (LocalPlayer and LocalPlayer.Team and LocalPlayer.Team.Name) or ""
+		if myRawTeam ~= "" and rawTeam ~= "" and rawTeam == myRawTeam then
+			teamBadge = "🛡️ Aliado"
+			teamColor = State.ColorAlly
+		end
+	else
+		if char.Name:find("Boss") or char.Name:find("CEO") then
+			teamBadge = "👑 JEFE"
+			teamColor = Color3.fromRGB(255, 215, 0)
+		elseif char.Name:find("Bodyguard") or char.Name:find("Enforcer") or char.Name:find("Guard") then
+			teamBadge = "🛡️ Guardia"
+			teamColor = Color3.fromRGB(180, 80, 255)
+		end
 	end
 
-	if State.TeamCheck and LocalPlayer and LocalPlayer.Team and plr and plr.Team and LocalPlayer.Team == plr.Team then
-		return false
+	return {
+		Character = char,
+		Player = plr,
+		Humanoid = hum,
+		RootPart = hrp,
+		Name = displayName,
+		TeamId = teamId,
+		TeamBadge = teamBadge,
+		TeamColor = teamColor,
+	}
+end
+
+-- Descubrimiento Centralizado de Entidades
+local function getAllEntities()
+	local list = {}
+	local seen = {}
+
+	-- 1. Jugadores
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer then
+			local char = plr.Character or (Workspace and Workspace:FindFirstChild(plr.Name))
+			if char and not seen[char] then
+				local info = getEntityInfo(char)
+				if info then
+					seen[char] = true
+					table.insert(list, info)
+				end
+			end
+		end
 	end
 
-	return true
+	-- 2. NPCs de OilRig
+	local oilRig = Workspace and Workspace:FindFirstChild("OilRig")
+	if oilRig then
+		local gf = oilRig:FindFirstChild("GuardsFolder")
+		if gf then
+			for _, g in ipairs(gf:GetChildren()) do
+				if g:IsA("Model") and not seen[g] then
+					local info = getEntityInfo(g)
+					if info then
+						seen[g] = true
+						table.insert(list, info)
+					end
+				end
+			end
+		end
+	end
+
+	-- 3. NPCs de Mansión y Jefes
+	local mansion = Workspace and Workspace:FindFirstChild("MansionRobbery")
+	if mansion then
+		for _, m in ipairs(mansion:GetChildren()) do
+			if m:IsA("Model") and not seen[m] then
+				local info = getEntityInfo(m)
+				if info then
+					seen[m] = true
+					table.insert(list, info)
+				end
+			end
+		end
+	end
+
+	return list
 end
 
 -- Adquisición de Objetivo Óptimo para Aimbot
@@ -1161,28 +1271,39 @@ local function getBestAimbotTarget()
 	local bestTarget = nil
 	local bestDist = State.FOV_Radius
 
-	-- 1. Jugadores en Players
-	for _, plr in ipairs(Players:GetPlayers()) do
-		if plr ~= LocalPlayer and plr.Character then
-			local char = plr.Character
-			local hum = char:FindFirstChildOfClass("Humanoid")
-			local hrp = char:FindFirstChild("HumanoidRootPart")
+	for _, entity in ipairs(getAllEntities()) do
+		local isAimIgnored = State.IgnoredAimTeams[entity.TeamId] == true
+		local isSameTeam = false
 
-			if isValidAimTarget(plr, char, hum, hrp) then
-				local targetPart = (State.TargetPart == "Head" and char:FindFirstChild("Head"))
-					or (State.TargetPart == "UpperTorso" and (char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")))
-					or hrp
+		if State.TeamCheck and entity.Player and LocalPlayer then
+			local myTeamVal = LocalPlayer:FindFirstChild("TeamValue")
+			local myRawTeam = (myTeamVal and myTeamVal.Value) or (LocalPlayer.Team and LocalPlayer.Team.Name) or ""
+			local hisTeamVal = entity.Player:FindFirstChild("TeamValue")
+			local hisRawTeam = (hisTeamVal and hisTeamVal.Value) or (entity.Player.Team and entity.Player.Team.Name) or ""
+			if myRawTeam ~= "" and hisRawTeam ~= "" and myRawTeam == hisRawTeam then
+				isSameTeam = true
+			end
+		end
 
-				if targetPart then
-					local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
-					if onScreen and screenPos.Z > 0 then
-						local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - fovCenter).Magnitude
-						if screenDist <= bestDist then
-							local isVis = not State.WallCheck or isPartVisible(Camera.CFrame.Position, targetPart, char)
-							if isVis then
-								bestDist = screenDist
-								bestTarget = { Player = plr, Character = char, Part = targetPart }
-							end
+		local canTarget = State.TargetFFA or (not isAimIgnored and not isSameTeam)
+		if canTarget then
+			local targetPart = (State.TargetPart == "Head" and entity.Character:FindFirstChild("Head"))
+				or (State.TargetPart == "UpperTorso" and (entity.Character:FindFirstChild("UpperTorso") or entity.Character:FindFirstChild("Torso")))
+				or entity.RootPart
+
+			if targetPart then
+				local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+				if onScreen and screenPos.Z > 0 then
+					local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - fovCenter).Magnitude
+					if screenDist <= bestDist then
+						local isVis = not State.WallCheck or isPartVisible(Camera.CFrame.Position, targetPart, entity.Character)
+						if isVis then
+							bestDist = screenDist
+							bestTarget = {
+								Entity = entity,
+								Character = entity.Character,
+								Part = targetPart
+							}
 						end
 					end
 				end
@@ -1302,78 +1423,55 @@ Secure.Thread:SpawnSafe("RadarESPUpdater", function()
 		purgeDeadESP()
 
 		if State.ESPEnabled then
-			for _, plr in ipairs(Players:GetPlayers()) do
-				if plr ~= LocalPlayer and plr.Character then
-					local char = plr.Character
-					local hrp = char:FindFirstChild("HumanoidRootPart")
-					local hum = char:FindFirstChildOfClass("Humanoid")
+			for _, entity in ipairs(getAllEntities()) do
+				local isIgnored = State.IgnoredESPTeams[entity.TeamId] == true
+				local char = entity.Character
+				local hrp = entity.RootPart
+				local hum = entity.Humanoid
 
-					if hrp and hum and hum.Health > 0 and char:IsDescendantOf(Workspace) then
-						local esp = ESPCache[char]
-						if not esp then
-							local bb = Instance.new("BillboardGui")
-							bb.Name = "ESP_" .. plr.Name
-							bb.Size = UDim2.new(0, 160, 0, 38)
-							bb.AlwaysOnTop = true
-							bb.Adornee = hrp
-							bb.Parent = ESPFolder
+				local esp = ESPCache[char]
+				if not esp then
+					local bb = Instance.new("BillboardGui")
+					bb.Name = "ESP_" .. entity.Name
+					bb.Size = UDim2.new(0, 160, 0, 38)
+					bb.AlwaysOnTop = true
+					bb.Adornee = hrp
+					bb.Parent = ESPFolder
 
-							local label = Instance.new("TextLabel")
-							label.Size = UDim2.new(1, 0, 1, 0)
-							label.BackgroundTransparency = 1
-							label.Font = Enum.Font.GothamBold
-							label.TextSize = 10
-							label.TextColor3 = State.ColorAlly
-							label.TextStrokeTransparency = 0.25
-							label.Parent = bb
+					local label = Instance.new("TextLabel")
+					label.Size = UDim2.new(1, 0, 1, 0)
+					label.BackgroundTransparency = 1
+					label.Font = Enum.Font.GothamBold
+					label.TextSize = 10
+					label.TextColor3 = entity.TeamColor
+					label.TextStrokeTransparency = 0.25
+					label.Parent = bb
 
-							local hl = Instance.new("Highlight")
-							hl.Adornee = char
-							hl.FillColor = State.ColorAlly
-							hl.OutlineColor = Color3.fromRGB(255, 255, 255)
-							hl.FillTransparency = 0.55
-							hl.OutlineTransparency = 0.15
-							hl.Parent = ESPFolder
+					local hl = Instance.new("Highlight")
+					hl.Adornee = char
+					hl.FillColor = entity.TeamColor
+					hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+					hl.FillTransparency = 0.55
+					hl.OutlineTransparency = 0.15
+					hl.Parent = ESPFolder
 
-							esp = { Billboard = bb, Label = label, Highlight = hl }
-							ESPCache[char] = esp
-						end
+					esp = { Billboard = bb, Label = label, Highlight = hl }
+					ESPCache[char] = esp
+				end
 
-						esp.Billboard.Adornee = hrp
-						esp.Highlight.Adornee = char
+				esp.Billboard.Adornee = hrp
+				esp.Highlight.Adornee = char
 
-						local dist = (hrp.Position - Camera.CFrame.Position).Magnitude
-						local teamName = plr.Team and plr.Team.Name:lower() or "neutral"
-						local originalTeamName = plr.Team and plr.Team.Name or "Neutral"
-						local teamBadge = "🛡️ Neutral"
-						local teamColor = State.ColorAlly
-
-						if teamName:find("police") or teamName:find("guard") or teamName:find("polic") then
-							teamBadge = "👮 Policía"
-							teamColor = State.ColorPolice
-						elseif teamName:find("crim") then
-							teamBadge = "🔴 Criminal"
-							teamColor = State.ColorCriminal
-						elseif teamName:find("prison") or teamName:find("pris") then
-							teamBadge = "⛓️ Prisionero"
-							teamColor = State.ColorPrisoner
-						elseif LocalPlayer and LocalPlayer.Team and plr.Team and LocalPlayer.Team == plr.Team then
-							teamBadge = "🛡️ Aliado"
-							teamColor = State.ColorAlly
-						end
-
-						local isIgnored = State.IgnoredESPTeams[originalTeamName] == true
-						if isIgnored then
-							esp.Billboard.Visible = false
-							esp.Highlight.Enabled = false
-						else
-							esp.Label.TextColor3 = teamColor
-							esp.Highlight.FillColor = teamColor
-							esp.Label.Text = string.format("%s [%s]\n%d HP | %d m", plr.Name, teamBadge, math.floor(hum.Health), math.floor(dist))
-							esp.Billboard.Visible = true
-							esp.Highlight.Enabled = true
-						end
-					end
+				if isIgnored then
+					esp.Billboard.Visible = false
+					esp.Highlight.Enabled = false
+				else
+					local dist = (hrp.Position - Camera.CFrame.Position).Magnitude
+					esp.Label.TextColor3 = entity.TeamColor
+					esp.Highlight.FillColor = entity.TeamColor
+					esp.Label.Text = string.format("%s [%s]\n%d HP | %d m", entity.Name, entity.TeamBadge, math.floor(hum.Health), math.floor(dist))
+					esp.Billboard.Visible = true
+					esp.Highlight.Enabled = true
 				end
 			end
 		else
@@ -1436,30 +1534,54 @@ Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gam
 
 	if gameProcessed then return end
 
-	-- 3. Atajos de Funcionalidades
-	if input.KeyCode == State.AimbotToggleKey then
-		State.AimbotEnabled = not State.AimbotEnabled
-	end
-
-	if input.KeyCode == State.NoclipKey then
-		State.Noclip = not State.Noclip
-	end
-
-	if input.KeyCode == State.FlyKey then
-		State.FlyEnabled = not State.FlyEnabled
-	end
-
-	if input.KeyCode == State.ESPKey then
-		State.ESPEnabled = not State.ESPEnabled
-		if not State.ESPEnabled then
-			for _, esp in pairs(ESPCache) do
-				if esp.Billboard then esp.Billboard.Visible = false end
-				if esp.Highlight then esp.Highlight.Enabled = false end
+	-- 3. Atajos de Funcionalidades (REQUERIMIENTO ESTRICTO: CTRL + TECLA)
+	if ctrlActive then
+		if input.KeyCode == State.AimbotToggleKey then
+			State.AimbotEnabled = not State.AimbotEnabled
+		elseif input.KeyCode == State.NoclipKey then
+			State.Noclip = not State.Noclip
+		elseif input.KeyCode == State.FlyKey then
+			State.FlyEnabled = not State.FlyEnabled
+		elseif input.KeyCode == State.ESPKey then
+			State.ESPEnabled = not State.ESPEnabled
+			if not State.ESPEnabled then
+				for _, esp in pairs(ESPCache) do
+					if esp.Billboard then esp.Billboard.Visible = false end
+					if esp.Highlight then esp.Highlight.Enabled = false end
+				end
+			end
+		elseif input.KeyCode == State.FullbrightKey then
+			State.Fullbright = not State.Fullbright
+			if Lighting then
+				pcall(function()
+					if State.Fullbright then
+						Lighting.Brightness = 2
+						Lighting.FogEnd = 100000
+						Lighting.GlobalShadows = false
+					else
+						Lighting.Brightness = 1
+						Lighting.GlobalShadows = true
+					end
+				end)
+			end
+		elseif input.KeyCode == State.ForwardJumpKey and State.ForwardJump then
+			local char = LocalPlayer and LocalPlayer.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, State.ForwardJumpPower, hrp.AssemblyLinearVelocity.Z)
+			end
+		elseif input.KeyCode == State.HorizontalJumpKey and State.HorizontalJump then
+			local char = LocalPlayer and LocalPlayer.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			if hrp and hum then
+				local moveDir = hum.MoveDirection.Magnitude > 0.1 and hum.MoveDirection.Unit or hrp.CFrame.LookVector
+				hrp.AssemblyLinearVelocity = moveDir * State.HorizontalJumpPower + Vector3.new(0, 15, 0)
 			end
 		end
 	end
 
-	-- Salto Infinito en el Aire con Potencia Editable
+	-- Salto Infinito en el Aire con Potencia Editable (ESPACIO sin requerir Ctrl)
 	if input.KeyCode == State.InfiniteJumpKey and State.InfiniteJump then
 		local char = LocalPlayer and LocalPlayer.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -1467,26 +1589,6 @@ Connections.InputBegan = UserInputService.InputBegan:Connect(function(input, gam
 		if hum and hrp then
 			hum:ChangeState(Enum.HumanoidStateType.Jumping)
 			hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, State.InfiniteJumpPower, hrp.AssemblyLinearVelocity.Z)
-		end
-	end
-
-	-- Impulso Vertical (Tecla X)
-	if input.KeyCode == State.ForwardJumpKey and State.ForwardJump then
-		local char = LocalPlayer and LocalPlayer.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		if hrp then
-			hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, State.ForwardJumpPower, hrp.AssemblyLinearVelocity.Z)
-		end
-	end
-
-	-- Dash Horizontal (Tecla G)
-	if input.KeyCode == State.HorizontalJumpKey and State.HorizontalJump then
-		local char = LocalPlayer and LocalPlayer.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if hrp and hum then
-			local moveDir = hum.MoveDirection.Magnitude > 0.1 and hum.MoveDirection.Unit or hrp.CFrame.LookVector
-			hrp.AssemblyLinearVelocity = moveDir * State.HorizontalJumpPower + Vector3.new(0, 15, 0)
 		end
 	end
 end)
