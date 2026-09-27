@@ -235,7 +235,7 @@ local State = {
 	OffsetY = -28, -- Predeterminado a -28
 
 	-- Visuales & ESP
-	ESPEnabled = false,
+	ESPEnabled = true,
 	SpectateEnabled = false,
 	Fullbright = false,
 	LockOnEnabled = false,
@@ -1096,6 +1096,7 @@ local function performFullCleanup()
 	for _, conn in pairs(Connections) do pcall(function() conn:Disconnect() end) end
 	Connections = {}
 	for char, esp in pairs(ESPCache) do
+		if esp.Connection then pcall(function() esp.Connection:Disconnect() end) end
 		if esp.Billboard then pcall(function() esp.Billboard:Destroy() end) end
 		if esp.Highlight then pcall(function() esp.Highlight:Destroy() end) end
 	end
@@ -1135,6 +1136,60 @@ local function isPartVisible(origin, targetPart, targetChar)
 	return false
 end
 
+-- Función para determinar el equipo real según la estructura de Jailbreak
+local function getPlayerTeam(plr, char)
+	if not plr then
+		if char and (char.Name:find("Boss") or char.Name:find("CEO")) then
+			return "Boss"
+		elseif char and (char.Name:find("Guard") or char.Name:find("Enforcer") or char.Name:find("Bodyguard")) then
+			return "NPC"
+		end
+		return "NPC"
+	end
+
+	local teamVal = plr:FindFirstChild("TeamValue") or (char and char:FindFirstChild("TeamValue"))
+	local teamName = (teamVal and teamVal:IsA("StringValue") and teamVal.Value ~= "" and teamVal.Value)
+		or (plr.Team and plr.Team.Name)
+		or ""
+
+	if teamName == "Police" or teamName:lower():find("police") or teamName:lower():find("cop") then
+		return "Police"
+	elseif teamName == "Prisoner" or teamName:lower():find("pris") then
+		if plr:GetAttribute("HasEscaped") == true then
+			return "Criminal"
+		else
+			return "Prisoner"
+		end
+	elseif teamName == "Criminal" or teamName:lower():find("crim") then
+		return "Criminal"
+	end
+	return "Police"
+end
+
+local function getTeamColorAndBadge(teamId, plr)
+	local isAlly = false
+	if plr and LocalPlayer and plr ~= LocalPlayer then
+		local myTeam = getPlayerTeam(LocalPlayer, LocalPlayer.Character)
+		if myTeam ~= "" and myTeam == teamId then
+			isAlly = true
+		end
+	end
+
+	if isAlly then
+		return State.ColorAlly, "🛡️ ALIADO"
+	elseif teamId == "Police" then
+		return State.ColorPolice, "👮 POLICÍA"
+	elseif teamId == "Criminal" then
+		return State.ColorCriminal, "🔴 CRIMINAL"
+	elseif teamId == "Prisoner" then
+		return State.ColorPrisoner, "⛓️ PRISIONERO"
+	elseif teamId == "Boss" then
+		return Color3.fromRGB(255, 215, 0), "👑 JEFE"
+	else
+		return Color3.fromRGB(180, 80, 255), "🤖 GUARDIA"
+	end
+end
+
 -- Clasificador Universal de Entidades para Jailbreak (Badimo Architecture)
 local function getEntityInfo(char)
 	if not char or not char.Parent then return nil end
@@ -1146,56 +1201,9 @@ local function getEntityInfo(char)
 	local plr = Players:GetPlayerFromCharacter(char) or Players:FindFirstChild(char.Name)
 	if plr and plr == LocalPlayer then return nil end
 
-	local teamId = "NPC"
-	local teamBadge = "🤖 Guardia"
-	local teamColor = Color3.fromRGB(180, 80, 255)
-	local displayName = char.Name
-
-	if plr then
-		displayName = (plr.DisplayName and plr.DisplayName ~= "" and plr.DisplayName ~= plr.Name) and (plr.DisplayName .. " (@" .. plr.Name .. ")") or plr.Name
-		local teamVal = plr:FindFirstChild("TeamValue") or char:FindFirstChild("TeamValue")
-		local rawTeam = (teamVal and teamVal:IsA("StringValue") and teamVal.Value ~= "" and teamVal.Value)
-			or (plr.Team and plr.Team.Name)
-			or ""
-		local lower = rawTeam:lower()
-
-		if lower:find("police") or lower:find("guard") or lower:find("polic") or lower:find("cop") then
-			teamId = "Police"
-			teamBadge = "👮 Policía"
-			teamColor = State.ColorPolice
-		elseif lower:find("crim") then
-			teamId = "Criminal"
-			teamBadge = "🔴 Criminal"
-			teamColor = State.ColorCriminal
-		elseif lower:find("prison") or lower:find("pris") or lower:find("inmate") then
-			teamId = "Prisoner"
-			teamBadge = "⛓️ Prisionero"
-			teamColor = State.ColorPrisoner
-		else
-			if plr.Team then
-				local tName = plr.Team.Name:lower()
-				if tName:find("police") or tName:find("cop") then teamId = "Police"; teamBadge = "👮 Policía"; teamColor = State.ColorPolice
-				elseif tName:find("crim") then teamId = "Criminal"; teamBadge = "🔴 Criminal"; teamColor = State.ColorCriminal
-				elseif tName:find("pris") then teamId = "Prisoner"; teamBadge = "⛓️ Prisionero"; teamColor = State.ColorPrisoner
-				end
-			end
-		end
-
-		local myTeamVal = LocalPlayer and (LocalPlayer:FindFirstChild("TeamValue") or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("TeamValue")))
-		local myRawTeam = (myTeamVal and myTeamVal.Value) or (LocalPlayer and LocalPlayer.Team and LocalPlayer.Team.Name) or ""
-		if myRawTeam ~= "" and rawTeam ~= "" and rawTeam == myRawTeam then
-			teamBadge = "🛡️ Aliado"
-			teamColor = State.ColorAlly
-		end
-	else
-		if char.Name:find("Boss") or char.Name:find("CEO") then
-			teamBadge = "👑 JEFE"
-			teamColor = Color3.fromRGB(255, 215, 0)
-		elseif char.Name:find("Bodyguard") or char.Name:find("Enforcer") or char.Name:find("Guard") then
-			teamBadge = "🛡️ Guardia"
-			teamColor = Color3.fromRGB(180, 80, 255)
-		end
-	end
+	local teamId = getPlayerTeam(plr, char)
+	local color, badge = getTeamColorAndBadge(teamId, plr)
+	local displayName = plr and (plr.DisplayName and plr.DisplayName ~= "" and plr.DisplayName or plr.Name) or char.Name
 
 	return {
 		Character = char,
@@ -1204,8 +1212,8 @@ local function getEntityInfo(char)
 		RootPart = hrp,
 		Name = displayName,
 		TeamId = teamId,
-		TeamBadge = teamBadge,
-		TeamColor = teamColor,
+		TeamBadge = badge,
+		TeamColor = color,
 	}
 end
 
@@ -1423,100 +1431,164 @@ Connections.Heartbeat = RunService.Heartbeat:Connect(function(dt)
 	end
 end)
 
--- Limpieza periódica de entidades muertas en ESPCache
-local function purgeDeadESP()
-	for char, esp in pairs(ESPCache) do
-		if not char or not char.Parent or not char:IsDescendantOf(Workspace) then
-			if esp.Billboard then pcall(function() esp.Billboard:Destroy() end) end
-			if esp.Highlight then pcall(function() esp.Highlight:Destroy() end) end
-			ESPCache[char] = nil
-		else
-			local hum = char:FindFirstChildOfClass("Humanoid")
-			if not hum or hum.Health <= 0 then
-				if esp.Billboard then esp.Billboard.Enabled = false end
-				if esp.Highlight then esp.Highlight.Enabled = false end
+-- =============================================================================
+-- MOTOR DE RADAR ESP Y ASOCIACIÓN VISUAL REACTIVA
+-- =============================================================================
+
+-- Crear componentes visuales (Highlight + BillboardGui con nombre, bando y distancia)
+local function createESP(targetPlr, character)
+	if not character or not character.Parent then return end
+	if targetPlr and targetPlr == LocalPlayer then return end
+	if character == (LocalPlayer and LocalPlayer.Character) then return end
+
+	-- Limpiar cualquier ESP anterior en este personaje
+	if ESPCache[character] then
+		local old = ESPCache[character]
+		if old.Connection then pcall(function() old.Connection:Disconnect() end) end
+		if old.Billboard then pcall(function() old.Billboard:Destroy() end) end
+		if old.Highlight then pcall(function() old.Highlight:Destroy() end) end
+		ESPCache[character] = nil
+	end
+
+	local root = character:WaitForChild("HumanoidRootPart", 4)
+		or character:FindFirstChild("Torso")
+		or character:FindFirstChild("UpperTorso")
+		or character.PrimaryPart
+	local hum = character:WaitForChild("Humanoid", 4)
+
+	if not root then return end
+
+	local teamId = getPlayerTeam(targetPlr, character)
+	local color, badge = getTeamColorAndBadge(teamId, targetPlr)
+
+	-- 1. Resaltado (Chams / Glow)
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "ESP_Highlight"
+	highlight.Adornee = character
+	highlight.FillColor = color
+	highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+	highlight.FillTransparency = 0.5
+	highlight.OutlineTransparency = 0.1
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.Enabled = State.ESPEnabled and not State.IgnoredESPTeams[teamId]
+	highlight.Parent = character
+
+	-- 2. Tag superior (Nombre + Distancia + Vida)
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "ESP_Tag"
+	billboard.Adornee = root
+	billboard.Size = UDim2.new(0, 160, 0, 42)
+	billboard.StudsOffset = Vector3.new(0, 3.2, 0)
+	billboard.AlwaysOnTop = true
+	billboard.LightInfluence = 0
+	billboard.ResetOnSpawn = false
+	billboard.Enabled = State.ESPEnabled and not State.IgnoredESPTeams[teamId]
+
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Size = UDim2.new(1, 0, 1, 0)
+	textLabel.BackgroundTransparency = 1
+	textLabel.Font = Enum.Font.GothamBold
+	textLabel.TextSize = 11
+	textLabel.TextColor3 = color
+	textLabel.TextStrokeTransparency = 0.2
+	textLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+	textLabel.Parent = billboard
+
+	billboard.Parent = character
+
+	-- Actualización dinámica en cada frame
+	local connection
+	connection = RunService.RenderStepped:Connect(function()
+		if not character or not character.Parent or not root or not root.Parent then
+			if connection then connection:Disconnect() end
+			ESPCache[character] = nil
+			return
+		end
+
+		local currentTeam = getPlayerTeam(targetPlr, character)
+		local isIgnored = State.IgnoredESPTeams[currentTeam] == true
+		if not State.ESPEnabled or isIgnored then
+			highlight.Enabled = false
+			billboard.Enabled = false
+			return
+		end
+
+		local currentColor, currentBadge = getTeamColorAndBadge(currentTeam, targetPlr)
+		highlight.FillColor = currentColor
+		textLabel.TextColor3 = currentColor
+
+		local dist = Camera and math.floor((Camera.CFrame.Position - root.Position).Magnitude) or 0
+		local hp = hum and math.floor(hum.Health) or 100
+		local displayName = targetPlr and (targetPlr.DisplayName and targetPlr.DisplayName ~= "" and targetPlr.DisplayName or targetPlr.Name) or character.Name
+
+		textLabel.Text = string.format("%s [%s]\n%d HP | %d m", displayName, currentBadge, hp, dist)
+		highlight.Enabled = true
+		billboard.Enabled = true
+	end)
+
+	ESPCache[character] = {
+		Billboard = billboard,
+		Highlight = highlight,
+		Label = textLabel,
+		Connection = connection,
+		Player = targetPlr,
+		Character = character,
+		Root = root
+	}
+end
+
+-- Gestión reactiva de jugadores y reapariciones
+local function setupPlayer(player)
+	if player == LocalPlayer then return end
+
+	if player.Character then
+		task.spawn(createESP, player, player.Character)
+	end
+
+	local charConn = player.CharacterAdded:Connect(function(char)
+		task.spawn(createESP, player, char)
+	end)
+	table.insert(Connections, charConn)
+end
+
+for _, player in ipairs(Players:GetPlayers()) do
+	setupPlayer(player)
+end
+
+local playerAddedConn = Players.PlayerAdded:Connect(setupPlayer)
+table.insert(Connections, playerAddedConn)
+
+-- Escaneo reactivo de NPCs (OilRig, Mansión Robbery, Bosses)
+local function scanNPCs()
+	local scanList = {}
+	local oilRig = Workspace:FindFirstChild("OilRig")
+	if oilRig then
+		local gf = oilRig:FindFirstChild("GuardsFolder") or oilRig:FindFirstChild("Guards")
+		if gf then
+			for _, g in ipairs(gf:GetChildren()) do
+				if g:IsA("Model") then table.insert(scanList, g) end
 			end
+		end
+	end
+
+	local mansion = Workspace:FindFirstChild("MansionRobbery")
+	if mansion then
+		for _, m in ipairs(mansion:GetChildren()) do
+			if m:IsA("Model") then table.insert(scanList, m) end
+		end
+	end
+
+	for _, g in ipairs(scanList) do
+		if not ESPCache[g] and g:FindFirstChildOfClass("Humanoid") then
+			task.spawn(createESP, nil, g)
 		end
 	end
 end
 
--- Radar ESP Updater (Diferenciación Inteligente de Bandos Sin Duplicados)
-Secure.Thread:SpawnSafe("RadarESPUpdater", function()
+Secure.Thread:SpawnSafe("NPC_ESP_Scanner", function()
 	while screenGui and screenGui.Parent do
-		purgeDeadESP()
-
-		if State.ESPEnabled then
-			for _, entity in ipairs(getAllEntities()) do
-				local isIgnored = State.IgnoredESPTeams[entity.TeamId] == true
-				local char = entity.Character
-				local hrp = entity.RootPart
-				local hum = entity.Humanoid
-
-				local esp = ESPCache[char]
-				if not esp then
-					local bb = Instance.new("BillboardGui")
-					bb.Name = "JBESP_Billboard"
-					bb.Size = UDim2.new(0, 160, 0, 40)
-					bb.StudsOffset = Vector3.new(0, 3.2, 0)
-					bb.AlwaysOnTop = true
-					bb.LightInfluence = 0
-					bb.ResetOnSpawn = false
-					bb.Adornee = hrp
-					bb.Parent = char
-
-					local label = Instance.new("TextLabel")
-					label.Name = "ESPLabel"
-					label.Size = UDim2.new(1, 0, 1, 0)
-					label.BackgroundTransparency = 1
-					label.Font = Enum.Font.GothamBold
-					label.TextSize = 10
-					label.TextColor3 = entity.TeamColor
-					label.TextStrokeTransparency = 0.2
-					label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-					label.Parent = bb
-
-					local hl = Instance.new("Highlight")
-					hl.Name = "JBESP_Highlight"
-					hl.Adornee = char
-					hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-					hl.FillColor = entity.TeamColor
-					hl.OutlineColor = Color3.fromRGB(255, 255, 255)
-					hl.FillTransparency = 0.55
-					hl.OutlineTransparency = 0.15
-					hl.Parent = char
-
-					esp = { Billboard = bb, Label = label, Highlight = hl }
-					ESPCache[char] = esp
-				end
-
-				if esp.Billboard and esp.Billboard.Parent ~= char then
-					esp.Billboard.Adornee = hrp
-					esp.Billboard.Parent = char
-				end
-				if esp.Highlight and esp.Highlight.Parent ~= char then
-					esp.Highlight.Adornee = char
-					esp.Highlight.Parent = char
-				end
-
-				if isIgnored then
-					esp.Billboard.Enabled = false
-					esp.Highlight.Enabled = false
-				else
-					local dist = (hrp.Position - Camera.CFrame.Position).Magnitude
-					esp.Label.TextColor3 = entity.TeamColor
-					esp.Highlight.FillColor = entity.TeamColor
-					esp.Label.Text = string.format("%s [%s]\n%d HP | %d m", entity.Name, entity.TeamBadge, math.floor(hum.Health), math.floor(dist))
-					esp.Billboard.Enabled = true
-					esp.Highlight.Enabled = true
-				end
-			end
-		else
-			for _, esp in pairs(ESPCache) do
-				if esp.Billboard then esp.Billboard.Enabled = false end
-				if esp.Highlight then esp.Highlight.Enabled = false end
-			end
-		end
-		task.wait(0.12)
+		scanNPCs()
+		task.wait(2)
 	end
 end)
 
@@ -1525,6 +1597,7 @@ Connections.PlayerRemoving = Players.PlayerRemoving:Connect(function(plr)
 	if plr.Character then
 		local esp = ESPCache[plr.Character]
 		if esp then
+			if esp.Connection then pcall(function() esp.Connection:Disconnect() end) end
 			if esp.Billboard then pcall(function() esp.Billboard:Destroy() end) end
 			if esp.Highlight then pcall(function() esp.Highlight:Destroy() end) end
 			ESPCache[plr.Character] = nil
