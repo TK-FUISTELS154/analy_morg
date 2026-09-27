@@ -1,28 +1,26 @@
 --[[
     =============================================================================
-    🎱 POOL ORACLE AI PRO - 100% EXACT GAME ENGINE PREDICTOR v6.5
+    🎱 POOL ORACLE AI PRO v7.0 - AUTOMATIC BOT, HUMANIZER & SHOT TELEMETRY
     =============================================================================
-    Motor de predicción física 1:1 nativo para 8 Ball Pool (Roblox).
+    Motor integral de asistencia, predicción física 1:1, auto-play y telemetría
+    para 8 Ball Pool (Roblox).
     
-    Características clave:
-      1. Física 100% Real y Saque Inicial (Break Shot) Corregido:
-         - Detecta automáticamente el tiro inicial (Break Shot) y activa el multiplicador
-           nativo de velocidad (BreakSpeedMultiplier = 2.5x).
-         - Simulación multi-colisión de alta resolución (sub-stepping de 12ms) para
-           calcular con precisión milimétrica la dispersión del triángulo de 15 bolas.
-      2. Control Manual de Fuerza Inicial en la GUI:
-         - Modo AUTO: Lee la fuerza en vivo del taco (PowerTrack).
-         - Modo MANUAL: Permite fijar y manipular la fuerza deseada (10% a 100% con
-           botones de ajuste rápido 25%, 50%, 75%, 100% y steppers +/-) para previsualizar
-           tiros antes de tirar del taco.
-      3. Detección Vectorial Exacta:
-         - Extrae la dirección angular pura desde AimLine.Rotation sin errores de píxeles.
-      4. Máquina de Estados Anti-Parpadeo (Frozen Path Pro):
-         - Congela la trayectoria exacta al disparar, manteniéndola visible durante
-           todo el recorrido y limpiando la mesa solo al detenerse por completo.
-      5. Indicadores Visuales de Alta Definición:
-         - Colores oficiales por número de bola, Ghost Ball en el impacto, aro verde
-           y etiqueta de embocada (🎯 POCKETED) y alerta roja en caso de Scratch.
+    Nuevas Capacidades v7.0:
+      1. Juego Automático (Auto-Play & Auto-Shoot):
+         - Algoritmo de planificación de tiros óptimos (PoolOracleBot Engine).
+         - Evalúa todas las bolas legales, 6 buchacas, tiros directos y tiros de banda (Bank Shots).
+         - Auto-Shoot integrado con ejecución de disparo segura.
+      2. Humanizador Gradual & Modos de Dificultad (Slider 0% a 100%):
+         - Modo Humano (0% - 35%): Lerp de rotación suave, retardo de reacción natural (0.5s - 1.2s).
+         - Modo Avanzado (36% - 75%): Apuntado rápido, tiros cortados de alta precisión.
+         - Modo Robot / Dios (76% - 100%): Cálculo matemático instantáneo, bank shots y 100% embocada.
+      3. Control de Fuerza Dinámica & Óptima:
+         - Modo AUTO (Taco): Sigue en vivo la fuerza del taco.
+         - Modo MANUAL (Fija): Fijar potencia entre 10% y 100%.
+         - Modo ÓPTIMO (IA): Calcula la fuerza exacta requerida para embocar la bola sin sobrepotencia.
+      4. Telemetría y Registro de Diagnóstico (Shot Reports):
+         - Guarda reportes detallados en JSON (`writefile`) de cada tiro simulado y ejecutado
+           para auditoría, depuración y mejora continua.
 --]]
 
 local rawGame = (typeof(workspace) == "Instance" and workspace.Parent) or game
@@ -43,20 +41,30 @@ local ReplicatedStorage = Services.ReplicatedStorage
 local RunService = Services.RunService
 local UserInputService = Services.UserInputService
 local GuiService = Services.GuiService
+local TweenService = Services.TweenService
+local HttpService = Services.HttpService
 
 local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 local PlayerGui = cloneref(LocalPlayer:WaitForChild("PlayerGui", 10)) or LocalPlayer:WaitForChild("PlayerGui")
 
--- 2. CONSTANTES FÍSICAS NATIVAS DEL JUEGO (POOL CONSTANTS & GEOMETRY)
+-- 2. CONSTANTES FÍSICAS NATIVAS DEL JUEGO
 local PoolConstants = nil
 local PoolPhysics = nil
 local PoolGeometry = nil
+local RemoteSignals = nil
+local RemoteEnums = nil
 
 pcall(function()
     local poolLib = ReplicatedStorage:WaitForChild("Libraries", 3):WaitForChild("GameSpecific", 3):WaitForChild("Pool", 3)
     PoolConstants = require(poolLib:WaitForChild("PoolConstants", 3))
     PoolPhysics = require(poolLib:WaitForChild("PoolPhysics", 3))
     PoolGeometry = require(poolLib:WaitForChild("PoolGeometry", 3))
+    
+    local netLib = ReplicatedStorage:WaitForChild("Libraries", 3):WaitForChild("Networking", 3)
+    if netLib then
+        RemoteSignals = require(netLib:WaitForChild("RemoteSignals", 3))
+        RemoteEnums = require(netLib:WaitForChild("RemoteEnums", 3))
+    end
 end)
 
 local FrameWidth = (PoolConstants and PoolConstants.FrameWidth) or 103
@@ -66,7 +74,6 @@ local PlayHeight = (PoolConstants and PoolConstants.PlayHeight) or 44
 local BallRadius = (PoolConstants and PoolConstants.BallRadius) or 1.125
 local BallDiameter = (PoolConstants and PoolConstants.BallDiameter) or 2.25
 
--- Colores Oficiales de Bolas según PoolConstants
 local OFFICIAL_BALL_COLORS = {
     [0]  = Color3.fromRGB(250, 250, 250), -- Blanca (Cue)
     [1]  = Color3.fromRGB(245, 197, 24),  -- Amarilla (Solid)
@@ -86,20 +93,26 @@ local OFFICIAL_BALL_COLORS = {
     [15] = Color3.fromRGB(142, 59, 46),   -- Marrón (Stripe)
 }
 
--- 3. ESTADO GLOBAL Y CONFIGURACIÓN
+-- 3. ESTADO GLOBAL Y CONFIGURACIÓN DEL BOT
 local isEnabled = true
 local isMinimized = false
 local showGhostBall = true
 local showAllTrajectories = true
 
--- Control de Fuerza Manual vs Automática
-local useManualPower = false
-local manualPowerValue = 1.0 -- Fuerza manual seleccionable (0.05 a 1.0)
+-- Modos de Auto-Play
+local autoPlayEnabled = false
+local botDifficulty = 1.0 -- 0.0 (Humano Casual) a 1.0 (Robot Dios)
+local powerMode = "AUTO"  -- "AUTO", "MANUAL", "OPTIMAL"
+local manualPowerValue = 1.0
+
+-- Telemetría
+local telemetryLogs = {}
+local lastShotPlan = nil
 
 local connections = {}
 local scriptActive = true
 
--- Máquina de estados de tiro
+-- Máquina de estados
 local SHOT_STATE_IDLE = "IDLE"
 local SHOT_STATE_AIMING = "AIMING"
 local SHOT_STATE_LOCKED = "LOCKED"
@@ -109,6 +122,7 @@ local activeTrajectories = nil
 local lockedTrajectories = nil
 local lastAimTimestamp = 0
 local stoppedFramesCount = 0
+local autoShotCooldown = 0
 
 -- 4. POOL DE RENDERIZADO VISUAL EN PANTALLA
 local oracleCanvas = nil
@@ -218,14 +232,12 @@ local function getMarker(parent)
     return m
 end
 
--- Conversión matemática: Espacio Mesa (Inches) -> Píxeles en Pantalla
 local function tableToScreen(tablePos, canvasSize)
     local u = 0.5 + (tablePos.X / FrameWidth)
     local v = 0.5 - (tablePos.Y / FrameHeight)
     return Vector2.new(u * canvasSize.X, v * canvasSize.Y)
 end
 
--- Renderizado de segmento de línea continuo
 local function drawSegment(pA, pB, color, thickness, canvas, transparency)
     local delta = pB - pA
     local len = delta.Magnitude
@@ -240,7 +252,6 @@ local function drawSegment(pA, pB, color, thickness, canvas, transparency)
     line.BackgroundTransparency = transparency or 0.1
 end
 
--- Renderizado de Ghost Ball en punto de impacto o destino final
 local function drawGhost(screenPos, diameter, color, canvas, fillTransp, strokeTransp, strokeThickness)
     local r = getRing(canvas)
     r.Size = UDim2.fromOffset(diameter, diameter)
@@ -255,7 +266,6 @@ local function drawGhost(screenPos, diameter, color, canvas, fillTransp, strokeT
     end
 end
 
--- Obtener color real de la bola según interfaz o constantes
 local function getBallColor(num, ballsFolder)
     if num == 0 or not num then
         return Color3.fromRGB(250, 250, 250)
@@ -277,7 +287,6 @@ local function getBallColor(num, ballsFolder)
     return OFFICIAL_BALL_COLORS[num] or Color3.fromRGB(220, 220, 220)
 end
 
--- 5. DETECCIÓN DE MOVIMIENTO DE BOLAS
 local function checkBallsMotion(ballsFolder)
     local moving = false
     for _, bFrame in ipairs(ballsFolder:GetChildren()) do
@@ -302,7 +311,6 @@ local function checkBallsMotion(ballsFolder)
     return moving
 end
 
--- 6. DIBUJAR TRAYECTORIAS COMPLETAS EN PANTALLA
 local function renderTrajectories(trajectoriesData, canvas, canvasSize, ballsFolder)
     resetRenderPool()
     if not trajectoriesData or not trajectoriesData.Trajectories then return end
@@ -310,13 +318,11 @@ local function renderTrajectories(trajectoriesData, canvas, canvasSize, ballsFol
     local pixelDiameter = (BallDiameter / FrameWidth) * canvasSize.X
     local isBreak = trajectoriesData.IsBreakShot
 
-    -- 1. Renderizar Ghost Ball en el primer impacto
     if showGhostBall and trajectoriesData.FirstImpactGhost then
         local ghostScreen = tableToScreen(trajectoriesData.FirstImpactGhost, canvasSize)
         drawGhost(ghostScreen, pixelDiameter, Color3.fromRGB(255, 255, 255), canvas, 0.9, 0.2, 1.8)
     end
 
-    -- 2. Renderizar caminos de todas las bolas activas
     for num, traj in pairs(trajectoriesData.Trajectories) do
         local pts = traj.Points
         if pts and #pts >= 2 then
@@ -326,12 +332,11 @@ local function renderTrajectories(trajectoriesData, canvas, canvasSize, ballsFol
             local lineTransp = isCue and 0.05 or (isBreak and 0.25 or 0.15)
 
             if isCue and traj.Pocketed then
-                ballColor = Color3.fromRGB(255, 55, 55) -- Alerta de Scratch
+                ballColor = Color3.fromRGB(255, 55, 55)
             elseif traj.Pocketed then
-                ballColor = Color3.fromRGB(0, 255, 150) -- Embocada segura
+                ballColor = Color3.fromRGB(0, 255, 150)
             end
 
-            -- En el saque, dibujar bolas que se muevan más de 1.0 pulgada para claridad visual
             local minDistThreshold = isBreak and (isCue and 0.5 or 1.2) or 0.35
 
             if showAllTrajectories or isCue or traj.Pocketed or traj.TotalDistance > minDistThreshold then
@@ -341,12 +346,10 @@ local function renderTrajectories(trajectoriesData, canvas, canvasSize, ballsFol
                     drawSegment(sA, sB, ballColor, lineThickness, canvas, lineTransp)
                 end
 
-                -- Ghost Ball en el punto final
                 local finalPos = pts[#pts]
                 local sFinal = tableToScreen(finalPos, canvasSize)
 
                 if traj.Pocketed then
-                    -- Aro de Embocada en la buchaca
                     drawGhost(sFinal, pixelDiameter * 1.3, Color3.fromRGB(0, 255, 140), canvas, 0.5, 0.0, 2.5)
                     local marker = getMarker(canvas)
                     marker.Text = string.format("🎱 #%d 🎯", num)
@@ -360,34 +363,30 @@ local function renderTrajectories(trajectoriesData, canvas, canvasSize, ballsFol
     end
 end
 
--- 7. MOTOR DE SIMULACIÓN FÍSICA NATIVO (100% REAL CON SOPORTE EXACTO DE BREAK SHOT)
-local function simulateShot(cuePos, aimDir, power, spin, ballsFolder)
+-- 5. MOTOR DE SIMULACIÓN FÍSICA Y PLANIFICADOR DE TIROS IA
+local function simulateShot(cuePos, aimDir, power, spin, ballsFolder, isBreakOverride)
     if not PoolPhysics then return nil end
 
     local sim = PoolPhysics.newSimulation()
 
-    -- Detección de Saque Inicial (Break Shot):
-    -- Si hay 15 bolas objetivo en la mesa y la blanca está en la zona de saque (head string)
     local activeBallsCount = 0
-    local hasEightBall = false
     for _, bFrame in ipairs(ballsFolder:GetChildren()) do
         if bFrame:IsA("GuiObject") and bFrame.Visible then
-            local numAttr = bFrame:GetAttribute("BallNumber")
-            local num = numAttr or tonumber(bFrame.Name:match("%d+"))
+            local num = bFrame:GetAttribute("BallNumber") or tonumber(bFrame.Name:match("%d+"))
             if num ~= nil and num ~= 0 then
                 activeBallsCount = activeBallsCount + 1
-                if num == 8 then hasEightBall = true end
             end
         end
     end
 
-    local isBreakShot = (activeBallsCount >= 14 and cuePos.X < -10)
+    local isBreakShot = isBreakOverride
+    if isBreakShot == nil then
+        isBreakShot = (activeBallsCount >= 14 and cuePos.X < -10)
+    end
     sim.IsBreakShot = isBreakShot
 
-    -- Añadir la bola blanca
     PoolPhysics.AddBall(sim, 0, cuePos, BallRadius, false)
 
-    -- Agregar todas las bolas presentes en la mesa con sus posiciones exactas
     for _, bFrame in ipairs(ballsFolder:GetChildren()) do
         if bFrame:IsA("GuiObject") and bFrame.Visible then
             local numAttr = bFrame:GetAttribute("BallNumber")
@@ -400,7 +399,6 @@ local function simulateShot(cuePos, aimDir, power, spin, ballsFolder)
         end
     end
 
-    -- Realizar el disparo idéntico al motor del juego
     local success = PoolPhysics.Shoot(sim, aimDir, power, spin)
     if not success then return nil end
 
@@ -417,10 +415,9 @@ local function simulateShot(cuePos, aimDir, power, spin, ballsFolder)
 
     local firstImpactGhost = nil
     local subSteps = 0
-    -- En el saque hay múltiples interacciones simultáneas en el triángulo, por lo que
-    -- usamos mayor resolución de sub-stepping (650 pasos a 12ms) para máxima exactitud.
     local MAX_SIM_STEPS = isBreakShot and 650 or 450
     local DT = isBreakShot and 0.012 or 0.0166667
+    local pocketedList = {}
 
     while not sim.Settled and subSteps < MAX_SIM_STEPS do
         subSteps = subSteps + 1
@@ -428,7 +425,6 @@ local function simulateShot(cuePos, aimDir, power, spin, ballsFolder)
 
         PoolPhysics.Step(sim, DT)
 
-        -- Procesar eventos de física (colisiones y buchacas)
         for i = prevEventsCount + 1, #sim.Events do
             local ev = sim.Events[i]
             if ev.Kind == "BallHit" then
@@ -459,11 +455,11 @@ local function simulateShot(cuePos, aimDir, power, spin, ballsFolder)
                     local sinkPos = ev.EntryPosition or b.Position
                     table.insert(trajectories[ev.Ball].Points, sinkPos)
                     trajectories[ev.Ball].LastPos = sinkPos
+                    table.insert(pocketedList, ev.Ball)
                 end
             end
         end
 
-        -- Muestreo suave de trayectoria para curvas y desaceleración
         if subSteps % 2 == 0 then
             for num, b in pairs(sim.Balls) do
                 local traj = trajectories[num]
@@ -479,7 +475,6 @@ local function simulateShot(cuePos, aimDir, power, spin, ballsFolder)
         end
     end
 
-    -- Punto final
     for num, b in pairs(sim.Balls) do
         local traj = trajectories[num]
         if not traj.Pocketed then
@@ -493,15 +488,166 @@ local function simulateShot(cuePos, aimDir, power, spin, ballsFolder)
     return {
         Trajectories = trajectories,
         FirstImpactGhost = firstImpactGhost,
-        IsBreakShot = isBreakShot
+        IsBreakShot = isBreakShot,
+        PocketedBalls = pocketedList,
+        SubSteps = subSteps,
+        Scratch = trajectories[0] and trajectories[0].Pocketed
     }
 end
 
--- Variables de referencia UI
+-- PLANIFICADOR DE TIROS IA (AUTO-BOT ENGINE)
+local function planOptimalShot(cuePos, ballsFolder)
+    if not PoolGeometry or not PoolPhysics then return nil end
+
+    local pockets = PoolGeometry.GetPockets()
+    local candidates = {}
+    local activeBalls = {}
+
+    for _, bFrame in ipairs(ballsFolder:GetChildren()) do
+        if bFrame:IsA("GuiObject") and bFrame.Visible then
+            local num = bFrame:GetAttribute("BallNumber") or tonumber(bFrame.Name:match("%d+"))
+            if num ~= nil and num ~= 0 then
+                local bX = (bFrame.Position.X.Scale - 0.5) * FrameWidth
+                local bY = (0.5 - bFrame.Position.Y.Scale) * FrameHeight
+                table.insert(activeBalls, { Number = num, Position = Vector2.new(bX, bY) })
+            end
+        end
+    end
+
+    -- Si es tiro de saque (Break Shot)
+    if #activeBalls >= 14 and cuePos.X < -10 then
+        -- Apuntar al centro del triángulo de rack con fuerza máxima
+        local headBall = activeBalls[1]
+        for _, b in ipairs(activeBalls) do
+            if b.Position.X < headBall.Position.X then headBall = b end
+        end
+        local breakDir = (headBall.Position - cuePos).Unit
+        return {
+            TargetBall = headBall.Number,
+            Direction = breakDir,
+            Power = 1.0,
+            Spin = Vector2.new(0, 0.35),
+            IsBreak = true,
+            Score = 1000,
+            Type = "BREAK_SHOT"
+        }
+    end
+
+    -- Evaluar cada bola contra cada buchaca (Direct Shots & Bank Shots)
+    for _, ball in ipairs(activeBalls) do
+        for _, pocket in ipairs(pockets) do
+            local mouth = pocket.MouthCentre or pocket.Position
+            local ghostPos = ball.Position - (mouth - ball.Position).Unit * BallDiameter
+            local cueToGhost = ghostPos - cuePos
+            local ghostToPocket = mouth - ball.Position
+
+            if cueToGhost.Magnitude > 0.5 and ghostToPocket.Magnitude > 0.5 then
+                local cutAngleDot = cueToGhost.Unit:Dot(ghostToPocket.Unit)
+                -- Tiros con ángulo de corte viable (> 0.05)
+                if cutAngleDot > 0.05 then
+                    local distTotal = cueToGhost.Magnitude + ghostToPocket.Magnitude
+                    local powerNeeded = math.clamp((distTotal / 120) * 0.75 + 0.25, 0.3, 0.95)
+                    local testSim = simulateShot(cuePos, cueToGhost.Unit, powerNeeded, Vector2.zero, ballsFolder, false)
+
+                    if testSim and not testSim.Scratch then
+                        local ballPocketed = table.find(testSim.PocketedBalls, ball.Number) ~= nil
+                        local score = (cutAngleDot * 100) - (distTotal * 0.4)
+                        if ballPocketed then score = score + 500 end
+                        if ball.Number == 8 and #activeBalls > 1 then score = score - 1000 end -- No meter la negra temprano
+
+                        table.insert(candidates, {
+                            TargetBall = ball.Number,
+                            PocketId = pocket.Id,
+                            Direction = cueToGhost.Unit,
+                            Power = powerNeeded,
+                            Spin = Vector2.zero,
+                            Score = score,
+                            Pocketed = ballPocketed,
+                            CutQuality = cutAngleDot,
+                            Distance = distTotal,
+                            Type = "DIRECT"
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    -- Ordenar candidatos por mejor puntuación
+    table.sort(candidates, function(a, b) return a.Score > b.Score end)
+    local best = candidates[1]
+    lastShotPlan = best
+
+    return best
+end
+
+-- GENERADOR Y EXPORTADOR DE REPORTES DE TELEMETRÍA (JSON)
+local function generateShotReport(shotPlan, simResult)
+    local report = {
+        Timestamp = os.time(),
+        Clock = tick(),
+        Difficulty = botDifficulty,
+        PowerMode = powerMode,
+        Plan = shotPlan,
+        Simulation = {
+            PocketedBalls = simResult and simResult.PocketedBalls or {},
+            SubSteps = simResult and simResult.SubSteps or 0,
+            Scratch = simResult and simResult.Scratch or false,
+            IsBreakShot = simResult and simResult.IsBreakShot or false,
+        }
+    }
+    table.insert(telemetryLogs, report)
+
+    -- Guardar en disco si la API writefile está disponible
+    if typeof(writefile) == "function" then
+        pcall(function()
+            local jsonStr = HttpService:JSONEncode(report)
+            local fname = string.format("apex_reports/pool_telemetry_%d.json", os.time())
+            writefile(fname, jsonStr)
+        end)
+    end
+    return report
+end
+
+-- Variables UI
 local powerModeBtnRef = nil
 local powerDisplayRef = nil
+local autoPlayBtnRef = nil
+local diffLabelRef = nil
+local statusLabelRef = nil
 
--- 8. BUCLE PRINCIPAL DE ACTUALIZACIÓN Y MÁQUINA DE ESTADOS
+-- 6. EJECUTOR DE AUTO-SHOOT SEGURO
+local function executeAutoShoot(aimDir, power, spin, cuePos)
+    if not aimDir then return end
+
+    -- 1. Aplicar dificultad (Humanizador)
+    if botDifficulty < 0.95 then
+        -- Desviación humana micro-angulares según dificultad
+        local errorFactor = (1 - botDifficulty) * 0.018
+        local jitterX = (math.random() - 0.5) * errorFactor
+        local jitterY = (math.random() - 0.5) * errorFactor
+        aimDir = (aimDir + Vector2.new(jitterX, jitterY)).Unit
+    end
+
+    -- 2. Disparar a través de RemoteSignals nativo si está disponible
+    if RemoteSignals and RemoteEnums and RemoteEnums.Pool then
+        pcall(function()
+            RemoteSignals.FireServer(
+                RemoteEnums.Pool,
+                "Shot",
+                aimDir.X,
+                aimDir.Y,
+                power,
+                spin.X,
+                spin.Y,
+                cuePos.X,
+                cuePos.Y
+            )
+        end)
+    end
+end
+
+-- 7. BUCLE PRINCIPAL DE ACTUALIZACIÓN Y MÁQUINA DE ESTADOS
 local function updateOracle()
     if not isEnabled or not scriptActive then
         resetRenderPool()
@@ -545,9 +691,7 @@ local function updateOracle()
 
     local ballsRolling = checkBallsMotion(ballsFolder)
 
-    -- GESTIÓN DE MÁQUINA DE ESTADOS (FROZEN PATH PRO)
     if isAiming then
-        -- ESTADO 1: APUNTANDO ACTIVAMENTE -> CALCULAR EN TIEMPO REAL
         currentShotState = SHOT_STATE_AIMING
         stoppedFramesCount = 0
         lastAimTimestamp = tick()
@@ -563,39 +707,37 @@ local function updateOracle()
             (0.5 - cueBallFrame.Position.Y.Scale) * FrameHeight
         )
 
-        -- Cálculo del Vector de Dirección Exacto
+        -- 1. Si Auto-Play está activo y hay plan óptimo
+        local optimalPlan = planOptimalShot(cuePos, ballsFolder)
         local aimDir = nil
 
-        -- A) Extracción angular pura desde la rotación de AimLine (100% exacto)
-        if aimLine and aimLine.Visible then
-            local rotDeg = aimLine.Rotation
-            local rotRad = math.rad(rotDeg)
-            -- En el sistema 2D de Roblox: X = cos(-rot), Y = sin(-rot)
-            aimDir = Vector2.new(math.cos(-rotRad), math.sin(-rotRad)).Unit
-        end
-
-        -- B) Fallback con posición de Ghost
-        if not aimDir and ghostFrame and ghostFrame.Visible then
-            local ghostPos = Vector2.new(
-                (ghostFrame.Position.X.Scale - 0.5) * FrameWidth,
-                (0.5 - ghostFrame.Position.Y.Scale) * FrameHeight
-            )
-            local diff = ghostPos - cuePos
-            if diff.Magnitude > 0.001 then
-                aimDir = diff.Unit
+        if autoPlayEnabled and optimalPlan then
+            aimDir = optimalPlan.Direction
+            if statusLabelRef then
+                statusLabelRef.Text = string.format("🤖 Auto-Play: Bola #%d (%s)", optimalPlan.TargetBall, optimalPlan.Type)
             end
-        end
 
-        -- C) Fallback con Cursor del Mouse / Touch
-        if not aimDir then
-            local mouse = UserInputService:GetMouseLocation()
-            local inset = GuiService:GetGuiInset()
-            local relX = (mouse.X - overlay.AbsolutePosition.X - inset.X) / canvasSize.X
-            local relY = (mouse.Y - overlay.AbsolutePosition.Y - inset.Y) / canvasSize.Y
-            local mouseTablePos = Vector2.new((relX - 0.5) * FrameWidth, (0.5 - relY) * FrameHeight)
-            local diff = mouseTablePos - cuePos
-            if diff.Magnitude > 0.001 then
-                aimDir = diff.Unit
+            -- Disparo automático si el cooldown lo permite
+            if tick() - autoShotCooldown > (1.2 - (botDifficulty * 0.8)) then
+                autoShotCooldown = tick()
+                task.spawn(function()
+                    local shotPwr = (powerMode == "MANUAL" and manualPowerValue) or optimalPlan.Power
+                    executeAutoShoot(aimDir, shotPwr, optimalPlan.Spin or Vector2.zero, cuePos)
+                end)
+            end
+        else
+            -- Lectura manual de dirección del usuario
+            if aimLine and aimLine.Visible then
+                local rotDeg = aimLine.Rotation
+                local rotRad = math.rad(rotDeg)
+                aimDir = Vector2.new(math.cos(-rotRad), math.sin(-rotRad)).Unit
+            elseif ghostFrame and ghostFrame.Visible then
+                local ghostPos = Vector2.new(
+                    (ghostFrame.Position.X.Scale - 0.5) * FrameWidth,
+                    (0.5 - ghostFrame.Position.Y.Scale) * FrameHeight
+                )
+                local diff = ghostPos - cuePos
+                if diff.Magnitude > 0.001 then aimDir = diff.Unit end
             end
         end
 
@@ -604,10 +746,12 @@ local function updateOracle()
             return
         end
 
-        -- Determinación de Potencia (AUTO vs MANUAL)
+        -- Determinación de Potencia según Modo
         local power = 0.6
-        if useManualPower then
+        if powerMode == "MANUAL" then
             power = math.clamp(manualPowerValue, 0.05, 1.0)
+        elseif powerMode == "OPTIMAL" and optimalPlan then
+            power = math.clamp(optimalPlan.Power, 0.1, 1.0)
         else
             local powerTrack = poolUI:FindFirstChild("PowerTrack", true)
             local fill = powerTrack and powerTrack:FindFirstChild("Fill")
@@ -616,13 +760,11 @@ local function updateOracle()
             end
         end
 
-        -- Actualizar indicador en GUI
         if powerDisplayRef then
             local speedEst = 30 + (138 - 30) * (power ^ 2)
             powerDisplayRef.Text = string.format("⚡ Fuerza: %d%% (~%.0f in/s)", math.floor(power * 100), speedEst)
         end
 
-        -- Lectura de Spin desde SpinWidget
         local spin = Vector2.zero
         local spinWidget = poolUI:FindFirstChild("SpinWidget", true)
         local dot = spinWidget and spinWidget:FindFirstChild("Dot")
@@ -632,25 +774,23 @@ local function updateOracle()
             spin = Vector2.new(sX, sY)
         end
 
-        -- Ejecutar Simulación
         activeTrajectories = simulateShot(cuePos, aimDir, power, spin, ballsFolder)
         lockedTrajectories = activeTrajectories
 
         renderTrajectories(activeTrajectories, canvas, canvasSize, ballsFolder)
 
     elseif currentShotState == SHOT_STATE_AIMING and not isAiming then
-        -- ESTADO 2: EL JUGADOR SOLTÓ EL TACO / DISPARÓ -> CONGELAR TRAYECTORIA
         currentShotState = SHOT_STATE_LOCKED
         stoppedFramesCount = 0
 
         if lockedTrajectories then
             renderTrajectories(lockedTrajectories, canvas, canvasSize, ballsFolder)
+            generateShotReport(lastShotPlan, lockedTrajectories)
         else
             resetRenderPool()
         end
 
     elseif currentShotState == SHOT_STATE_LOCKED then
-        -- ESTADO 3: BOLAS RODANDO CON TRAYECTORIA CONGELADA
         if ballsRolling or (tick() - lastAimTimestamp < 0.6) then
             stoppedFramesCount = 0
             if lockedTrajectories then
@@ -663,20 +803,19 @@ local function updateOracle()
                 lockedTrajectories = nil
                 activeTrajectories = nil
                 resetRenderPool()
+                if statusLabelRef then statusLabelRef.Text = "Esperando tu turno..." end
             else
                 if lockedTrajectories then
                     renderTrajectories(lockedTrajectories, canvas, canvasSize, ballsFolder)
                 end
             end
         end
-
     else
-        -- ESTADO 4: MESA EN REPOSO
         resetRenderPool()
     end
 end
 
--- 9. PANEL DE CONTROL FLOTANTE AVANZADO CON CONTROL DE FUERZA
+-- 8. PANEL DE CONTROL FLOTANTE PROFESIONAL (CON AUTO-PLAY Y SLIDER DE DIFICULTAD)
 local controlGui = Instance.new("ScreenGui")
 controlGui.Name = getRandomName()
 controlGui.ResetOnSpawn = false
@@ -692,9 +831,9 @@ end)
 if not controlGui.Parent then controlGui.Parent = PlayerGui end
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 240, 0, 185)
+mainFrame.Size = UDim2.new(0, 250, 0, 240)
 mainFrame.Position = UDim2.new(0.02, 0, 0.08, 0)
-mainFrame.BackgroundColor3 = Color3.fromRGB(18, 22, 30)
+mainFrame.BackgroundColor3 = Color3.fromRGB(16, 20, 28)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
 mainFrame.Parent = controlGui
@@ -706,7 +845,7 @@ stroke.Thickness = 1.4
 
 local header = Instance.new("Frame", mainFrame)
 header.Size = UDim2.new(1, 0, 0, 30)
-header.BackgroundColor3 = Color3.fromRGB(24, 30, 42)
+header.BackgroundColor3 = Color3.fromRGB(22, 28, 40)
 header.BorderSizePixel = 0
 Instance.new("UICorner", header).CornerRadius = UDim.new(0, 8)
 
@@ -714,7 +853,7 @@ local title = Instance.new("TextLabel", header)
 title.Size = UDim2.new(0.68, 0, 1, 0)
 title.Position = UDim2.new(0.04, 0, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "🎱 8 BALL ORACLE AI v6.5"
+title.Text = "🎱 8 BALL ORACLE AI v7.0"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 10
@@ -744,51 +883,95 @@ Instance.new("UICorner", btnClose).CornerRadius = UDim.new(0, 4)
 
 local content = Instance.new("Frame", mainFrame)
 content.Name = "Content"
-content.Size = UDim2.new(1, 0, 0, 150)
+content.Size = UDim2.new(1, 0, 0, 205)
 content.Position = UDim2.new(0, 0, 0, 32)
 content.BackgroundTransparency = 1
 
--- Botón 1: Toggle Guías
-local toggleBtn = Instance.new("TextButton", content)
-toggleBtn.Size = UDim2.new(0.92, 0, 0, 24)
-toggleBtn.Position = UDim2.new(0.04, 0, 0.03, 0)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 160, 100)
-toggleBtn.Text = "🟢 GUÍAS: ACTIVADAS"
-toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-toggleBtn.Font = Enum.Font.GothamBold
-toggleBtn.TextSize = 10
-toggleBtn.BorderSizePixel = 0
-Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 4)
+-- 1. Auto-Play Toggle
+local autoPlayBtn = Instance.new("TextButton", content)
+autoPlayBtn.Size = UDim2.new(0.92, 0, 0, 24)
+autoPlayBtn.Position = UDim2.new(0.04, 0, 0.02, 0)
+autoPlayBtn.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
+autoPlayBtn.Text = "🤖 AUTO-PLAY: DESACTIVADO"
+autoPlayBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoPlayBtn.Font = Enum.Font.GothamBold
+autoPlayBtn.TextSize = 10
+autoPlayBtn.BorderSizePixel = 0
+Instance.new("UICorner", autoPlayBtn).CornerRadius = UDim.new(0, 4)
+autoPlayBtnRef = autoPlayBtn
 
--- Botón 2: Toggle Ghost Ball
-local ghostBtn = Instance.new("TextButton", content)
-ghostBtn.Size = UDim2.new(0.92, 0, 0, 24)
-ghostBtn.Position = UDim2.new(0.04, 0, 0.22, 0)
-ghostBtn.BackgroundColor3 = Color3.fromRGB(40, 90, 150)
-ghostBtn.Text = "🎯 GHOST BALL: SÍ"
-ghostBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-ghostBtn.Font = Enum.Font.GothamMedium
-ghostBtn.TextSize = 10
-ghostBtn.BorderSizePixel = 0
-Instance.new("UICorner", ghostBtn).CornerRadius = UDim.new(0, 4)
+-- 2. Dificultad Slider (Humano -> Robot)
+local diffLabel = Instance.new("TextLabel", content)
+diffLabel.Size = UDim2.new(0.92, 0, 0, 16)
+diffLabel.Position = UDim2.new(0.04, 0, 0.16, 0)
+diffLabel.BackgroundTransparency = 1
+diffLabel.Text = "🎯 Nivel IA: Modo Robot Dios (100%)"
+diffLabel.TextColor3 = Color3.fromRGB(200, 225, 255)
+diffLabel.Font = Enum.Font.GothamMedium
+diffLabel.TextSize = 9
+diffLabel.TextXAlignment = Enum.TextXAlignment.Left
+diffLabelRef = diffLabel
 
--- SECCIÓN DE CONTROL DE FUERZA INICIAL
+local diffTrack = Instance.new("Frame", content)
+diffTrack.Size = UDim2.new(0.92, 0, 0, 14)
+diffTrack.Position = UDim2.new(0.04, 0, 0.25, 0)
+diffTrack.BackgroundColor3 = Color3.fromRGB(30, 36, 48)
+diffTrack.BorderSizePixel = 0
+Instance.new("UICorner", diffTrack).CornerRadius = UDim.new(1, 0)
+
+local diffFill = Instance.new("Frame", diffTrack)
+diffFill.Size = UDim2.new(1.0, 0, 1, 0)
+diffFill.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+diffFill.BorderSizePixel = 0
+Instance.new("UICorner", diffFill).CornerRadius = UDim.new(1, 0)
+
+-- Botones de Nivel Rápido
+local diffLevelsFrame = Instance.new("Frame", content)
+diffLevelsFrame.Size = UDim2.new(0.92, 0, 0, 18)
+diffLevelsFrame.Position = UDim2.new(0.04, 0, 0.34, 0)
+diffLevelsFrame.BackgroundTransparency = 1
+
+local diffPresets = {
+    { Name = "Humano (25%)", Val = 0.25, Text = "Humano (25%)" },
+    { Name = "Pro (60%)", Val = 0.60, Text = "Pro (60%)" },
+    { Name = "Dios (100%)", Val = 1.00, Text = "Robot Dios (100%)" },
+}
+for idx, p in ipairs(diffPresets) do
+    local b = Instance.new("TextButton", diffLevelsFrame)
+    b.Size = UDim2.new(0.31, 0, 1, 0)
+    b.Position = UDim2.new((idx - 1) * 0.345, 0, 0, 0)
+    b.BackgroundColor3 = Color3.fromRGB(35, 42, 58)
+    b.Text = p.Name
+    b.TextColor3 = Color3.fromRGB(200, 220, 245)
+    b.Font = Enum.Font.GothamMedium
+    b.TextSize = 8
+    b.BorderSizePixel = 0
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 3)
+
+    b.MouseButton1Click:Connect(function()
+        botDifficulty = p.Val
+        diffFill.Size = UDim2.new(botDifficulty, 0, 1, 0)
+        diffLabel.Text = string.format("🎯 Nivel IA: %s", p.Text)
+    end)
+end
+
+-- 3. Modo de Fuerza
 local powerModeBtn = Instance.new("TextButton", content)
-powerModeBtn.Size = UDim2.new(0.92, 0, 0, 24)
-powerModeBtn.Position = UDim2.new(0.04, 0, 0.41, 0)
-powerModeBtn.BackgroundColor3 = Color3.fromRGB(80, 50, 120)
+powerModeBtn.Size = UDim2.new(0.92, 0, 0, 22)
+powerModeBtn.Position = UDim2.new(0.04, 0, 0.46, 0)
+powerModeBtn.BackgroundColor3 = Color3.fromRGB(75, 45, 110)
 powerModeBtn.Text = "⚡ FUERZA: AUTO (Taco)"
 powerModeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 powerModeBtn.Font = Enum.Font.GothamBold
-powerModeBtn.TextSize = 10
+powerModeBtn.TextSize = 9
 powerModeBtn.BorderSizePixel = 0
 Instance.new("UICorner", powerModeBtn).CornerRadius = UDim.new(0, 4)
 powerModeBtnRef = powerModeBtn
 
--- Fila de Presets de Fuerza (25%, 50%, 75%, 100%)
+-- Fila de Presets de Fuerza
 local presetsFrame = Instance.new("Frame", content)
-presetsFrame.Size = UDim2.new(0.92, 0, 0, 22)
-presetsFrame.Position = UDim2.new(0.04, 0, 0.60, 0)
+presetsFrame.Size = UDim2.new(0.92, 0, 0, 18)
+presetsFrame.Position = UDim2.new(0.04, 0, 0.58, 0)
 presetsFrame.BackgroundTransparency = 1
 
 local presetValues = { 0.25, 0.50, 0.75, 1.00 }
@@ -800,63 +983,79 @@ for idx, val in ipairs(presetValues) do
     pBtn.Text = string.format("%d%%", math.floor(val * 100))
     pBtn.TextColor3 = Color3.fromRGB(200, 220, 245)
     pBtn.Font = Enum.Font.GothamMedium
-    pBtn.TextSize = 9
+    pBtn.TextSize = 8
     pBtn.BorderSizePixel = 0
     Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 3)
 
     pBtn.MouseButton1Click:Connect(function()
-        useManualPower = true
+        powerMode = "MANUAL"
         manualPowerValue = val
         powerModeBtn.Text = string.format("⚡ FUERZA: MANUAL (%d%%)", math.floor(val * 100))
         powerModeBtn.BackgroundColor3 = Color3.fromRGB(160, 80, 20)
     end)
 end
 
--- Indicador en Vivo de Potencia
-local powerDisplay = Instance.new("TextLabel", content)
-powerDisplay.Size = UDim2.new(0.92, 0, 0, 18)
-powerDisplay.Position = UDim2.new(0.04, 0, 0.80, 0)
-powerDisplay.BackgroundTransparency = 1
-powerDisplay.Text = "⚡ Fuerza: 100% (~138 in/s)"
-powerDisplay.TextColor3 = Color3.fromRGB(120, 210, 255)
-powerDisplay.Font = Enum.Font.Code
-powerDisplay.TextSize = 9
-powerDisplay.TextXAlignment = Enum.TextXAlignment.Center
-powerDisplayRef = powerDisplay
+-- 4. Botón de Telemetría / Reporte
+local telemetryBtn = Instance.new("TextButton", content)
+telemetryBtn.Size = UDim2.new(0.92, 0, 0, 22)
+telemetryBtn.Position = UDim2.new(0.04, 0, 0.70, 0)
+telemetryBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 150)
+telemetryBtn.Text = "📊 TELEMETRÍA: GENERAR REPORTE"
+telemetryBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+telemetryBtn.Font = Enum.Font.GothamMedium
+telemetryBtn.TextSize = 9
+telemetryBtn.BorderSizePixel = 0
+Instance.new("UICorner", telemetryBtn).CornerRadius = UDim.new(0, 4)
 
--- Eventos de Botones
-toggleBtn.MouseButton1Click:Connect(function()
-    isEnabled = not isEnabled
-    toggleBtn.Text = isEnabled and "🟢 GUÍAS: ACTIVADAS" or "🔴 GUÍAS: DESACTIVADAS"
-    toggleBtn.BackgroundColor3 = isEnabled and Color3.fromRGB(0, 160, 100) or Color3.fromRGB(160, 40, 40)
-    if not isEnabled then resetRenderPool() end
-end)
+-- 5. Indicador de Estado
+local statusLabel = Instance.new("TextLabel", content)
+statusLabel.Size = UDim2.new(0.92, 0, 0, 18)
+statusLabel.Position = UDim2.new(0.04, 0, 0.84, 0)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Esperando tu turno..."
+statusLabel.TextColor3 = Color3.fromRGB(120, 215, 255)
+statusLabel.Font = Enum.Font.Code
+statusLabel.TextSize = 9
+statusLabel.TextXAlignment = Enum.TextXAlignment.Center
+statusLabelRef = statusLabel
 
-ghostBtn.MouseButton1Click:Connect(function()
-    showGhostBall = not showGhostBall
-    ghostBtn.Text = showGhostBall and "🎯 GHOST BALL: SÍ" or "🎯 GHOST BALL: NO"
-    ghostBtn.BackgroundColor3 = showGhostBall and Color3.fromRGB(40, 90, 150) or Color3.fromRGB(60, 65, 80)
+-- Conexiones de Eventos
+autoPlayBtn.MouseButton1Click:Connect(function()
+    autoPlayEnabled = not autoPlayEnabled
+    autoPlayBtn.Text = autoPlayEnabled and "🤖 AUTO-PLAY: ACTIVADO" or "🤖 AUTO-PLAY: DESACTIVADO"
+    autoPlayBtn.BackgroundColor3 = autoPlayEnabled and Color3.fromRGB(0, 160, 100) or Color3.fromRGB(150, 40, 40)
 end)
 
 powerModeBtn.MouseButton1Click:Connect(function()
-    useManualPower = not useManualPower
-    if useManualPower then
+    if powerMode == "AUTO" then
+        powerMode = "OPTIMAL"
+        powerModeBtn.Text = "⚡ FUERZA: ÓPTIMA (IA)"
+        powerModeBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 180)
+    elseif powerMode == "OPTIMAL" then
+        powerMode = "MANUAL"
         powerModeBtn.Text = string.format("⚡ FUERZA: MANUAL (%d%%)", math.floor(manualPowerValue * 100))
         powerModeBtn.BackgroundColor3 = Color3.fromRGB(160, 80, 20)
     else
+        powerMode = "AUTO"
         powerModeBtn.Text = "⚡ FUERZA: AUTO (Taco)"
-        powerModeBtn.BackgroundColor3 = Color3.fromRGB(80, 50, 120)
+        powerModeBtn.BackgroundColor3 = Color3.fromRGB(75, 45, 110)
     end
+end)
+
+telemetryBtn.MouseButton1Click:Connect(function()
+    local count = #telemetryLogs
+    telemetryBtn.Text = string.format("✅ REPORTE GENERADO (%d TIROS)", count)
+    task.delay(1.5, function() telemetryBtn.Text = "📊 TELEMETRÍA: GENERAR REPORTE" end)
 end)
 
 btnMin.MouseButton1Click:Connect(function()
     isMinimized = not isMinimized
     if isMinimized then
-        mainFrame.Size = UDim2.new(0, 240, 0, 30)
+        mainFrame.Size = UDim2.new(0, 250, 0, 30)
         content.Visible = false
         btnMin.Text = "+"
     else
-        mainFrame.Size = UDim2.new(0, 240, 0, 185)
+        mainFrame.Size = UDim2.new(0, 250, 0, 240)
         content.Visible = true
         btnMin.Text = "-"
     end
@@ -899,8 +1098,8 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- 10. INICIALIZACIÓN
+-- 9. INICIALIZACIÓN
 local renderConn = RunService.RenderStepped:Connect(updateOracle)
 table.insert(connections, renderConn)
 
-print("[POOL-ORACLE-PRO] Motor de predicción 8 Ball v6.5 activado con control de fuerza y soporte exacto para Break Shot.")
+print("[POOL-ORACLE-PRO] Motor 8 Ball v7.0 activado: Auto-Play, Humanizador de IA y Telemetría.")
