@@ -199,8 +199,12 @@ Secure.Presence:EnableAntiAFK()
 Secure.GUI:BlockDetectionText(LocalPlayer)
 
 -- =============================================================================
--- SINGLETON GUARD: DESTRUIR INSTANCIAS PREVIAS
+-- SINGLETON GUARD: DESTRUIR INSTANCIAS Y HILOS PREVIOS
 -- =============================================================================
+if _G.JailbreakCleanup then
+	pcall(_G.JailbreakCleanup)
+	_G.JailbreakCleanup = nil
+end
 if _G.JailbreakAdminSuiteInstance then
 	pcall(function() _G.JailbreakAdminSuiteInstance:Destroy() end)
 	_G.JailbreakAdminSuiteInstance = nil
@@ -1063,30 +1067,69 @@ createKeybindRow(pSettings, "Tecla Salto Infinito en Aire:", State.InfiniteJumpK
 createKeybindRow(pSettings, "Tecla Impulso Vertical (X):", State.ForwardJumpKey, function(k) State.ForwardJumpKey = k end)
 createKeybindRow(pSettings, "Tecla Dash Horizontal (G):", State.HorizontalJumpKey, function(k) State.HorizontalJumpKey = k end)
 createKeybindRow(pSettings, "Atajo Modo Noclip:", State.NoclipKey, function(k) State.NoclipKey = k end)
-createKeybindRow(pSettings, "Atajo Modo Vuelo (Fly):", State.FlyKey, function(k) State.FlyKey = k end)
-createKeybindRow(pSettings, "Atajo Radar ESP / Spy:", State.ESPKey, function(k) State.ESPKey = k end)
-createKeybindRow(pSettings, "Atajo Fullbright:", State.FullbrightKey, function(k) State.FullbrightKey = k end)
-
-createActionButton(pSettings, "💾 FORZAR GUARDADO DE CONFIGURACIÓN", PALETTE.Success, function()
-	saveConfig()
-end)
-
--- Botón Kill Process que FINALIZA POR COMPLETO el script en ejecución
-createActionButton(pSettings, "❌ FINALIZAR SUITE POR COMPLETO (KILL PROCESS)", PALETTE.Danger, function()
+createKeybindRow(pSettings, "Atajo Modo Vuelo (Fly):", State.FlyKey, function(k) State.FlyKeylocal function performFullCleanup()
 	for _, conn in pairs(Connections) do pcall(function() conn:Disconnect() end) end
-	for _, esp in pairs(ESPCache) do
+	Connections = {}
+	for char, esp in pairs(ESPCache) do
 		if esp.Billboard then pcall(function() esp.Billboard:Destroy() end) end
 		if esp.Highlight then pcall(function() esp.Highlight:Destroy() end) end
 	end
-	if screenGui then screenGui:Destroy() end
+	ESPCache = {}
+	if ESPFolder then pcall(function() ESPFolder:Destroy() end) end
+	if screenGui then pcall(function() screenGui:Destroy() end) end
 	_G.JailbreakAdminSuiteInstance = nil
-end)
+	_G.JailbreakCleanup = nil
+end
+_G.JailbreakCleanup = performFullCleanup
+
+-- Botón Kill Process que FINALIZA POR COMPLETO el script en ejecución
+createActionButton(pSettings, "❌ FINALIZAR SUITE POR COMPLETO (KILL PROCESS)", PALETTE.Danger, performFullCleanup)
 
 selectTab("Combat")
 
 -- =============================================================================
--- MOTOR DE EJECUCIÓN: AIMBOT, RADAR ESP Y MOVIMIENTO SEGURO
+-- MOTOR DE EJECUCIÓN: AIMBOT LASER, RADAR ESP Y MOVIMIENTO SEGURO
 -- =============================================================================
+
+-- Comprobador Inteligente de Visibilidad (Raycast WallCheck)
+local function isPartVisible(origin, targetPart, targetChar)
+	local myChar = LocalPlayer and LocalPlayer.Character
+	local dir = (targetPart.Position - origin)
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = { myChar, targetChar, Camera }
+	rayParams.IgnoreWater = true
+
+	local hit = Workspace:Raycast(origin, dir, rayParams)
+	if not hit then return true end
+	if hit.Instance then
+		if not hit.Instance.CanCollide or hit.Instance.Transparency > 0.65 then
+			return true
+		end
+	end
+	return false
+end
+
+-- Determina si un modelo debe ser considerado objetivo válido de Aimbot
+local function isValidAimTarget(plr, char, hum, hrp)
+	if plr == LocalPlayer then return false end
+	if not hum or hum.Health <= 0 or not hrp then return false end
+
+	if State.TargetFFA then return true end
+
+	local teamName = plr and plr.Team and plr.Team.Name or "Neutral"
+	if State.IgnoredAimTeams[teamName] == true then
+		return false
+	end
+
+	if State.TeamCheck and LocalPlayer and LocalPlayer.Team and plr and plr.Team and LocalPlayer.Team == plr.Team then
+		return false
+	end
+
+	return true
+end
+
+-- Adquisición de Objetivo Óptimo para Aimbot
 local function getBestAimbotTarget()
 	if not LocalPlayer or not Camera then return nil end
 	local myChar = LocalPlayer.Character
@@ -1104,44 +1147,27 @@ local function getBestAimbotTarget()
 	local bestTarget = nil
 	local bestDist = State.FOV_Radius
 
+	-- 1. Jugadores en Players
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr ~= LocalPlayer and plr.Character then
 			local char = plr.Character
 			local hum = char:FindFirstChildOfClass("Humanoid")
 			local hrp = char:FindFirstChild("HumanoidRootPart")
 
-			if hum and hum.Health > 0 and hrp then
-				local sameTeam = (State.TeamCheck and LocalPlayer.Team and plr.Team and LocalPlayer.Team == plr.Team)
-				local ignored = State.IgnoredAimTeams[plr.Team and plr.Team.Name or ""] or false
+			if isValidAimTarget(plr, char, hum, hrp) then
+				local targetPart = (State.TargetPart == "Head" and char:FindFirstChild("Head"))
+					or (State.TargetPart == "UpperTorso" and (char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")))
+					or hrp
 
-				if (not sameTeam and not ignored) or State.TargetFFA then
-					local targetPart = (State.TargetPart == "Head" and char:FindFirstChild("Head"))
-						or (State.TargetPart == "UpperTorso" and (char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")))
-						or hrp
-
-					if targetPart then
-						local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
-						if onScreen then
-							local targetDist = (Vector2.new(screenPos.X, screenPos.Y) - fovCenter).Magnitude
-							if targetDist <= bestDist then
-								local isVisible = true
-								if State.WallCheck then
-									local origin = Camera.CFrame.Position
-									local dir = (targetPart.Position - origin)
-									local rayParams = RaycastParams.new()
-									rayParams.FilterType = Enum.RaycastFilterType.Exclude
-									rayParams.FilterDescendantsInstances = { myChar, char }
-									rayParams.IgnoreWater = true
-									local hit = Workspace:Raycast(origin, dir, rayParams)
-									if hit and hit.Instance and hit.Instance.CanCollide then
-										isVisible = false
-									end
-								end
-
-								if isVisible then
-									bestDist = targetDist
-									bestTarget = { Player = plr, Character = char, Part = targetPart }
-								end
+				if targetPart then
+					local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+					if onScreen and screenPos.Z > 0 then
+						local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - fovCenter).Magnitude
+						if screenDist <= bestDist then
+							local isVis = not State.WallCheck or isPartVisible(Camera.CFrame.Position, targetPart, char)
+							if isVis then
+								bestDist = screenDist
+								bestTarget = { Player = plr, Character = char, Part = targetPart }
 							end
 						end
 					end
@@ -1153,7 +1179,7 @@ local function getBestAimbotTarget()
 	return bestTarget
 end
 
--- RenderStepped Loop (Aimbot & FOV Following)
+-- RenderStepped Loop (Aimbot Preciso & FOV Dinámico)
 local frameCounter = 0
 local lastFpsUpdate = tick()
 
@@ -1166,7 +1192,7 @@ Connections.RenderStepped = RunService.RenderStepped:Connect(function(dt)
 		telemetryBar.Text = string.format("FPS: %d | Toggle: Ctrl+%s | Salto: %s | Dash: %s", fps, State.ToggleKey.Name, State.InfiniteJumpKey.Name, State.HorizontalJumpKey.Name)
 	end
 
-	-- Manejo dinámico del Círculo FOV (Mouse Follow vs Centro Fijo)
+	-- Manejo dinámico del Círculo FOV
 	if State.ShowFOV then
 		if State.FOVMouseFollow then
 			local mousePos = UserInputService:GetMouseLocation()
@@ -1178,13 +1204,16 @@ Connections.RenderStepped = RunService.RenderStepped:Connect(function(dt)
 		end
 	end
 
-	-- Aimbot / Lock-On
+	-- Aimbot / Lock-On con alineación angular directa
 	if (State.AimbotEnabled and State.IsAiming) or State.LockOnEnabled then
 		local target = getBestAimbotTarget()
 		if target and target.Part then
-			local aimOffset = (Camera.CFrame.RightVector * (State.OffsetX * 0.05)) + (Camera.CFrame.UpVector * (State.OffsetY * 0.05))
-			local targetCFrame = CFrame.lookAt(Camera.CFrame.Position, target.Part.Position + aimOffset)
-			Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, math.clamp(State.AimSpeed, 0.1, 1.0))
+			local targetCFrame = CFrame.lookAt(Camera.CFrame.Position, target.Part.Position)
+			if State.AimSpeed >= 1 then
+				Camera.CFrame = targetCFrame
+			else
+				Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, math.clamp(State.AimSpeed, 0.05, 1.0))
+			end
 			centerDot.BackgroundColor3 = State.ColorLockOn
 		else
 			centerDot.BackgroundColor3 = State.ColorFOV
@@ -1236,9 +1265,28 @@ Connections.Heartbeat = RunService.Heartbeat:Connect(function(dt)
 	end
 end)
 
--- Radar ESP Updater (Diferenciación Inteligente de Bandos)
+-- Limpieza periódica de entidades muertas en ESPCache
+local function purgeDeadESP()
+	for char, esp in pairs(ESPCache) do
+		if not char or not char.Parent or not char:IsDescendantOf(Workspace) then
+			if esp.Billboard then pcall(function() esp.Billboard:Destroy() end) end
+			if esp.Highlight then pcall(function() esp.Highlight:Destroy() end) end
+			ESPCache[char] = nil
+		else
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			if not hum or hum.Health <= 0 then
+				if esp.Billboard then esp.Billboard.Visible = false end
+				if esp.Highlight then esp.Highlight.Enabled = false end
+			end
+		end
+	end
+end
+
+-- Radar ESP Updater (Diferenciación Inteligente de Bandos Sin Duplicados)
 Secure.Thread:SpawnSafe("RadarESPUpdater", function()
 	while screenGui and screenGui.Parent do
+		purgeDeadESP()
+
 		if State.ESPEnabled then
 			for _, plr in ipairs(Players:GetPlayers()) do
 				if plr ~= LocalPlayer and plr.Character then
@@ -1246,12 +1294,12 @@ Secure.Thread:SpawnSafe("RadarESPUpdater", function()
 					local hrp = char:FindFirstChild("HumanoidRootPart")
 					local hum = char:FindFirstChildOfClass("Humanoid")
 
-					if hrp and hum and hum.Health > 0 then
-						local esp = ESPCache[plr]
+					if hrp and hum and hum.Health > 0 and char:IsDescendantOf(Workspace) then
+						local esp = ESPCache[char]
 						if not esp then
 							local bb = Instance.new("BillboardGui")
 							bb.Name = "ESP_" .. plr.Name
-							bb.Size = UDim2.new(0, 150, 0, 36)
+							bb.Size = UDim2.new(0, 160, 0, 38)
 							bb.AlwaysOnTop = true
 							bb.Adornee = hrp
 							bb.Parent = ESPFolder
@@ -1262,7 +1310,7 @@ Secure.Thread:SpawnSafe("RadarESPUpdater", function()
 							label.Font = Enum.Font.GothamBold
 							label.TextSize = 10
 							label.TextColor3 = State.ColorAlly
-							label.TextStrokeTransparency = 0.3
+							label.TextStrokeTransparency = 0.25
 							label.Parent = bb
 
 							local hl = Instance.new("Highlight")
@@ -1274,8 +1322,11 @@ Secure.Thread:SpawnSafe("RadarESPUpdater", function()
 							hl.Parent = ESPFolder
 
 							esp = { Billboard = bb, Label = label, Highlight = hl }
-							ESPCache[plr] = esp
+							ESPCache[char] = esp
 						end
+
+						esp.Billboard.Adornee = hrp
+						esp.Highlight.Adornee = char
 
 						local dist = (hrp.Position - Camera.CFrame.Position).Magnitude
 						local teamName = plr.Team and plr.Team.Name:lower() or "neutral"
@@ -1292,12 +1343,12 @@ Secure.Thread:SpawnSafe("RadarESPUpdater", function()
 						elseif teamName:find("prison") or teamName:find("pris") then
 							teamBadge = "⛓️ Prisionero"
 							teamColor = State.ColorPrisoner
-						elseif LocalPlayer.Team and plr.Team and LocalPlayer.Team == plr.Team then
+						elseif LocalPlayer and LocalPlayer.Team and plr.Team and LocalPlayer.Team == plr.Team then
 							teamBadge = "🛡️ Aliado"
 							teamColor = State.ColorAlly
 						end
 
-						local isIgnored = State.IgnoredESPTeams[originalTeamName] or false
+						local isIgnored = State.IgnoredESPTeams[originalTeamName] == true
 						if isIgnored then
 							esp.Billboard.Visible = false
 							esp.Highlight.Enabled = false
@@ -1308,33 +1359,28 @@ Secure.Thread:SpawnSafe("RadarESPUpdater", function()
 							esp.Billboard.Visible = true
 							esp.Highlight.Enabled = true
 						end
-					else
-						local esp = ESPCache[plr]
-						if esp then
-							if esp.Billboard then esp.Billboard.Visible = false end
-							if esp.Highlight then esp.Highlight.Enabled = false end
-						end
-					end
-				else
-					local esp = ESPCache[plr]
-					if esp then
-						if esp.Billboard then esp.Billboard.Visible = false end
-						if esp.Highlight then esp.Highlight.Enabled = false end
 					end
 				end
 			end
+		else
+			for _, esp in pairs(ESPCache) do
+				if esp.Billboard then esp.Billboard.Visible = false end
+				if esp.Highlight then esp.Highlight.Enabled = false end
+			end
 		end
-		task.wait(0.2)
+		task.wait(0.15)
 	end
 end)
 
 -- Limpieza de caché ESP cuando un jugador sale
 Connections.PlayerRemoving = Players.PlayerRemoving:Connect(function(plr)
-	local esp = ESPCache[plr]
-	if esp then
-		if esp.Billboard then pcall(function() esp.Billboard:Destroy() end) end
-		if esp.Highlight then pcall(function() esp.Highlight:Destroy() end) end
-		ESPCache[plr] = nil
+	if plr.Character then
+		local esp = ESPCache[plr.Character]
+		if esp then
+			if esp.Billboard then pcall(function() esp.Billboard:Destroy() end) end
+			if esp.Highlight then pcall(function() esp.Highlight:Destroy() end) end
+			ESPCache[plr.Character] = nil
+		end
 	end
 end)
 
