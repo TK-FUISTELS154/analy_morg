@@ -1,7 +1,7 @@
 -- ==============================================================================
 -- 🐾 EGGS & PETS TRACKER PRO + ADVANCED MOVEMENT & SERVER HOPPER
 -- Versión Ultra: Shift Sprint (250 default), JumpPower (150 default),
--- Preservación Dinámica de Velocidad Nativa del Juego, Server Hop & Auto Re-ejecución
+-- Preservación Dinámica de Velocidad Nativa del Juego / Monturas, Server Hop & Auto Re-ejecución
 -- Compatible con Secure Framework (Nivel Básico 3-5)
 -- ==============================================================================
 
@@ -179,7 +179,7 @@ local EggPickupRemote = GameRemotes and GameRemotes:FindFirstChild("EggPickup")
 local HatchRemote = GameRemotes and GameRemotes:FindFirstChild("Hatch")
 
 --------------------------------------------------------------------------------
--- 4. SISTEMA DE FÍSICAS: SHIFT SPRINT & PRESERVACIÓN DE VELOCIDAD NATIVA
+-- 4. SISTEMA DE FÍSICAS: SHIFT SPRINT & PRESERVACIÓN TOTAL DE VELOCIDAD NATIVA / MONTURAS
 --------------------------------------------------------------------------------
 local nativeWalkSpeed = 16
 local isShiftHeld = false
@@ -201,6 +201,12 @@ local function applyJumpPower(hum)
     end
 end
 
+local function isShiftCurrentlyPressed()
+    local ok1, k1 = pcall(function() return UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) end)
+    local ok2, k2 = pcall(function() return UserInputService:IsKeyDown(Enum.KeyCode.RightShift) end)
+    return (ok1 and k1) or (ok2 and k2) or false
+end
+
 local function bindCharacterPhysics(char)
     for _, c in ipairs(charConnections) do
         pcall(function() c:Disconnect() end)
@@ -211,18 +217,27 @@ local function bindCharacterPhysics(char)
     local hum = char:WaitForChild("Humanoid", 8) or char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
 
-    -- Capturamos la velocidad inicial nativa otorgada por el juego
-    if not isShiftHeld then
+    -- Capturamos la velocidad nativa otorgada por el juego o montura
+    if not isShiftCurrentlyPressed() then
         nativeWalkSpeed = hum.WalkSpeed
     end
     applyJumpPower(hum)
 
-    -- Escuchador reactivo: si el juego cambia la velocidad al caminar (mascotas, monturas, buffs),
-    -- la guardamos SIN sobreescribirla, siempre que no estemos presionando Shift
+    -- Escuchador reactivo de WalkSpeed:
+    -- Si el juego cambia la velocidad (montar/desmontar mascota, buffs, pociones),
+    -- actualizamos nativeWalkSpeed sin sobreescribirla cuando no se corre
     local wsConn = hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
-        if not isShiftHeld then
+        local shiftActive = Config.SprintEnabled and isShiftCurrentlyPressed()
+        if not shiftActive then
             nativeWalkSpeed = hum.WalkSpeed
             if updateStatusTelemetry then updateStatusTelemetry() end
+        else
+            -- Si el juego intenta cambiar la velocidad MIENTRAS sprintamos (ej. montamos mascota en pleno sprint),
+            -- guardamos esa nueva velocidad como la base nativa a restaurar
+            if hum.WalkSpeed ~= (tonumber(Config.SprintSpeed) or 250) then
+                nativeWalkSpeed = hum.WalkSpeed
+                hum.WalkSpeed = tonumber(Config.SprintSpeed) or 250
+            end
         end
     end)
     table.insert(charConnections, wsConn)
@@ -240,47 +255,51 @@ local function bindCharacterPhysics(char)
     if updateStatusTelemetry then updateStatusTelemetry() end
 end
 
--- Shift Sprint Listener (LeftShift y RightShift)
-local shiftInputBegan = UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
-        if Config.SprintEnabled then
-            isShiftHeld = true
-            local hum = getHumanoid()
-            if hum then
-                -- Guardamos la velocidad actual que el juego tenía antes del impulso
-                nativeWalkSpeed = hum.WalkSpeed
-                hum.WalkSpeed = tonumber(Config.SprintSpeed) or 250
-            end
-            if updateStatusTelemetry then updateStatusTelemetry() end
+-- RenderStepped Heartbeat para sincronización impecable de Shift Sprint & Monturas
+local speedHeartbeat = RunService.RenderStepped:Connect(function()
+    if not isScriptActive then return end
+    local hum = getHumanoid()
+    if not hum or hum.Health <= 0 then return end
+
+    local shiftPressed = Config.SprintEnabled and isShiftCurrentlyPressed()
+
+    if shiftPressed then
+        isShiftHeld = true
+        local targetSprint = tonumber(Config.SprintSpeed) or 250
+        if hum.WalkSpeed ~= targetSprint then
+            hum.WalkSpeed = targetSprint
         end
-    elseif input.KeyCode == Enum.KeyCode.Space and Config.InfJump then
+
+        -- Si el jugador está sentado en una montura/VehicleSeat
+        if hum.SeatPart and hum.SeatPart:IsA("VehicleSeat") then
+            pcall(function()
+                hum.SeatPart.MaxSpeed = targetSprint
+            end)
+        end
+    else
+        if isShiftHeld then
+            isShiftHeld = false
+            -- Restauramos exactamente la velocidad nativa de la mascota/jugador
+            hum.WalkSpeed = nativeWalkSpeed
+        end
+    end
+end)
+table.insert(connections, speedHeartbeat)
+
+-- Salto Infinito Listener
+local infJumpConn = UserInputService.JumpRequest:Connect(function()
+    if Config.InfJump and isScriptActive then
         local hum = getHumanoid()
         if hum and hum:GetState() ~= Enum.HumanoidStateType.Dead then
             hum:ChangeState(Enum.HumanoidStateType.Jumping)
         end
     end
 end)
-table.insert(connections, shiftInputBegan)
-
-local shiftInputEnded = UserInputService.InputEnded:Connect(function(input, gpe)
-    if input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
-        if isShiftHeld then
-            isShiftHeld = false
-            local hum = getHumanoid()
-            if hum then
-                -- Restauramos exactamente la velocidad nativa del juego
-                hum.WalkSpeed = nativeWalkSpeed
-            end
-            if updateStatusTelemetry then updateStatusTelemetry() end
-        end
-    end
-end)
-table.insert(connections, shiftInputEnded)
+table.insert(connections, infJumpConn)
 
 -- Noclip Loop
 local noclipConn = RunService.Stepped:Connect(function()
-    if Config.Noclip and LocalPlayer.Character then
+    if Config.Noclip and isScriptActive and LocalPlayer.Character then
         for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
             if part:IsA("BasePart") and part.CanCollide then
                 part.CanCollide = false
@@ -780,7 +799,7 @@ local lblNativeTitle = Instance.new("TextLabel", nativeSpeedCard)
 lblNativeTitle.Size = UDim2.new(0.9, 0, 0.45, 0)
 lblNativeTitle.Position = UDim2.new(0.05, 0, 0.08, 0)
 lblNativeTitle.BackgroundTransparency = 1
-lblNativeTitle.Text = "VELOCIDAD NATIVA DEL JUEGO (PRESERVADA)"
+lblNativeTitle.Text = "VELOCIDAD NATIVA DEL JUEGO / MONTURA (PRESERVADA)"
 lblNativeTitle.TextColor3 = Color3.fromRGB(140, 180, 255)
 lblNativeTitle.Font = Enum.Font.GothamBold
 lblNativeTitle.TextSize = 10
@@ -790,7 +809,7 @@ local lblNativeVal = Instance.new("TextLabel", nativeSpeedCard)
 lblNativeVal.Size = UDim2.new(0.9, 0, 0.45, 0)
 lblNativeVal.Position = UDim2.new(0.05, 0, 0.5, 0)
 lblNativeVal.BackgroundTransparency = 1
-lblNativeVal.Text = string.format("Caminando: %.1f | Sprint con Shift: %s", nativeWalkSpeed, Config.SprintEnabled and (tostring(Config.SprintSpeed) .. " (ACTIVO)") or "DESACTIVADO")
+lblNativeVal.Text = string.format("Base: %.1f | Sprint con Shift: %s", nativeWalkSpeed, Config.SprintEnabled and (tostring(Config.SprintSpeed) .. " (ACTIVO)") or "DESACTIVADO")
 lblNativeVal.TextColor3 = Color3.fromRGB(240, 240, 240)
 lblNativeVal.Font = Enum.Font.GothamMedium
 lblNativeVal.TextSize = 11
@@ -872,17 +891,16 @@ local function createControlCard(parent, title, desc, defaultValue, onToggle, on
 end
 
 -- Control: Shift Sprint (250 default)
-local sprintCtrl = createControlCard(pagePhysics, "⚡ Shift Sprint (Correr)", "Presiona Shift para acelerar", Config.SprintSpeed, function(active)
+local sprintCtrl = createControlCard(pagePhysics, "⚡ Shift Sprint (Correr)", "Mantén presionado Shift para acelerar", Config.SprintSpeed, function(active)
     Config.SprintEnabled = active
-    if not active and isShiftHeld then
-        isShiftHeld = false
+    if not active then
         local hum = getHumanoid()
         if hum then hum.WalkSpeed = nativeWalkSpeed end
     end
     if updateStatusTelemetry then updateStatusTelemetry() end
 end, function(val)
     Config.SprintSpeed = val
-    if isShiftHeld then
+    if isShiftCurrentlyPressed() and Config.SprintEnabled then
         local hum = getHumanoid()
         if hum then hum.WalkSpeed = val end
     end
@@ -1069,7 +1087,7 @@ telemetryLbl.TextXAlignment = Enum.TextXAlignment.Center
 
 updateStatusTelemetry = function()
     pcall(function()
-        lblNativeVal.Text = string.format("Caminando: %.1f | Sprint con Shift: %s", nativeWalkSpeed, Config.SprintEnabled and (tostring(Config.SprintSpeed) .. " (ACTIVO)") or "DESACTIVADO")
+        lblNativeVal.Text = string.format("Base: %.1f | Sprint con Shift: %s", nativeWalkSpeed, Config.SprintEnabled and (tostring(Config.SprintSpeed) .. " (ACTIVO)") or "DESACTIVADO")
         telemetryLbl.Text = string.format("⚡ Vel Nativa: %.0f | Sprint: %s | Salto: %s", nativeWalkSpeed, Config.SprintEnabled and tostring(Config.SprintSpeed) or "OFF", Config.JumpEnabled and tostring(Config.JumpPower) or "OFF")
     end)
 end
