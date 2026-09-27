@@ -286,10 +286,29 @@ function EconomyAuditor:ScanEconomyNodes(onProgress)
         TotalFound = 0,
     }
     
+    local resolveSrv = function(name)
+        if getgenv()._APEX_RESOLVER then
+            return getgenv()._APEX_RESOLVER.GetService(name)
+        end
+        local ok, s = pcall(function() return game:GetService(name) end)
+        if ok and s then return s end
+        local ok2, s2 = pcall(function() return game:FindFirstChildOfClass(name) end)
+        return ok2 and s2 or nil
+    end
+
+    local getPlayerGui = function()
+        if getgenv()._APEX_RESOLVER then
+            return getgenv()._APEX_RESOLVER.GetPlayerGui()
+        end
+        local players = resolveSrv("Players")
+        local lp = players and players.LocalPlayer
+        return lp and (lp:FindFirstChildOfClass("PlayerGui") or lp:FindFirstChild("PlayerGui"))
+    end
+
     local containers = {
-        game:GetService("ReplicatedStorage"),
-        game:GetService("StarterPlayer"),
-        game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"),
+        resolveSrv("ReplicatedStorage"),
+        resolveSrv("StarterPlayer"),
+        getPlayerGui(),
     }
     
     local function matchesWord(targetText, keyword)

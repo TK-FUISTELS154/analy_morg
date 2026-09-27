@@ -22,13 +22,20 @@ pcall(function()
     end
 end)
 
-local rawGame = workspace.Parent or game
+local rawGame = (typeof(workspace) == "Instance" and workspace.Parent) or game
 
-local function getService(name)
-    local ok, s = pcall(function() return rawGame:GetService(name) end)
-    return ok and s or nil
+local function getService(className)
+    if className == "Workspace" and typeof(workspace) == "Instance" then return workspace end
+    local ok, s = pcall(function() return rawGame:GetService(className) end)
+    if ok and s then return s end
+    local ok2, s2 = pcall(function() return rawGame:FindFirstChildOfClass(className) end)
+    if ok2 and s2 then return s2 end
+    local ok3, s3 = pcall(function() return rawGame:FindFirstChildWhichIsA(className) end)
+    if ok3 and s3 then return s3 end
+    return nil
 end
 
+local Workspace = getService("Workspace") or workspace
 local Players = getService("Players")
 local ReplicatedStorage = getService("ReplicatedStorage")
 local UserInputService = getService("UserInputService")
@@ -37,8 +44,8 @@ local VirtualUser = getService("VirtualUser")
 local TeleportService = getService("TeleportService")
 local HttpService = getService("HttpService")
 
-local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 10) or LocalPlayer:FindFirstChildOfClass("PlayerGui")
+local LocalPlayer = (Players and Players.LocalPlayer) or (Players and Players:FindFirstChildOfClass("Player")) or (Players and Players.PlayerAdded:Wait())
+local PlayerGui = (LocalPlayer and LocalPlayer:WaitForChild("PlayerGui", 10)) or (LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui"))
 
 --------------------------------------------------------------------------------
 -- 1. SEGURIDAD Y CONFIGURACIÓN PERSISTENTE

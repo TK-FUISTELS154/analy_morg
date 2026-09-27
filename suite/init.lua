@@ -60,6 +60,10 @@ local CapabilityManager = ApexImport("code/core/CapabilityManager.lua")
 local EventBus          = ApexImport("code/core/EventBus.lua")
 local Logger            = ApexImport("code/core/Logger.lua")
 local Registry          = ApexImport("code/core/Registry.lua")
+local ServiceResolver   = ApexImport("code/core/ServiceResolver.lua")
+if ServiceResolver then
+    getgenv()._APEX_RESOLVER = ServiceResolver
+end
 
 -- 2. Cargar Seguridad (Security)
 local SecurityCore      = ApexImport("code/security/SecurityCore.lua")
@@ -96,6 +100,7 @@ local registry = Registry and Registry.new() or nil
 if registry and logger and eventBus then
     registry:Register("EventBus", eventBus)
     registry:Register("Logger", logger)
+    if ServiceResolver then registry:Register("ServiceResolver", ServiceResolver) end
     
     local caps = CapabilityManager and CapabilityManager.new()
     if caps then registry:Register("CapabilityManager", caps) end

@@ -171,11 +171,30 @@ function StructuralProfiler:GenerateReport()
     local depthSum = 0
     local lastYield = tick()
     
+    local resolveSrv = function(name)
+        if getgenv()._APEX_RESOLVER then
+            return getgenv()._APEX_RESOLVER.GetService(name)
+        end
+        local ok, s = pcall(function() return game:GetService(name) end)
+        if ok and s then return s end
+        local ok2, s2 = pcall(function() return game:FindFirstChildOfClass(name) end)
+        return ok2 and s2 or nil
+    end
+
+    local getPlayerGui = function()
+        if getgenv()._APEX_RESOLVER then
+            return getgenv()._APEX_RESOLVER.GetPlayerGui()
+        end
+        local players = resolveSrv("Players")
+        local lp = players and players.LocalPlayer
+        return lp and (lp:FindFirstChildOfClass("PlayerGui") or lp:FindFirstChild("PlayerGui"))
+    end
+
     local containers = {
-        { Service = game:GetService("ReplicatedFirst"), Key = "ReplicatedFirst" },
-        { Service = game:GetService("ReplicatedStorage"), Key = "ReplicatedStorage" },
-        { Service = game:GetService("StarterPlayer"), Key = "StarterPlayer" },
-        { Service = game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"), Key = "PlayerGui" },
+        { Service = resolveSrv("ReplicatedFirst"), Key = "ReplicatedFirst" },
+        { Service = resolveSrv("ReplicatedStorage"), Key = "ReplicatedStorage" },
+        { Service = resolveSrv("StarterPlayer"), Key = "StarterPlayer" },
+        { Service = getPlayerGui(), Key = "PlayerGui" },
     }
     
     -- =====================================================================

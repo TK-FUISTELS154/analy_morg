@@ -1020,9 +1020,9 @@ function DumperView:Render()
 
                     -- 1. Intentar detectar objeto 2D en PlayerGui
                     pcall(function()
-                        local lp = game.Players.LocalPlayer
+                        local lp = (getgenv()._APEX_RESOLVER and getgenv()._APEX_RESOLVER.GetLocalPlayer()) or (Players and Players.LocalPlayer)
                         if lp then
-                            local pGui = lp:FindFirstChild("PlayerGui")
+                            local pGui = lp:FindFirstChildOfClass("PlayerGui") or lp:FindFirstChild("PlayerGui")
                             if pGui then
                                 local guiObjects = pGui:GetGuiObjectsAtPosition(mousePos.X, mousePos.Y)
                                 for _, guiObj in ipairs(guiObjects) do
@@ -1041,7 +1041,7 @@ function DumperView:Render()
                             local cam = Workspace.CurrentCamera
                             if cam then
                                 local ray = cam:ViewportPointToRay(mousePos.X, mousePos.Y)
-                                local lp = game.Players.LocalPlayer
+                                local lp = (getgenv()._APEX_RESOLVER and getgenv()._APEX_RESOLVER.GetLocalPlayer()) or (Players and Players.LocalPlayer)
                                 local params = RaycastParams.new()
                                 params.FilterType = RaycastFilterType.Exclude
                                 if lp and lp.Character then

@@ -26,9 +26,25 @@ function SecurityCore.new(capabilityManager, logger)
         or function(x) return x end
     self.Cloneref = clonerefFunc
 
-    self.CoreGui = self.Cloneref(game:GetService("CoreGui"))
-    self.Players = self.Cloneref(game:GetService("Players"))
-    self.LocalPlayer = self.Players.LocalPlayer
+    local resolveSrv = function(cName)
+        if getgenv()._APEX_RESOLVER then
+            local r = getgenv()._APEX_RESOLVER.GetService(cName)
+            if r then return r end
+        end
+        local ok, s = pcall(function() return self.RealGame:GetService(cName) end)
+        if ok and s then return s end
+        local ok2, s2 = pcall(function() return self.RealGame:FindFirstChildOfClass(cName) end)
+        if ok2 and s2 then return s2 end
+        local ok3, s3 = pcall(function() return self.RealGame:FindFirstChildWhichIsA(cName) end)
+        return ok3 and s3 or nil
+    end
+
+    local rawCoreGui = resolveSrv("CoreGui")
+    local rawPlayers = resolveSrv("Players")
+
+    self.CoreGui = rawCoreGui and self.Cloneref(rawCoreGui)
+    self.Players = rawPlayers and self.Cloneref(rawPlayers)
+    self.LocalPlayer = self.Players and (self.Players.LocalPlayer or self.Players:FindFirstChildOfClass("Player"))
 
     self.IsAntiAFKEnabled = false
     self.AntiAFKConnection = nil

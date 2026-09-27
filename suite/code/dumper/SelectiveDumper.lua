@@ -409,14 +409,33 @@ end
 
 -- MODO 4: Extracción total del entorno de scripts del juego (Multihilo Concurrente y Podado)
 function SelectiveDumper:DumpFullEnvironment(onProgress)
+    local resolveSrv = function(name)
+        if getgenv()._APEX_RESOLVER then
+            return getgenv()._APEX_RESOLVER.GetService(name)
+        end
+        local ok, s = pcall(function() return game:GetService(name) end)
+        if ok and s then return s end
+        local ok2, s2 = pcall(function() return game:FindFirstChildOfClass(name) end)
+        return ok2 and s2 or nil
+    end
+
+    local getPlayerGui = function()
+        if getgenv()._APEX_RESOLVER then
+            return getgenv()._APEX_RESOLVER.GetPlayerGui()
+        end
+        local players = resolveSrv("Players")
+        local lp = players and players.LocalPlayer
+        return lp and (lp:FindFirstChildOfClass("PlayerGui") or lp:FindFirstChild("PlayerGui"))
+    end
+
     local targetServices = {
-        { Service = game:GetService("ReplicatedFirst"), Name = "ReplicatedFirst" },
-        { Service = game:GetService("ReplicatedStorage"), Name = "ReplicatedStorage" },
-        { Service = game:GetService("StarterPlayer"), Name = "StarterPlayer" },
-        { Service = game:GetService("StarterGui"), Name = "StarterGui" },
-        { Service = game:GetService("Lighting"), Name = "Lighting" },
-        { Service = game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui"), Name = "PlayerGui" },
-        { Service = game:GetService("Workspace"), Name = "Workspace" },
+        { Service = resolveSrv("ReplicatedFirst"), Name = "ReplicatedFirst" },
+        { Service = resolveSrv("ReplicatedStorage"), Name = "ReplicatedStorage" },
+        { Service = resolveSrv("StarterPlayer"), Name = "StarterPlayer" },
+        { Service = resolveSrv("StarterGui"), Name = "StarterGui" },
+        { Service = resolveSrv("Lighting"), Name = "Lighting" },
+        { Service = getPlayerGui(), Name = "PlayerGui" },
+        { Service = resolveSrv("Workspace") or workspace, Name = "Workspace" },
     }
     
     -- Filtrar servicios disponibles

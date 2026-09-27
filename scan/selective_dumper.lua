@@ -16,15 +16,28 @@
       6. Exportación Multiformato: JSON, Markdown, y Dump TXT con resolución de Roblox API Dump.
 --]]
 
-local HttpService = game:GetService("HttpService")
-local CoreGui = game:GetService("CoreGui")
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-local CollectionService = game:GetService("CollectionService")
+local rawGame = (typeof(workspace) == "Instance" and workspace.Parent) or game
 
-local LocalPlayer = Players.LocalPlayer
+local function getService(className)
+    if className == "Workspace" and typeof(workspace) == "Instance" then return workspace end
+    local ok, s = pcall(function() return rawGame:GetService(className) end)
+    if ok and s then return s end
+    local ok2, s2 = pcall(function() return rawGame:FindFirstChildOfClass(className) end)
+    if ok2 and s2 then return s2 end
+    local ok3, s3 = pcall(function() return rawGame:FindFirstChildWhichIsA(className) end)
+    if ok3 and s3 then return s3 end
+    return nil
+end
+
+local HttpService = getService("HttpService")
+local CoreGui = getService("CoreGui")
+local Players = getService("Players")
+local Workspace = getService("Workspace") or workspace
+local UserInputService = getService("UserInputService")
+local TweenService = getService("TweenService")
+local CollectionService = getService("CollectionService")
+
+local LocalPlayer = Players and (Players.LocalPlayer or Players:FindFirstChildOfClass("Player"))
 
 local randomSeed = math.random(100000, 999999)
 local SPOOFED_GUI_NAME = "ApexSelectiveDumper_" .. tostring(randomSeed)
