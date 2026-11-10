@@ -89,22 +89,34 @@ suite/
 
 ---
 
-### 🔒 `code/security/` (Seguridad Activa)
+### 🔒 `code/security/` (Seguridad Activa y Sigilo Multi-Nivel)
 
 #### 1. `SecurityCore.lua`
-- **Anti-Kick**: Intercepta `LocalPlayer:Kick` con bypass inteligente para llamadas originadas por la suite.
-- **Anti-AFK**: Vincula `VirtualUser` con `LocalPlayer.Idled` para prevenir desconexión por inactividad.
-- **Anti-OCR**: Genera nombres pseudo-aleatorios únicos para las interfaces (`ScreenGui`) protegiéndolas de escaneos automáticos.
-- **Contenedor Seguro**: `GetSecureGuiParent()` selecciona automáticamente `gethui()`, `cloneref(CoreGui)` o `PlayerGui`.
+- **Jerarquía GUI 5-Tier (Estilo Infinite Yield & DarkDex)**:
+  1. *Tier 1 (Nivel 8)*: `gethui()` o `get_hidden_gui()`.
+  2. *Tier 2 (Nivel 8)*: `syn.protect_gui()` o `protectgui()` en `CoreGui`.
+  3. *Tier 3 (Nivel 3-4)*: Inyección de `Folder` en `COREGUI.RobloxGui` (evita error de ScreenGui anidado en CoreGui y oculta la GUI de scripts cliente).
+  4. *Tier 4 (Nivel 4-6)*: `CoreGui` directo si es accesible.
+  5. *Tier 5 (Nivel 3 Básico)*: `PlayerGui` con camuflaje total (nombres efímeros, `Archivable = false`, `DisplayOrder = 2e9`).
+- **Anti-Kick Multi-Capa**: 3 capas de blindaje (Reemplazo directo de método en Nivel 3, intercepción de metatabla `playerMeta.__index` en Nivel 4-5, y hook del servicio `Players.Kick` en Nivel 6+).
+- **Anti-AFK Adaptativo**: En Nivel 7 desconecta directamente la señal `LocalPlayer.Idled` (`conn:Disable()`) sin simular clics físicos (100% indetectable); en Nivel 3-4 aplica fallback con `VirtualUser` y fluctuación temporal (jitter).
+- **Anti-OCR y Nombres Efímeros**: Nombres 100% aleatorios alfanuméricos y `Archivable = false` en todos los contenedores para evitar escaneo por texto o clonación.
 
 #### 2. `HookManager.lua`
-- Administra hooks seguros sobre metamétodos (`__namecall`, `__index`, `__newindex`) preservando punteros originales para restauración limpia.
+- **Hooks Bajo Demanda (Cero Hooks en Boot)**: No intercepta metatablas en el arranque para evitar detección por escáneres de integridad en el spawn del personaje. Se activa solo cuando se inicia RemoteSpy o se bloquea un remote.
+- **Filtrado Maestro de Sigilo**: Cuando un script del juego (`not checkcaller()`) ejecuta `GetChildren()`, `GetDescendants()`, `FindFirstChild()` o indexa instancias, purga y oculta automáticamente la GUI protegida y todos sus descendientes.
 
 #### 3. `MemoryGuard.lua`
-- Supervisa el consumo de memoria en tiempo real, detecta referencias circulares y limpia conexiones RBXScriptConnection obsoletas.
+- **Control de Ráfagas en Memoria**: Throttling de `getgc()` a 5 llamadas/seg con micro-esperas aleatorias (40-100 ms) para prevenir picos de CPU y detección de patrones temporales.
+- **Búsqueda Quirúrgica**: Métodos seguros `FindTable(keys)` y `FindFunction(name)`.
 
 #### 4. `SafeSandbox.lua`
-- Ejecuta fragmentos de código y callbacks de usuario con protección `pcall` y límites de tiempo para evitar congelamientos del hilo principal.
+- Ejecuta fragmentos de código y callbacks de usuario con protección `pcall` y límites de tiempo para evitar errores rojos en la consola F9 (`LogService.MessageOut`).
+
+---
+
+### 📦 3. Librería Satélite: `scan/securi_v3.lua`
+Módulo independiente y universal diseñado para que cualquier otro script del proyecto pueda aprovechar la misma arquitectura de seguridad de Nivel 3 a 8 sin dependencias externas. Soporta `Securi.GUI:CreateSafe()`, `Securi.AntiKick:ProtectPlayer()`, `Securi.Presence:EnableAntiAFK()`, `Securi.Services.*` y `Securi.Thread:SpawnSafe()`.
 
 ---
 
