@@ -26,6 +26,12 @@ local ROW_HEIGHT = 22
 local INDENT_SIZE = 14
 local VISIBLE_ROWS = 24
 
+local function safePath(inst)
+    if not inst then return "nil" end
+    local ok, p = pcall(function() return inst:GetFullName() end)
+    return (ok and p) or tostring(inst)
+end
+
 local function safeSetClipboard(text)
     if typeof(setclipboard) == "function" then
         local s = pcall(setclipboard, text)
@@ -657,7 +663,7 @@ function DumperView:Render()
     btnCopyPath.MouseButton1Click:Connect(function()
         local inst = self.SelectedNodeForInspection
         if inst then
-            local path = inst:GetFullName()
+            local path = safePath(inst)
             if safeSetClipboard(path) then
                 btnCopyPath.Text = "✅ ¡Copiado!"
                 task.delay(1.2, function() btnCopyPath.Text = "📋 Ruta" end)
@@ -693,8 +699,8 @@ function DumperView:Render()
                     Name = inst.Name,
                     CloneName = cloned.Name,
                     ClassName = inst.ClassName,
-                    Path = inst:GetFullName(),
-                    ParentPath = inst.Parent and inst.Parent:GetFullName() or "Workspace",
+                    Path = safePath(inst),
+                    ParentPath = inst.Parent and safePath(inst.Parent) or "Workspace",
                     CreationSnippet = snippet,
                 })
 
@@ -721,8 +727,8 @@ function DumperView:Render()
                 Timestamp = tick(),
                 Name = inst.Name,
                 ClassName = inst.ClassName,
-                Path = inst:GetFullName(),
-                ParentPath = inst.Parent and inst.Parent:GetFullName() or "Workspace",
+                Path = safePath(inst),
+                ParentPath = inst.Parent and safePath(inst.Parent) or "Workspace",
                 CreationSnippet = snippet,
                 SourceCode = src,
             })
@@ -886,7 +892,7 @@ function DumperView:Render()
 
     -- Opciones del Menú Contextual
     createMenuOption("Copiar Ruta", "📋", 4, function(obj)
-        local path = obj:GetFullName()
+        local path = safePath(obj)
         if safeSetClipboard(path) then
             treeStatus.Text = "📋 Ruta copiada: " .. path
         end
@@ -916,8 +922,8 @@ function DumperView:Render()
                 Name = obj.Name,
                 CloneName = cloned.Name,
                 ClassName = obj.ClassName,
-                Path = obj:GetFullName(),
-                ParentPath = obj.Parent and obj.Parent:GetFullName() or "Workspace",
+                Path = safePath(obj),
+                ParentPath = obj.Parent and safePath(obj.Parent) or "Workspace",
                 CreationSnippet = snippet,
             })
             treeStatus.Text = "🧬 Elemento clonado: " .. cloned.Name
@@ -936,8 +942,8 @@ function DumperView:Render()
             Timestamp = tick(),
             Name = obj.Name,
             ClassName = obj.ClassName,
-            Path = obj:GetFullName(),
-            ParentPath = obj.Parent and obj.Parent:GetFullName() or "Workspace",
+            Path = safePath(obj),
+            ParentPath = obj.Parent and safePath(obj.Parent) or "Workspace",
             CreationSnippet = snippet,
             SourceCode = src,
         })
@@ -1132,7 +1138,7 @@ function DumperView:Render()
                 frameRow.NameLabel.Position = UDim2.new(0, textX, 0, 0)
                 frameRow.NameLabel.Size = UDim2.new(1, -textX - badgeWidth - 28, 1, 0)
 
-                local displayName = self.IsSearching and data.obj:GetFullName() or data.obj.Name
+                local displayName = self.IsSearching and safePath(data.obj) or data.obj.Name
                 frameRow.NameLabel.Text = displayName
 
                 if data.badge then
@@ -1430,10 +1436,11 @@ function DumperView:Render()
     end)
 
     -- Cargar Raíces del Explorador
-    local commonServices = { "Workspace", "Players", "Lighting", "ReplicatedFirst", "ReplicatedStorage", "RobloxReplicatedStorage", "StarterGui", "StarterPack", "StarterPlayer" }
+    local commonServices = { "Workspace", "Players", "Lighting", "ReplicatedFirst", "ReplicatedStorage", "StarterGui", "StarterPack", "StarterPlayer" }
+    local resolver = getgenv and getgenv()._APEX_RESOLVER
     for _, sName in ipairs(commonServices) do
         pcall(function()
-            local srv = game:GetService(sName)
+            local srv = (resolver and resolver.GetService(sName)) or game:GetService(sName)
             if srv then table.insert(self.RootNodes, srv) end
         end)
     end
@@ -1450,7 +1457,7 @@ function DumperView:Render()
         local lines = {}
         table.insert(lines, "=============================================================================")
         table.insert(lines, string.format("🕵️ INSPECCIÓN DETALLADA: %s (%s)", instance.Name, instance.ClassName))
-        table.insert(lines, string.format("📍 Ruta Completa: %s", instance:GetFullName()))
+        table.insert(lines, string.format("📍 Ruta Completa: %s", safePath(instance)))
 
         local badge = self:GetNodeThreatBadge(instance)
         if badge then

@@ -452,30 +452,29 @@ function CapabilityManager:ArmEnvironmentGuard()
 
     local guards = 0
 
-    -- 1. Callstack Spoofing en getcallingscript (Técnica sigilosa probada)
-    -- Simula proveniencia de StarterPlayerScripts cuando la llamada proviene de un hilo exploit sin origen
-    if type(getcallingscript) == "function" then
+    -- 1. Callstack Spoofing en getcallingscript (Técnica sigilosa)
+    -- Simula proveniencia de un script cliente legítimo cuando la llamada proviene de un hilo exploit sin origen
+    if type(getcallingscript) == "function" and hookfn and newcclosure then
         local originalGetCallingScript = getcallingscript
         local ok = pcall(function()
-            local starterScripts = nil
+            local sampleScript = nil
             pcall(function()
                 local sp = game:GetService("StarterPlayer")
-                starterScripts = sp and sp:FindFirstChild("StarterPlayerScripts")
+                local starterScripts = sp and sp:FindFirstChild("StarterPlayerScripts")
+                if starterScripts then
+                    sampleScript = starterScripts:FindFirstChildWhichIsA("LuaSourceContainer", true)
+                end
             end)
 
             local spoofed = function()
                 local calling = originalGetCallingScript()
-                if calling == nil and starterScripts then
-                    return starterScripts
+                if calling == nil and sampleScript then
+                    return sampleScript
                 end
                 return calling
             end
 
-            if hookfn and newcclosure then
-                hookfn(getcallingscript, newcclosure(spoofed))
-            else
-                getcallingscript = spoofed
-            end
+            hookfn(getcallingscript, newcclosure(spoofed))
             guards = guards + 1
         end)
     end

@@ -106,8 +106,18 @@ function HeuristicEngine.new(capabilityManager, logger, structuralProfiler)
     return self
 end
 
+local function safePath(inst)
+    if not inst then return "nil" end
+    local ok, p = pcall(function() return inst:GetFullName() end)
+    return (ok and p) or tostring(inst)
+end
+
 function HeuristicEngine:IsIgnoredCoreInstance(instance)
-    local fullName = instance:GetFullName()
+    if not instance then return true end
+    local s, fullName = pcall(function() return instance:GetFullName() end)
+    if not s or not fullName then
+        return true
+    end
     if fullName:find("StarterPlayer%.StarterPlayerScripts%.PlayerModule")
        or fullName:find("StarterPlayer%.StarterPlayerScripts%.RbxCharacterSounds")
        or fullName:find("PlayerScriptsLoader")
@@ -457,7 +467,7 @@ function HeuristicEngine:AnalyzeScript(instanceOrCode, optionalName)
     if typeof(instanceOrCode) == "Instance" then
         instance = instanceOrCode
         rawName = instance.Name
-        path = instance:GetFullName()
+        path = safePath(instance)
         if self:IsIgnoredCoreInstance(instance) then
             return nil
         end
@@ -531,7 +541,7 @@ function HeuristicEngine:AnalyzeInstance(instance, depth)
     if not self:IsExecutableOrNetwork(instance) then return nil end
     if self:IsIgnoredCoreInstance(instance) then return nil end
     
-    local path = instance:GetFullName()
+    local path = safePath(instance)
     local rawName = instance.Name
     local className = instance.ClassName
     local isRem = instance:IsA("RemoteEvent") or instance:IsA("RemoteFunction") or instance:IsA("UnreliableRemoteEvent")
@@ -917,7 +927,7 @@ function HeuristicEngine:RunRemotesAudit(customLocations, onProgress)
             table.insert(report.RemoteEvents, {
                 Name = inst.Name,
                 ClassName = inst.ClassName,
-                Path = inst:GetFullName(),
+                Path = safePath(inst),
                 Depth = depth,
                 Instance = inst,
             })
@@ -926,7 +936,7 @@ function HeuristicEngine:RunRemotesAudit(customLocations, onProgress)
             table.insert(report.RemoteFunctions, {
                 Name = inst.Name,
                 ClassName = "RemoteFunction",
-                Path = inst:GetFullName(),
+                Path = safePath(inst),
                 Depth = depth,
                 Instance = inst,
             })

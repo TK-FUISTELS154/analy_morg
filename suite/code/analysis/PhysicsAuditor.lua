@@ -45,11 +45,21 @@ function PhysicsAuditor.new(heuristicEngine, logger, capabilityManager, remoteAn
     return self
 end
 
+local function safePath(inst)
+    if not inst then return "nil" end
+    local ok, p = pcall(function() return inst:GetFullName() end)
+    return (ok and p) or tostring(inst)
+end
+
 -- =============================================================================
 -- FILTRO DE EXCLUSIÓN DE SCRIPTS NATIVOS Y LIBRERÍAS (O(1))
 -- =============================================================================
 function PhysicsAuditor:IsIgnoredCoreInstance(instance)
-    local fullName = instance:GetFullName()
+    if not instance then return true end
+    local s, fullName = pcall(function() return instance:GetFullName() end)
+    if not s or not fullName then
+        return true
+    end
     if fullName:find("PlayerModule")
        or fullName:find("ControlModule")
        or fullName:find("CameraModule")
@@ -279,7 +289,7 @@ function PhysicsAuditor:StartRuntimePhysicsWatcher()
                                     if info and info.source then
                                         local clean = info.source:gsub("^@", "")
                                         for _, sInst in ipairs(game:GetDescendants()) do
-                                            if sInst:IsA("LuaSourceContainer") and (sInst:GetFullName() == clean or sInst.Name == clean) then
+                                            if sInst:IsA("LuaSourceContainer") and (safePath(sInst) == clean or sInst.Name == clean) then
                                                 scriptObj = sInst
                                                 break
                                             end
@@ -513,7 +523,7 @@ function PhysicsAuditor:AuditPhysicsRemotes()
                                 Remote = inst,
                                 Name = inst.Name,
                                 ClassName = inst.ClassName,
-                                Path = inst:GetFullName(),
+                                Path = safePath(inst),
                                 Risk = risk,
                                 Recommendation = reco,
                                 TransmitsCoordinates = hasVectorOrCFrame,
@@ -632,13 +642,14 @@ function PhysicsAuditor:RunFullPhysicsAudit(onProgress)
                 end
 
                 if code and #code > 0 then
-                    local summary, findings = self:AnalyzeScriptPhysicsRules(code, scriptInst:GetFullName())
+                    local sPath = safePath(scriptInst)
+                    local summary, findings = self:AnalyzeScriptPhysicsRules(code, sPath)
                     if #findings > 0 or summary.PhysicsScore > 0 then
                         local scriptEntry = {
                             Instance = scriptInst,
                             Name = scriptInst.Name,
                             ClassName = scriptInst.ClassName,
-                            Path = scriptInst:GetFullName(),
+                            Path = sPath,
                             Summary = summary,
                             Findings = findings,
                         }

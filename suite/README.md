@@ -92,13 +92,12 @@ suite/
 ### 🔒 `code/security/` (Seguridad Activa y Sigilo Multi-Nivel)
 
 #### 1. `SecurityCore.lua`
-- **Jerarquía GUI 5-Tier (Estilo Infinite Yield & DarkDex)**:
+- **Jerarquía GUI 4-Tier Resiliente (Estilo DarkDex & Infinite Yield)**:
   1. *Tier 1 (Nivel 8)*: `gethui()` o `get_hidden_gui()`.
-  2. *Tier 2 (Nivel 8)*: `syn.protect_gui()` o `protectgui()` en `CoreGui`.
-  3. *Tier 3 (Nivel 3-4)*: Inyección de `Folder` en `COREGUI.RobloxGui` (evita error de ScreenGui anidado en CoreGui y oculta la GUI de scripts cliente).
-  4. *Tier 4 (Nivel 4-6)*: `CoreGui` directo si es accesible.
-  5. *Tier 5 (Nivel 3 Básico)*: `PlayerGui` con camuflaje total (nombres efímeros, `Archivable = false`, `DisplayOrder = 2e9`).
-- **Anti-Kick Multi-Capa**: 3 capas de blindaje (Reemplazo directo de método en Nivel 3, intercepción de metatabla `playerMeta.__index` en Nivel 4-5, y hook del servicio `Players.Kick` en Nivel 6+).
+  2. *Tier 2 (Nivel 8 / Elevado)*: `syn.protect_gui()` o `protectgui()` en `CoreGui`.
+  3. *Tier 3 (Nivel 4-6 / Elevado)*: `CoreGui` directo únicamente si la verificación de elevación (`pcall(CoreGui.GetFullName)`) es positiva.
+  4. *Tier 4 (Nivel 3-4 Básico / Solara / Mobile)*: `PlayerGui` con camuflaje total (nombres efímeros aleatorios, `Archivable = false`, `DisplayOrder = 2e9`).
+- **Anti-Kick Seguro**: Hook aislado en `player.Kick` y `Players.Kick` mediante `hookfunction` o bloqueo reactivo en `__namecall` vía `HookManager:BlockMethod("Kick")`, eliminando cualquier sobreescritura ilegal de userdata o mutación global de `__index`.
 - **Anti-AFK Adaptativo**: En Nivel 7 desconecta directamente la señal `LocalPlayer.Idled` (`conn:Disable()`) sin simular clics físicos (100% indetectable); en Nivel 3-4 aplica fallback con `VirtualUser` y fluctuación temporal (jitter).
 - **Anti-OCR y Nombres Efímeros**: Nombres 100% aleatorios alfanuméricos y `Archivable = false` en todos los contenedores para evitar escaneo por texto o clonación.
 

@@ -60,8 +60,18 @@ function EconomyAuditor:IsPrunedBranch(instance)
     return false
 end
 
+local function safePath(inst)
+    if not inst then return "nil" end
+    local ok, p = pcall(function() return inst:GetFullName() end)
+    return (ok and p) or tostring(inst)
+end
+
 function EconomyAuditor:IsIgnoredCoreInstance(instance)
-    local fullName = instance:GetFullName()
+    if not instance then return true end
+    local s, fullName = pcall(function() return instance:GetFullName() end)
+    if not s or not fullName then
+        return true
+    end
     if fullName:find("StarterPlayer%.StarterPlayerScripts%.PlayerModule")
        or fullName:find("StarterPlayer%.StarterPlayerScripts%.RbxCharacterSounds")
        or fullName:find("PlayerScriptsLoader")
@@ -366,7 +376,7 @@ function EconomyAuditor:ScanEconomyNodes(onProgress)
     for idx = 1, total do
         local inst = candidateQueue[idx]
         local rawName = inst.Name
-        local path = inst:GetFullName()
+        local path = safePath(inst)
         local isMatch = false
         local matchedTag = ""
         local nodeData = {

@@ -59,8 +59,18 @@ function StructuralProfiler:IsPrunedBranch(instance)
     return false
 end
 
+local function safePath(inst)
+    if not inst then return "nil" end
+    local ok, p = pcall(function() return inst:GetFullName() end)
+    return (ok and p) or tostring(inst)
+end
+
 function StructuralProfiler:IsIgnoredCoreInstance(instance)
-    local fullName = instance:GetFullName()
+    if not instance then return true end
+    local s, fullName = pcall(function() return instance:GetFullName() end)
+    if not s or not fullName then
+        return true
+    end
     if fullName:find("StarterPlayer%.StarterPlayerScripts%.PlayerModule")
        or fullName:find("StarterPlayer%.StarterPlayerScripts%.RbxCharacterSounds")
        or fullName:find("PlayerScriptsLoader")
@@ -241,7 +251,7 @@ function StructuralProfiler:GenerateReport()
         
         -- Mapeo de Controladores de Entrada y Dependencias
         if inst:IsA("LocalScript") and (topKey == "StarterPlayer" or topKey == "ReplicatedFirst") then
-            local path = inst:GetFullName()
+            local path = safePath(inst)
             local src = getScriptSource(inst)
             
             -- Duck Typing de Firmas de Código

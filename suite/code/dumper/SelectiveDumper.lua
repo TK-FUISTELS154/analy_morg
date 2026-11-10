@@ -14,6 +14,12 @@ local SelectiveDumper = {}
 SelectiveDumper.__index = SelectiveDumper
 SelectiveDumper.ClassName = "SelectiveDumper"
 
+local function safePath(inst)
+    if not inst then return "nil" end
+    local ok, p = pcall(function() return inst:GetFullName() end)
+    return (ok and p) or tostring(inst)
+end
+
 SelectiveDumper.DumpModes = {
     HEURISTIC_FINDINGS    = "HEURISTIC_FINDINGS",    -- Solo donde hubo detección
     DEPENDENCY_CHAIN      = "DEPENDENCY_CHAIN",      -- Cadena de código emisor + remotes + módulos
@@ -221,7 +227,7 @@ function SelectiveDumper:DumpInstance(instance, scriptsOnly, depthLimit, current
     local dump = {
         Name = instance.Name,
         ClassName = instance.ClassName,
-        Path = instance:GetFullName(),
+        Path = safePath(instance),
         Tags = {},
         Attributes = {},
         Properties = {},
@@ -322,7 +328,7 @@ function SelectiveDumper:DumpSubtreesParallel(containerList, scriptsOnly, depthL
             local cDump = {
                 Name = instance.Name,
                 ClassName = instance.ClassName,
-                Path = instance:GetFullName(),
+                Path = safePath(instance),
                 Tags = {},
                 Attributes = {},
                 Properties = {},
@@ -449,7 +455,7 @@ function SelectiveDumper:DumpHeuristicFindings(auditResults, onProgress)
             folderMeta[parentFolder] = {
                 FindingCategory = finding.Tags or {"Detected"},
                 Score = finding.Score or 0,
-                Path = parentFolder:GetFullName(),
+                Path = safePath(parentFolder),
             }
         end
     end
@@ -580,7 +586,7 @@ function SelectiveDumper:DumpDependencyChain(actionEntry, onProgress)
         if tracker:IsCancelled() then break end
         tracker:Step(obj, true, false, "Decompilando Script Intermedio")
         table.insert(dumpPackage.IntermediateScripts, {
-            Path = obj:GetFullName(),
+            Path = safePath(obj),
             ClassName = obj.ClassName,
             Code = self:SafeDecompile(obj),
         })

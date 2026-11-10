@@ -12,11 +12,22 @@ ServiceResolver.ClassName = "ServiceResolver"
 
 local rawGame = (typeof(workspace) == "Instance" and workspace.Parent) or game
 
+-- Comprobación dinámica de elevación (Identidad con acceso a CoreGui, estilo DarkDex)
+local isElevated = false
+pcall(function()
+    local cg = rawGame:GetService("CoreGui")
+    if cg then
+        local _ = cg:GetFullName()
+        isElevated = true
+    end
+end)
+ServiceResolver.IsElevated = isElevated
+
 local rawCloneref = (type(cloneref) == "function" and cloneref) or nil
 local function safeClone(inst)
     if not inst or not rawCloneref then return inst end
     local ok, cloned = pcall(rawCloneref, inst)
-    if ok and cloned and type(cloned) == "userdata" then
+    if ok and cloned and (type(cloned) == "userdata" or typeof(cloned) == "Instance") then
         local valid = pcall(function() return cloned.ClassName end)
         if valid then return cloned end
     end
@@ -29,6 +40,13 @@ function ServiceResolver.GetService(className)
     -- Fallback especial para Workspace
     if className == "Workspace" and typeof(workspace) == "Instance" then
         return workspace
+    end
+
+    -- Si no está elevado, proteger servicios restringidos de RobloxScriptSecurity
+    if not ServiceResolver.IsElevated then
+        if className == "CoreGui" or className == "RobloxReplicatedStorage" or className == "RobloxGui" then
+            return nil
+        end
     end
 
     -- Nivel 1: GetService oficial (resuelve por ClassName interno)
@@ -47,7 +65,8 @@ function ServiceResolver.GetService(className)
     local ok4, children = pcall(function() return rawGame:GetChildren() end)
     if ok4 and children then
         for _, child in ipairs(children) do
-            if child.ClassName == className then
+            local sOk, cName = pcall(function() return child.ClassName end)
+            if sOk and cName == className then
                 return safeClone(child)
             end
         end

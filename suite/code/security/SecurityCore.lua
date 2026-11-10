@@ -42,7 +42,17 @@ function SecurityCore.new(capabilityManager, logger)
     local rawCoreGui = resolveSrv("CoreGui")
     local rawPlayers = resolveSrv("Players")
 
-    self.CoreGui = rawCoreGui and self.Cloneref(rawCoreGui)
+    -- Comprobación dinámica de elevación (Identidad con acceso a CoreGui, estilo DarkDex)
+    local isElevated = false
+    pcall(function()
+        if rawCoreGui then
+            local _ = rawCoreGui:GetFullName()
+            isElevated = true
+        end
+    end)
+    self.IsElevated = isElevated
+
+    self.CoreGui = isElevated and rawCoreGui and self.Cloneref(rawCoreGui) or nil
     self.Players = rawPlayers and self.Cloneref(rawPlayers)
     self.LocalPlayer = self.Players and (self.Players.LocalPlayer or self.Players:FindFirstChildOfClass("Player"))
 
@@ -109,7 +119,7 @@ function SecurityCore:CreateSafeScreenGui(customName)
         return gui
     end
 
-    -- Tier 1: gethui() nativo (Nivel 8)
+    -- Tier 1: gethui() nativo (Nivel 8 / Máximo Sigilo)
     if gethuiFunc then
         local ok, hui = pcall(gethuiFunc)
         if ok and hui then
@@ -121,33 +131,20 @@ function SecurityCore:CreateSafeScreenGui(customName)
         end
     end
 
-    -- Tier 2: protectgui() + CoreGui (Nivel 8)
-    if not finalContainer and protectFunc and self.CoreGui then
+    -- Tier 2: protectgui() + CoreGui (Solo si estamos elevados)
+    if not finalContainer and self.IsElevated and self.CoreGui then
         pcall(function()
             local gui = createBaseGui()
-            protectFunc(gui)
-            gui.Parent = self.CoreGui
-            if gui.Parent then finalContainer = gui end
-        end)
-    end
-
-    -- Tier 3: TRUCO DE INFINITE YIELD / DARCKDEX (Nivel 3-4)
-    -- Inyectar dentro de RobloxGui como Folder para evitar error de ScreenGui anidado en CoreGui
-    if not finalContainer and self.CoreGui then
-        pcall(function()
-            local robloxGui = self.CoreGui:FindFirstChild("RobloxGui")
-            if robloxGui then
-                local folder = Instance.new("Folder")
-                folder.Name = safeName
-                folder.Archivable = false
-                folder.Parent = robloxGui
-                if folder.Parent then finalContainer = folder end
+            if protectFunc then
+                pcall(protectFunc, gui)
             end
+            gui.Parent = self.CoreGui
+            if gui.Parent then finalContainer = gui end
         end)
     end
 
-    -- Tier 4: CoreGui directo si es accesible (Nivel 4-6)
-    if not finalContainer and self.CoreGui then
+    -- Tier 3: CoreGui directo si es accesible y elevado
+    if not finalContainer and self.IsElevated and self.CoreGui then
         pcall(function()
             local gui = createBaseGui()
             gui.Parent = self.CoreGui
@@ -155,7 +152,7 @@ function SecurityCore:CreateSafeScreenGui(customName)
         end)
     end
 
-    -- Tier 5: Fallback seguro en PlayerGui (Nivel 3)
+    -- Tier 4: Fallback Universal y Seguro en PlayerGui (Estilo DarkDex para ejecutores Nivel 3-4)
     if not finalContainer and self.LocalPlayer then
         pcall(function()
             local pGui = self.LocalPlayer:FindFirstChildOfClass("PlayerGui") or self.LocalPlayer:WaitForChild("PlayerGui", 5)
@@ -167,10 +164,12 @@ function SecurityCore:CreateSafeScreenGui(customName)
         end)
     end
 
-    -- Fallback de emergencia
+    -- Fallback final de emergencia
     if not finalContainer then
         finalContainer = createBaseGui()
-        pcall(function() finalContainer.Parent = game:GetService("CoreGui") end)
+        if self.IsElevated then
+            pcall(function() finalContainer.Parent = game:GetService("CoreGui") end)
+        end
     end
 
     self.ProtectedGuis[safeName] = finalContainer
@@ -262,45 +261,24 @@ function SecurityCore:ProtectPlayerKick()
     local player = self.LocalPlayer
     local installedLayers = 0
 
-    -- Capa 1: Reemplazo o hook directo sobre LocalPlayer.Kick
-    if player and typeof(player.Kick) == "function" then
-        if hookfn then
-            local oldKick
-            local s = pcall(function()
-                oldKick = hookfn(player.Kick, newcclosure(function(inst, message, ...)
-                    if checkcaller() then
-                        return oldKick(inst, message, ...)
-                    end
-                    return nil
-                end))
-            end)
-            if s then installedLayers = installedLayers + 1 end
-        else
-            -- Nivel 3-4 (Sin hookfunction): Reemplazo directo
-            pcall(function()
-                player.Kick = newcclosure(function(...) return nil end)
-                installedLayers = installedLayers + 1
-            end)
-        end
+    -- Capa 1: Hook seguro sobre player.Kick (Solo si hookfunction existe)
+    if player and typeof(player.Kick) == "function" and hookfn then
+        local oldKick
+        local s = pcall(function()
+            oldKick = hookfn(player.Kick, newcclosure(function(inst, message, ...)
+                if checkcaller() then
+                    return oldKick(inst, message, ...)
+                end
+                return nil
+            end))
+        end)
+        if s and oldKick then installedLayers = installedLayers + 1 end
     end
 
-    -- Capa 2: Hook en metatabla de Player (Nivel 4-6)
-    if player and getrawmetatable and setreadonly then
-        pcall(function()
-            local meta = getrawmetatable(player)
-            if meta then
-                setreadonly(meta, false)
-                local oldIndex = meta.__index
-                meta.__index = newcclosure(function(selfObj, key)
-                    if key == "Kick" and not checkcaller() then
-                        return function() return nil end
-                    end
-                    return oldIndex(selfObj, key)
-                end)
-                setreadonly(meta, true)
-                installedLayers = installedLayers + 1
-            end
-        end)
+    -- Capa 2: Hook a través de HookManager / __namecall (Inmune a mutación global de __index)
+    if self.HookManager and self.HookManager.BlockMethod then
+        self.HookManager:BlockMethod("Kick")
+        installedLayers = installedLayers + 1
     end
 
     -- Capa 3: Protección a través del servicio Players (Nivel 6)

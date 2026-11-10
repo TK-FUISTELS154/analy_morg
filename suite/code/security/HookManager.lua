@@ -15,6 +15,7 @@ function HookManager.new(capabilityManager, logger)
     self.Caps = capabilityManager
     self.Logger = logger
     self.BlockedRemotes = {}
+    self.BlockedMethods = {}
     self.RemoteListeners = {}
     self.ProtectedInstances = setmetatable({}, { __mode = "k" })
     self.ProtectedNames = {}
@@ -23,6 +24,18 @@ function HookManager.new(capabilityManager, logger)
     self.OriginalIndex = nil
     
     return self
+end
+
+function HookManager:BlockMethod(methodName)
+    if methodName and type(methodName) == "string" then
+        self.BlockedMethods[methodName:lower()] = true
+        if not self.IsHooked then
+            self:InstallHooks()
+        end
+        if self.Logger then
+            self.Logger:Info("HOOKS", "Método bloqueado para scripts del juego: " .. methodName)
+        end
+    end
 end
 
 function HookManager:RegisterProtectedInstance(instance, name)
@@ -66,6 +79,9 @@ function HookManager:InstallHooks()
     local checkcaller = (self.Caps and self.Caps.APIs and self.Caps.APIs.checkcaller) or (type(checkcaller) == "function" and checkcaller) or function() return false end
     local hookmetamethod = (self.Caps and self.Caps.APIs and self.Caps.APIs.hookmetamethod) or (type(hookmetamethod) == "function" and hookmetamethod)
     local newcclosure = (self.Caps and self.Caps.APIs and self.Caps.APIs.newcclosure) or (type(newcclosure) == "function" and newcclosure) or function(f) return f end
+    local rawSetNamecallMethod = (type(setnamecallmethod) == "function" and setnamecallmethod)
+        or (getgenv and type(getgenv().setnamecallmethod) == "function" and getgenv().setnamecallmethod)
+        or function() end
     
     if hookmetamethod then
         -- 1. Hook Maestro __namecall con filtrado de sigilo para colecciones
@@ -75,6 +91,14 @@ function HookManager:InstallHooks()
             local args = {...}
             local isExploitThread = checkcaller()
             
+            -- Bloqueo de métodos para scripts del juego (ej. Kick)
+            if not isExploitThread and method then
+                local lowerMethod = method:lower()
+                if self.BlockedMethods[lowerMethod] then
+                    return nil
+                end
+            end
+
             -- Detectar si es un Remote disparado
             if method == "FireServer" or method == "fireServer" or method == "InvokeServer" or method == "invokeServer" then
                 local remoteName = tostring(selfObj)
@@ -91,9 +115,10 @@ function HookManager:InstallHooks()
                 end
             end
             
-            -- Sigilo de GUI: Ocultar instancias protegidas y todos sus descendientes de scripts del juego
+            -- Sigilo de GUI: Ocultar instancias protegidas de scripts del juego sin tocar CoreGui
             if not isExploitThread then
                 if method == "GetDescendants" or method == "GetChildren" then
+                    rawSetNamecallMethod(method)
                     local res = oldNamecall(selfObj, ...)
                     if type(res) == "table" then
                         local clean = {}
@@ -101,14 +126,6 @@ function HookManager:InstallHooks()
                             local isProtected = false
                             if self.ProtectedInstances[v] or (v and self.ProtectedNames[v.Name]) then
                                 isProtected = true
-                            else
-                                for pInst in pairs(self.ProtectedInstances) do
-                                    local s, isDesc = pcall(function() return v:IsDescendantOf(pInst) end)
-                                    if s and isDesc then
-                                        isProtected = true
-                                        break
-                                    end
-                                end
                             end
                             if not isProtected then
                                 table.insert(clean, v)
@@ -123,18 +140,10 @@ function HookManager:InstallHooks()
                         return nil
                     end
                 elseif method == "FindFirstChildOfClass" or method == "FindFirstChildWhichIsA" then
+                    rawSetNamecallMethod(method)
                     local res = oldNamecall(selfObj, ...)
                     if res then
-                        local isProtected = false
                         if self.ProtectedInstances[res] or (res and self.ProtectedNames[res.Name]) then
-                            isProtected = true
-                        else
-                            for pInst in pairs(self.ProtectedInstances) do
-                                local s, isDesc = pcall(function() return res:IsDescendantOf(pInst) end)
-                                if s and isDesc then isProtected = true; break end
-                            end
-                        end
-                        if isProtected then
                             return nil
                         end
                     end
@@ -142,6 +151,7 @@ function HookManager:InstallHooks()
                 end
             end
             
+            rawSetNamecallMethod(method)
             return oldNamecall(selfObj, ...)
         end))
         
