@@ -68,23 +68,44 @@ local VISUAL_ASSET_NAMES = {
 }
 
 function SelectiveDumper:IsPrunedBranch(instance)
-    -- 1. Poda por lookup directo de ClassName (O(1))
-    if PRUNED_CLASSES[instance.ClassName] then return true end
-    
-    -- 2. Fallback con IsA para herencia (BasePart cubre Part, WedgePart, etc.)
-    if instance:IsA("BasePart") or instance:IsA("Light") or instance:IsA("Constraint")
-       or instance:IsA("UIComponent") or instance:IsA("JointInstance") then
-        return true
+    if not instance then return true end
+
+    -- NUNCA podar si la propia instancia es un script, remote o valor de configuración
+    if instance:IsA("LuaSourceContainer") or instance:IsA("RemoteEvent") or instance:IsA("RemoteFunction") or instance:IsA("UnreliableRemoteEvent") or instance:IsA("ValueBase") then
+        return false
     end
-    
-    -- 3. Poda por nombre de contenedor visual
-    local name = instance.Name:lower()
-    if VISUAL_ASSET_NAMES[name] then
-        if not (name:find("script") or name:find("module") or name:find("controller") or name:find("network") or name:find("client") or name:find("service") or name:find("handler")) then
+
+    -- Poda rápida O(1) si NO tiene hijos
+    local children = instance:GetChildren()
+    if #children == 0 then
+        if PRUNED_CLASSES[instance.ClassName] or instance:IsA("BasePart") or instance:IsA("Light") or instance:IsA("Constraint") or instance:IsA("UIComponent") or instance:IsA("JointInstance") then
+            return true
+        end
+        local name = instance.Name:lower()
+        if VISUAL_ASSET_NAMES[name] then
+            return true
+        end
+        return false
+    end
+
+    -- Si TIENE hijos, comprobar si contiene algún script o remote antes de descartar la rama
+    local hasCode = false
+    pcall(function()
+        hasCode = instance:FindFirstChildWhichIsA("LuaSourceContainer", true) ~= nil 
+               or instance:FindFirstChildWhichIsA("RemoteEvent", true) ~= nil 
+               or instance:FindFirstChildWhichIsA("RemoteFunction", true) ~= nil
+    end)
+
+    if not hasCode then
+        if PRUNED_CLASSES[instance.ClassName] or instance:IsA("BasePart") or instance:IsA("Light") or instance:IsA("Constraint") or instance:IsA("UIComponent") or instance:IsA("JointInstance") then
+            return true
+        end
+        local name = instance.Name:lower()
+        if VISUAL_ASSET_NAMES[name] then
             return true
         end
     end
-    
+
     return false
 end
 
@@ -137,7 +158,7 @@ function SelectiveDumper:CalculateTotalWork(nodeList, scriptsOnly, depthLimit)
     
     for _, node in ipairs(nodeList or {}) do
         if typeof(node) == "Instance" then
-            local c, sc, rm = self:CountSubtreeWork(node, scriptsOnly, depthLimit or 8, 0)
+            local c, sc, rm = self:CountSubtreeWork(node, scriptsOnly, depthLimit or 30, 0)
             totalCount = totalCount + c
             totalScripts = totalScripts + sc
             totalRemotes = totalRemotes + rm
@@ -365,7 +386,7 @@ function SelectiveDumper:DumpSubtreesParallel(containerList, scriptsOnly, depthL
                             targetChildren = cDump.Children,
                             childInstance = child,
                             scriptsOnly = scriptsOnly,
-                            depthLimit = depthLimit or 8,
+                            depthLimit = depthLimit or 30,
                         })
                     end
                 end
@@ -631,7 +652,7 @@ function SelectiveDumper:DumpManualNodes(nodeList, onProgress)
     if total == 0 then return results end
     
     -- Pre-cálculo ultra-rápido de todos los descendientes y scripts (< 2ms)
-    local totalWork, totalSc, totalRm = self:CalculateTotalWork(list, false, 8)
+    local totalWork, totalSc, totalRm = self:CalculateTotalWork(list, false, 30)
     local tracker = createProgressTracker(totalWork, onProgress)
     
     local containerItems = {}
@@ -639,7 +660,7 @@ function SelectiveDumper:DumpManualNodes(nodeList, onProgress)
         table.insert(containerItems, { Instance = node })
     end
     
-    local nodeDumps = self:DumpSubtreesParallel(containerItems, false, 8, tracker, 8)
+    local nodeDumps = self:DumpSubtreesParallel(containerItems, false, 30, tracker, 8)
     
     for _, d in ipairs(nodeDumps) do
         table.insert(results.Nodes, d)
@@ -710,10 +731,10 @@ function SelectiveDumper:DumpFullEnvironment(onProgress)
     }
     
     -- Pre-cálculo total de scripts y remotes
-    local totalWork, totalSc, totalRm = self:CalculateTotalWork(srvInstances, true, 10)
+    local totalWork, totalSc, totalRm = self:CalculateTotalWork(srvInstances, true, 30)
     local tracker = createProgressTracker(totalWork, onProgress)
     
-    local srvDumps = self:DumpSubtreesParallel(srvItems, true, 10, tracker, 8)
+    local srvDumps = self:DumpSubtreesParallel(srvItems, true, 30, tracker, 8)
     
     for _, srvDump in ipairs(srvDumps) do
         table.insert(dumpPackage.Services, srvDump)

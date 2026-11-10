@@ -34,7 +34,7 @@ end
 function ReportExporter:SanitizeForJSON(val, depth, stack)
     depth = depth or 0
     stack = stack or {}
-    if depth > 12 then return "[Depth Limit]" end
+    if depth > 32 then return "[Depth Limit]" end
 
     local t = typeof(val)
     if t == "string" or t == "number" or t == "boolean" or t == "nil" then
@@ -70,213 +70,126 @@ function ReportExporter:ToJSON(data)
 end
 
 -- =============================================================================
--- VFS SINGLE-FILE ARCHIVE (Evita saturación de I/O con múltiples writefile)
--- =============================================================================
--- Consolida todos los scripts y metadatos en un único archivo JSON serializable.
--- Estructura del VFS: { Manifest, Entries: [{ Path, ClassName, Source, Attributes }] }
-
-function ReportExporter:ExportAsVFSArchive(rootName, dumpPackage)
-    local archive = {
-        FormatVersion = "VFS_1.0",
-        PlaceId = game.PlaceId,
-        JobId = game.JobId,
-        Timestamp = tick(),
-        RootName = rootName or "dump",
-        Mode = dumpPackage and dumpPackage.Mode or "Custom",
-        Entries = {},
-        TotalEntries = 0,
-    }
-
-    -- Aplanar la jerarquía del dump en entradas lineales
-    local function flattenNode(node, parentPath)
-        if not node then return end
-        local currentPath = parentPath .. "/" .. tostring(node.Name)
-
-        table.insert(archive.Entries, {
-            Path = currentPath,
-            ClassName = node.ClassName or "Unknown",
-            Source = node.Source,
-            BytecodeSize = node.BytecodeSize or 0,
-            Attributes = node.Attributes,
-            Properties = node.Properties,
-        })
-        archive.TotalEntries = archive.TotalEntries + 1
-
-        for _, child in ipairs(node.Children or {}) do
-            flattenNode(child, currentPath)
-        end
-    end
-
-    if type(dumpPackage) == "table" then
-        if dumpPackage.Services then
-            for _, srv in ipairs(dumpPackage.Services) do
-                flattenNode(srv, "")
-            end
-        elseif dumpPackage.Nodes then
-            for _, node in ipairs(dumpPackage.Nodes) do
-                flattenNode(node, "")
-            end
-        elseif dumpPackage.Containers then
-            for _, c in ipairs(dumpPackage.Containers) do
-                if c.Data then flattenNode(c.Data, "") end
-            end
-        else
-            flattenNode(dumpPackage, "")
-        end
-    end
-
-    local jsonStr = self:ToJSON(archive)
-
-    -- Guardar como un único archivo
-    local filename = string.format("apex_vfs_%s_%d.json", tostring(game.PlaceId), tick())
-    local saved, path = self:SaveToFileChunked(filename, jsonStr)
-
-    if self.Logger then
-        self.Logger:Info("EXPORTER", string.format(
-            "VFS Archive exportado: %d entradas en %s (%d bytes)",
-            archive.TotalEntries, tostring(path), #jsonStr
-        ))
-    end
-
-    return saved, path, archive
-end
-
--- =============================================================================
--- MARKDOWN REPORT GENERATOR (.MD)
+-- REPORTE MARKDOWN UNIFICADO TOTAL (.MD)
 -- =============================================================================
 
-function ReportExporter:GenerateMarkdown(dumpPackage, title)
-    title = title or "Apex Suite - Instance Dump Report"
+function ReportExporter:GenerateUnifiedMarkdown(dumpPackage, title)
+    title = title or "Apex Suite - Reporte Maestro Unificado del Proyecto"
     local lines = {}
+    local function add(l) table.insert(lines, l) end
 
-    table.insert(lines, "# " .. title)
-    table.insert(lines, "")
-    table.insert(lines, string.format("- **Place ID:** `%s`", tostring(game.PlaceId)))
-    table.insert(lines, string.format("- **Job ID:** `%s`", tostring(game.JobId)))
-    table.insert(lines, string.format("- **Fecha / Timestamp:** `%s` (tick: %.2f)", os.date("!%Y-%m-%d %H:%M:%SZ"), tick()))
-    table.insert(lines, string.format("- **Modo de Volcado:** `%s`", dumpPackage and dumpPackage.Mode or "Custom"))
-    table.insert(lines, "")
-    table.insert(lines, "---")
-    table.insert(lines, "")
+    add("# " .. title)
+    add("")
+    add(string.format("- **Place ID:** `%s`", tostring(game.PlaceId)))
+    add(string.format("- **Job ID:** `%s`", tostring(game.JobId)))
+    add(string.format("- **Fecha de Extracción:** `%s` (UTC)", os.date("!%Y-%m-%d %H:%M:%SZ")))
+    add(string.format("- **Modo de Volcado:** `%s`", dumpPackage and dumpPackage.Mode or "Custom"))
+    add("")
+    add("---")
+    add("")
 
-    local totalScripts = 0
-    local totalRemotes = 0
+    -- Recolección de Scripts, Remotes y Métricas
+    local scriptsList = {}
+    local remotesList = {}
     local totalInstances = 0
-    local scriptEntries = {}
 
-    local function traverseNode(node, depth, pathSoFar)
+    local function traverse(node, currentPath)
         if not node then return end
         totalInstances = totalInstances + 1
+        local thisPath = currentPath == "" and tostring(node.Name) or (currentPath .. "." .. tostring(node.Name))
+        local cls = node.ClassName or "Instance"
 
-        local currentPath = pathSoFar .. "/" .. tostring(node.Name)
-        local indent = string.rep("  ", depth)
-        local icon = "📁"
-        if node.ClassName == "LocalScript" or node.ClassName == "Script" or node.ClassName == "ModuleScript" then
-            icon = "📜"
-            totalScripts = totalScripts + 1
-            table.insert(scriptEntries, {
+        if cls:find("Remote") then
+            table.insert(remotesList, {
                 Name = node.Name,
-                ClassName = node.ClassName,
-                Path = node.Path or currentPath,
-                Source = node.Source,
-                BytecodeSize = node.BytecodeSize or (node.Source and #node.Source or 0),
-                Attributes = node.Attributes,
-                Tags = node.Tags,
+                ClassName = cls,
+                Path = node.Path or thisPath
             })
-        elseif node.ClassName and node.ClassName:find("Remote") then
-            icon = "📡"
-            totalRemotes = totalRemotes + 1
-        elseif node.ClassName and (node.ClassName:find("Part") or node.ClassName:find("Model")) then
-            icon = "📦"
-        elseif node.ClassName and node.ClassName:find("Gui") or node.ClassName and (node.ClassName:find("Text") or node.ClassName:find("Button") or node.ClassName:find("Image")) then
-            icon = "🖼️"
         end
 
-        table.insert(lines, string.format("%s- %s **%s** (`%s`)", indent, icon, node.Name, node.ClassName or "Instance"))
+        if cls == "LocalScript" or cls == "ModuleScript" or cls == "Script" then
+            if node.Source and #node.Source > 0 then
+                table.insert(scriptsList, {
+                    Name = node.Name,
+                    ClassName = cls,
+                    Path = node.Path or thisPath,
+                    Source = node.Source,
+                    Size = #node.Source
+                })
+            end
+        end
 
         for _, child in ipairs(node.Children or {}) do
-            traverseNode(child, depth + 1, currentPath)
+            traverse(child, thisPath)
         end
     end
 
-    table.insert(lines, "## 🌲 Estructura del Árbol de Instancias")
-    table.insert(lines, "")
-
-    if type(dumpPackage) == "table" then
-        if dumpPackage.Services then
-            for _, srv in ipairs(dumpPackage.Services) do
-                traverseNode(srv, 0, "")
-            end
-        elseif dumpPackage.Nodes then
-            for _, node in ipairs(dumpPackage.Nodes) do
-                traverseNode(node, 0, "")
-            end
-        elseif dumpPackage.Containers then
-            for _, c in ipairs(dumpPackage.Containers) do
-                if c.Data then traverseNode(c.Data, 0, "") end
-            end
-        else
-            traverseNode(dumpPackage, 0, "")
-        end
+    local rootNodes = dumpPackage.Nodes or dumpPackage.Services or (type(dumpPackage) == "table" and dumpPackage) or {}
+    for _, node in ipairs(rootNodes) do
+        traverse(node, "")
     end
 
-    table.insert(lines, "")
-    table.insert(lines, "---")
-    table.insert(lines, "")
-    table.insert(lines, "## 📊 Métricas de Extracción")
-    table.insert(lines, "")
-    table.insert(lines, string.format("| Métrica | Cantidad |"))
-    table.insert(lines, "| :--- | :--- |")
-    table.insert(lines, string.format("| **Total Instancias** | `%d` |", totalInstances))
-    table.insert(lines, string.format("| **Scripts Extraídos** | `%d` |", totalScripts))
-    table.insert(lines, string.format("| **Remotes Detectados** | `%d` |", totalRemotes))
-    table.insert(lines, "")
-    table.insert(lines, "---")
-    table.insert(lines, "")
-    table.insert(lines, "## 📜 Código Fuente y Bytecode de Scripts")
-    table.insert(lines, "")
+    -- 1. SECCIÓN DE MÉTRICAS EJECUTIVAS
+    add("## 📊 1. Resumen Ejecutivo de Métricas")
+    add("")
+    add("| Métrica | Cantidad |")
+    add("| :--- | :--- |")
+    add(string.format("| **Total Instancias Procesadas** | `%d` |", totalInstances))
+    add(string.format("| **Total Scripts Descompilados** | `%d` |", #scriptsList))
+    add(string.format("| **Total Remotes Detectados** | `%d` |", #remotesList))
+    add("")
+    add("---")
+    add("")
 
-    if #scriptEntries == 0 then
-        table.insert(lines, "_No se extrajeron scripts de código fuente en esta selección._")
+    -- 2. SECCIÓN DE REMOTES Y RED
+    add("## 📡 2. Catálogo Interceptado de Remotes")
+    add("")
+    if #remotesList == 0 then
+        add("_No se detectaron RemoteEvents ni RemoteFunctions._")
     else
-        for idx, sc in ipairs(scriptEntries) do
-            table.insert(lines, string.format("### [%d] %s (`%s`)", idx, sc.Name, sc.ClassName))
-            table.insert(lines, string.format("- **Ruta:** `%s`", tostring(sc.Path)))
-            table.insert(lines, string.format("- **Tamaño:** `%d bytes`", sc.BytecodeSize or 0))
-            if sc.Tags and #sc.Tags > 0 then
-                table.insert(lines, string.format("- **Tags:** `[%s]`", table.concat(sc.Tags, ", ")))
-            end
-            if sc.Attributes and next(sc.Attributes) then
-                local attrList = {}
-                for k, v in pairs(sc.Attributes) do
-                    table.insert(attrList, string.format("%s=%s", tostring(k), tostring(v)))
-                end
-                table.insert(lines, string.format("- **Atributos:** `%s`", table.concat(attrList, ", ")))
-            end
-            table.insert(lines, "")
-            table.insert(lines, "```lua")
-            if sc.Source and #sc.Source > 0 and not sc.Source:find("%[Código no disponible") then
-                table.insert(lines, sc.Source)
-            else
-                table.insert(lines, "-- [Código fuente no disponible o protegido por el ejecutor]")
-            end
-            table.insert(lines, "```")
-            table.insert(lines, "")
+        add("| # | Tipo | Nombre | Ruta de Instancia |")
+        add("| :-: | :--- | :--- | :--- |")
+        for i, r in ipairs(remotesList) do
+            add(string.format("| %d | `%s` | **%s** | `%s` |", i, r.ClassName, r.Name, r.Path))
         end
+    end
+    add("")
+    add("---")
+    add("")
+
+    -- 3. SECCIÓN DE SCRIPTS Y CÓDIGO FUENTE UNIFICADO
+    add("## 📜 3. Código Fuente Unificado de Scripts")
+    add("")
+    add("### 📑 Índice de Scripts")
+    for i, sc in ipairs(scriptsList) do
+        add(string.format("- **[%04d]** `%s` (`%s`, %.1f KB)", i, sc.Path, sc.ClassName, sc.Size / 1024))
+    end
+    add("")
+    add("---")
+    add("")
+
+    for i, sc in ipairs(scriptsList) do
+        add(string.format("### [%04d / %04d] %s", i, #scriptsList, sc.Path))
+        add(string.format("- **Tipo:** `%s` | **Tamaño:** `%.1f KB`", sc.ClassName, sc.Size / 1024))
+        add("")
+        add("```lua")
+        add(sc.Source)
+        add("```")
+        add("")
     end
 
     return table.concat(lines, "\n")
 end
 
 function ReportExporter:ExportAsMarkdown(filename, dumpPackage, title)
-    filename = filename or string.format("apex_dump_%s_%d.md", tostring(game.PlaceId), tick())
+    filename = filename or string.format("apex_unified_report_%s_%d.md", tostring(game.PlaceId), math.floor(tick()))
     if not filename:match("%.md$") then filename = filename .. ".md" end
 
-    local mdContent = self:GenerateMarkdown(dumpPackage, title)
+    local mdContent = self:GenerateUnifiedMarkdown(dumpPackage, title)
     local saved, path = self:SaveToFileChunked(filename, mdContent)
 
     if self.Logger then
-        self.Logger:Info("EXPORTER", string.format("Reporte Markdown exportado a %s (%d bytes)", tostring(path), #mdContent))
+        self.Logger:Info("EXPORTER", string.format("Reporte Markdown unificado exportado a %s (%d bytes)", tostring(path), #mdContent))
     end
 
     return saved, path, mdContent
@@ -379,8 +292,31 @@ function ReportExporter:SaveToFile(filename, content)
 end
 
 -- =============================================================================
--- DISK TREE RECONSTRUCTION (Multi-Service)
+-- DISK TREE RECONSTRUCTION (Multi-Service, Anti-Collision, Windows-Safe)
 -- =============================================================================
+
+local function ensureDirectoryRecursive(path, makefolderFunc, isfolderFunc)
+    if not makefolderFunc then return false end
+    local normalized = path:gsub("\\", "/")
+    local parts = string.split(normalized, "/")
+    local accum = ""
+    for _, part in ipairs(parts) do
+        if part and #part > 0 then
+            accum = accum == "" and part or (accum .. "/" .. part)
+            local s, exists = pcall(isfolderFunc, accum)
+            if not (s and exists) then
+                pcall(makefolderFunc, accum)
+            end
+        end
+    end
+    return true
+end
+
+local function sanitizeSegment(name)
+    local clean = tostring(name or "Unnamed"):gsub('[\\/:*?"<>|]', "_"):gsub("^[%s.]+", ""):gsub("[%s.]+$", "")
+    if clean == "" then clean = "Unnamed" end
+    return clean
+end
 
 function ReportExporter:ExportProjectTreeToDisk(rootFolderName, dumpPackage)
     local writefileFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.writefile) or (type(writefile) == "function" and writefile)
@@ -392,41 +328,48 @@ function ReportExporter:ExportProjectTreeToDisk(rootFolderName, dumpPackage)
     end
 
     local baseDir = "apex_dumps/" .. (rootFolderName or ("dump_" .. tostring(game.PlaceId) .. "_" .. tostring(tick())))
-
-    local function ensureDir(path)
-        if makefolderFunc and isfolderFunc and not isfolderFunc(path) then
-            pcall(makefolderFunc, path)
-        end
-    end
-
-    ensureDir("apex_dumps")
-    ensureDir(baseDir)
+    ensureDirectoryRecursive(baseDir, makefolderFunc, isfolderFunc)
 
     local writtenScripts = 0
+    local remotesCatalog = {}
     local lastYield = tick()
 
     local function writeNode(node, currentPath)
         if not node then return end
 
-        local cleanName = tostring(node.Name):gsub("[\\/:*?\"<>|]", "_")
+        local cleanName = sanitizeSegment(node.Name)
         local thisPath = currentPath .. "/" .. cleanName
+        local cls = node.ClassName or "Instance"
 
-        -- Si tiene código fuente, guardarlo como .lua
+        -- Registro de Remotes
+        if cls == "RemoteEvent" or cls == "RemoteFunction" or cls == "UnreliableRemoteEvent" then
+            table.insert(remotesCatalog, {
+                Name = node.Name,
+                ClassName = cls,
+                Path = node.Path or thisPath,
+            })
+        end
+
+        -- Si tiene código fuente, guardarlo con extensión según su ClassName
         if node.Source and type(node.Source) == "string" and #node.Source > 0 then
-            local scriptFile = thisPath .. ".lua"
+            local ext = (cls == "ModuleScript" and ".module.lua") or (cls == "LocalScript" and ".client.lua") or ".server.lua"
+            local scriptFile = thisPath .. ext
+            
+            ensureDirectoryRecursive(currentPath, makefolderFunc, isfolderFunc)
             pcall(writefileFunc, scriptFile, node.Source)
             writtenScripts = writtenScripts + 1
         end
 
         -- Si tiene hijos, asegurar la carpeta y escribir recursivamente
-        if node.Children and #node.Children > 0 then
-            ensureDir(thisPath)
-            for _, child in ipairs(node.Children) do
+        local children = node.Children
+        if children and #children > 0 then
+            ensureDirectoryRecursive(thisPath, makefolderFunc, isfolderFunc)
+            for _, child in ipairs(children) do
                 writeNode(child, thisPath)
             end
         end
 
-        -- Time-slicing cooperativo
+        -- Time-slicing cooperativo cada 12ms para cero lag en Level 3-4
         if tick() - lastYield > 0.012 then
             task.wait()
             lastYield = tick()
@@ -452,6 +395,12 @@ function ReportExporter:ExportProjectTreeToDisk(rootFolderName, dumpPackage)
         end
     end
 
+    -- Escribir catálogo de remotes detectados
+    if #remotesCatalog > 0 then
+        local remotesPath = baseDir .. "/detected_remotes.json"
+        pcall(writefileFunc, remotesPath, self:ToJSON(remotesCatalog))
+    end
+
     -- Escribir manifiesto JSON
     local manifestPath = baseDir .. "/manifest.json"
     pcall(writefileFunc, manifestPath, self:ToJSON({
@@ -459,14 +408,64 @@ function ReportExporter:ExportProjectTreeToDisk(rootFolderName, dumpPackage)
         JobId = game.JobId,
         Timestamp = tick(),
         TotalScriptsExported = writtenScripts,
+        TotalRemotesDetected = #remotesCatalog,
         Mode = dumpPackage and dumpPackage.Mode or "Custom",
     }))
 
     if self.Logger then
-        self.Logger:Info("EXPORTER", string.format("Proyecto reconstruido en disco (%d scripts .lua guardados en %s)", writtenScripts, baseDir))
+        self.Logger:Info("EXPORTER", string.format("Proyecto reconstruido en disco (%d scripts .lua, %d remotes en %s)", writtenScripts, #remotesCatalog, baseDir))
     end
 
-    return true, string.format("%s (%d scripts guardados)", baseDir, writtenScripts)
+    return true, string.format("%s (%d scripts, %d remotes guardados)", baseDir, writtenScripts, #remotesCatalog)
+end
+
+-- =============================================================================
+-- SAVEINSTANCE DE ULTRA ALTA VELOCIDAD (.RBXL / .RBXLX)
+-- =============================================================================
+
+function ReportExporter:ExportAsSaveInstance(filename, customOptions)
+    local saveInstFunc = (typeof(saveinstance) == "function" and saveinstance)
+        or (typeof(syn_saveinstance) == "function" and syn_saveinstance)
+        or (typeof(save_instance) == "function" and save_instance)
+        or (typeof(save_place) == "function" and save_place)
+
+    if not saveInstFunc then
+        return false, "Tu ejecutor no dispone de la función nativa 'saveinstance()'. Verifica si tu ejecutor la soporta."
+    end
+
+    filename = filename or string.format("Place_%s_%d.rbxl", tostring(game.PlaceId), math.floor(tick()))
+    if not filename:match("%.rbxl$") and not filename:match("%.rbxlx$") then
+        filename = filename .. ".rbxl"
+    end
+
+    -- Configuración afinada para máxima velocidad y evitar congelamientos en Nivel 3-4
+    local fastOptions = {
+        mode = "optimized",              -- Poda visual rápida para evitar cuelgues
+        noscripts = false,               -- Mantener y descompilar scripts
+        scriptcache = true,              -- Usar caché para evitar descompilaciones repetidas
+        decompile = true,
+        timeout = 20,                    -- Máximo 20s por script para no congelar el juego
+        SavePlayers = false,             -- Ignorar avatares para aligerar megabytes
+        IsolateStarterPlayer = false,
+        IsolateLocalPlayer = false,
+        IgnoreDefaultProperties = true,  -- No serializar propiedades por defecto (ahorra ~60% de peso)
+        IgnoreProperties = { "MeshId", "TextureID" }, -- Salta descargas HTTP lentas de Roblox CDN
+        FilePath = filename,
+    }
+
+    if type(customOptions) == "table" then
+        for k, v in pairs(customOptions) do fastOptions[k] = v end
+    end
+
+    local success, err = pcall(saveInstFunc, fastOptions)
+    if success then
+        if self.Logger then
+            self.Logger:Info("EXPORTER", "SaveInstance completado con éxito: " .. filename)
+        end
+        return true, filename
+    else
+        return false, "Error al ejecutar saveinstance: " .. tostring(err)
+    end
 end
 
 -- =============================================================================

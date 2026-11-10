@@ -574,6 +574,13 @@ function DumperView:Render()
     dumpActionRow.BackgroundTransparency = 1
     dumpActionRow.Parent = rightPanel
 
+    -- Barra de Exportación de Volcados (JSON, MD Unificado, Disco, SaveInstance)
+    local dumpActionRow = Instance.new("Frame")
+    dumpActionRow.Size = UDim2.new(1, -12, 0, 28)
+    dumpActionRow.Position = UDim2.new(0, 6, 1, -62)
+    dumpActionRow.BackgroundTransparency = 1
+    dumpActionRow.Parent = rightPanel
+
     local dumpJsonBtn = Instance.new("TextButton")
     dumpJsonBtn.Size = UDim2.new(0.25, -2, 1, 0)
     dumpJsonBtn.Position = UDim2.new(0, 0, 0, 0)
@@ -589,7 +596,7 @@ function DumperView:Render()
     dumpMdBtn.Size = UDim2.new(0.25, -2, 1, 0)
     dumpMdBtn.Position = UDim2.new(0.25, 1, 0, 0)
     dumpMdBtn.BackgroundColor3 = Color3.fromRGB(0, 175, 130)
-    dumpMdBtn.Text = "📄 MARKDOWN (.md)"
+    dumpMdBtn.Text = "📄 MD UNIFICADO"
     dumpMdBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     dumpMdBtn.Font = Enum.Font.GothamBold
     dumpMdBtn.TextSize = 8
@@ -600,23 +607,23 @@ function DumperView:Render()
     dumpDiskBtn.Size = UDim2.new(0.25, -2, 1, 0)
     dumpDiskBtn.Position = UDim2.new(0.50, 2, 0, 0)
     dumpDiskBtn.BackgroundColor3 = Color3.fromRGB(135, 55, 195)
-    dumpDiskBtn.Text = "💾 DISCO (.lua)"
+    dumpDiskBtn.Text = "📁 DISCO (.lua)"
     dumpDiskBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     dumpDiskBtn.Font = Enum.Font.GothamBold
     dumpDiskBtn.TextSize = 8
     dumpDiskBtn.Parent = dumpActionRow
     Instance.new("UICorner", dumpDiskBtn).CornerRadius = UDim.new(0, 4)
 
-    local dumpVfsBtn = Instance.new("TextButton")
-    dumpVfsBtn.Size = UDim2.new(0.25, -2, 1, 0)
-    dumpVfsBtn.Position = UDim2.new(0.75, 3, 0, 0)
-    dumpVfsBtn.BackgroundColor3 = Color3.fromRGB(30, 140, 85)
-    dumpVfsBtn.Text = "📦 VFS ARCHIVE"
-    dumpVfsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    dumpVfsBtn.Font = Enum.Font.GothamBold
-    dumpVfsBtn.TextSize = 8
-    dumpVfsBtn.Parent = dumpActionRow
-    Instance.new("UICorner", dumpVfsBtn).CornerRadius = UDim.new(0, 4)
+    local dumpSaveInstanceBtn = Instance.new("TextButton")
+    dumpSaveInstanceBtn.Size = UDim2.new(0.25, -2, 1, 0)
+    dumpSaveInstanceBtn.Position = UDim2.new(0.75, 3, 0, 0)
+    dumpSaveInstanceBtn.BackgroundColor3 = Color3.fromRGB(220, 140, 20)
+    dumpSaveInstanceBtn.Text = "⚡ SAVEINSTANCE (.rbxl)"
+    dumpSaveInstanceBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    dumpSaveInstanceBtn.Font = Enum.Font.GothamBold
+    dumpSaveInstanceBtn.TextSize = 8
+    dumpSaveInstanceBtn.Parent = dumpActionRow
+    Instance.new("UICorner", dumpSaveInstanceBtn).CornerRadius = UDim.new(0, 4)
 
     -- Barra de Utilidades Inferior (Copiar / Guardar Vista)
     local utilityRow = Instance.new("Frame")
@@ -1775,20 +1782,20 @@ function DumperView:Render()
             dumpJsonBtn.Text = "⏳ VOLCANDO..."
             dumpMdBtn.Text = "⏳ VOLCANDO..."
             dumpDiskBtn.Text = "⏳ VOLCANDO..."
-            dumpVfsBtn.Text = "⏳ VOLCANDO..."
+            dumpSaveInstanceBtn.Text = "⏳ CLONANDO..."
             dumpJsonBtn.BackgroundColor3 = Color3.fromRGB(35, 80, 110)
             dumpMdBtn.BackgroundColor3 = Color3.fromRGB(30, 95, 75)
             dumpDiskBtn.BackgroundColor3 = Color3.fromRGB(90, 45, 110)
-            dumpVfsBtn.BackgroundColor3 = Color3.fromRGB(25, 85, 60)
+            dumpSaveInstanceBtn.BackgroundColor3 = Color3.fromRGB(130, 80, 20)
         else
             dumpJsonBtn.Text = "💾 EXPORTAR JSON"
-            dumpMdBtn.Text = "📝 EXPORTAR MARKDOWN"
+            dumpMdBtn.Text = "📝 MD UNIFICADO"
             dumpDiskBtn.Text = "📂 GUARDAR EN DISCO"
-            dumpVfsBtn.Text = "🗜️ VFS ARCHIVE"
+            dumpSaveInstanceBtn.Text = "⚡ SAVEINSTANCE (.rbxl)"
             dumpJsonBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
             dumpMdBtn.BackgroundColor3 = Color3.fromRGB(0, 170, 130)
             dumpDiskBtn.BackgroundColor3 = Color3.fromRGB(140, 65, 175)
-            dumpVfsBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 95)
+            dumpSaveInstanceBtn.BackgroundColor3 = Color3.fromRGB(220, 140, 20)
         end
     end
 
@@ -1915,22 +1922,14 @@ function DumperView:Render()
             modalMetrics.Text = string.format("🚀 Rendimiento: %.0f elem/s | 100%% procesado", totalCount / math.max(duration, 0.001))
             modalCurrentItem.Text = "  ✅ Formato exportado con éxito: " .. tostring(exportMode:upper())
 
-            if exportMode == "vfs" then
-                local s, path = exporter:ExportAsVFSArchive("Dump_" .. self.CurrentMode, package)
-                if s then
-                    treeStatus.Text = string.format("✅ VFS Archive guardado (%.2fs): %s", duration, tostring(path))
-                else
-                    treeStatus.Text = "❌ VFS Error: " .. tostring(path)
-                end
-                self:SelectRightTab("Stats")
-            elseif exportMode == "md" then
-                local mdTitle = "Apex Suite - Volcado " .. self.CurrentMode
-                local fname = "dump_" .. self.CurrentMode:lower() .. "_" .. math.floor(tick()) .. ".md"
+            if exportMode == "md" then
+                local mdTitle = "Apex Suite - Reporte Maestro Unificado (" .. self.CurrentMode .. ")"
+                local fname = "unified_report_" .. self.CurrentMode:lower() .. "_" .. math.floor(tick()) .. ".md"
                 local s, path, mdContent = exporter:ExportAsMarkdown(fname, package, mdTitle)
                 self:SelectRightTab("JSONOutput")
                 setInspectorText(mdContent)
                 if s then
-                    treeStatus.Text = string.format("✅ Markdown guardado en %.2fs (%d KB) → %s", duration, math.floor(#mdContent / 1024), tostring(path))
+                    treeStatus.Text = string.format("✅ Reporte MD unificado guardado en %.2fs (%d KB) → %s", duration, math.floor(#mdContent / 1024), tostring(path))
                 else
                     treeStatus.Text = "Resultado Markdown: " .. tostring(path)
                 end
@@ -1971,7 +1970,19 @@ function DumperView:Render()
     dumpJsonBtn.MouseButton1Click:Connect(function() executeDump("json") end)
     dumpMdBtn.MouseButton1Click:Connect(function() executeDump("md") end)
     dumpDiskBtn.MouseButton1Click:Connect(function() executeDump("disk") end)
-    dumpVfsBtn.MouseButton1Click:Connect(function() executeDump("vfs") end)
+    dumpSaveInstanceBtn.MouseButton1Click:Connect(function()
+        local exporter = self.Registry:Get("ReportExporter")
+        if exporter then
+            treeStatus.Text = "⚡ Iniciando clonado ultra-rápido SaveInstance..."
+            local fname = string.format("Place_%s_%d.rbxl", tostring(game.PlaceId), math.floor(tick()))
+            local s, res = exporter:ExportAsSaveInstance(fname)
+            if s then
+                treeStatus.Text = "✅ ¡Juego clonado a .rbxl!: " .. tostring(res)
+            else
+                treeStatus.Text = "❌ " .. tostring(res)
+            end
+        end
+    end)
 
     copyInspectorBtn.MouseButton1Click:Connect(function()
         if safeSetClipboard(inspectorBox.Text) then
