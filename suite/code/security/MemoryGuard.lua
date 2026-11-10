@@ -18,6 +18,8 @@ function MemoryGuard.new(capabilityManager, logger)
     self.MinGCDelay = 1.0 -- Mínimo 1 segundo entre escaneos de GC
     self.CachedGC = nil
     self.LastCacheTime = 0
+    self.CallCount = 0
+    self.MaxCallsPerSecond = 5
     return self
 end
 
@@ -32,8 +34,11 @@ function MemoryGuard:GetSafeGC(forceRefresh)
         return self.CachedGC
     end
     
-    if (now - self.LastGCTime) < self.MinGCDelay then
-        task.wait(self.MinGCDelay - (now - self.LastGCTime))
+    -- Control de ráfagas con micro-espera aleatoria (jitter) anti-heurística
+    self.CallCount = self.CallCount + 1
+    if (now - self.LastGCTime) < self.MinGCDelay or self.CallCount > self.MaxCallsPerSecond then
+        task.wait(math.random(40, 100) / 1000)
+        self.CallCount = 0
     end
     
     self.LastGCTime = tick()
@@ -51,6 +56,32 @@ function MemoryGuard:GetSafeGC(forceRefresh)
     end
     
     return {}
+end
+
+function MemoryGuard:FindTable(expectedKeys)
+    local gc = self:GetSafeGC()
+    local results = {}
+    for _, obj in ipairs(gc) do
+        if type(obj) == "table" then
+            local matchCount = 0
+            for _, key in ipairs(expectedKeys) do
+                if rawget(obj, key) ~= nil then matchCount = matchCount + 1 end
+            end
+            if matchCount == #expectedKeys then table.insert(results, obj) end
+        end
+    end
+    return results
+end
+
+function MemoryGuard:FindFunction(targetName)
+    local gc = self:GetSafeGC()
+    for _, obj in ipairs(gc) do
+        if type(obj) == "function" then
+            local info = debug.getinfo(obj)
+            if info and info.name == targetName then return obj end
+        end
+    end
+    return nil
 end
 
 return MemoryGuard

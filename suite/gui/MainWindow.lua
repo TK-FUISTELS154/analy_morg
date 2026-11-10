@@ -33,7 +33,8 @@ end
 -- =============================================================================
 function MainWindow:ShowSplashAndBuild()
     local splashFrame = Instance.new("Frame")
-    splashFrame.Name = "ApexSplashLoader"
+    splashFrame.Name = "S_" .. math.random(100000, 999999)
+    splashFrame.Archivable = false
     splashFrame.Size = UDim2.new(0, 420, 0, 210)
     splashFrame.Position = UDim2.new(0.5, -210, 0.5, -105)
     splashFrame.BackgroundColor3 = Color3.fromRGB(15, 18, 25)
@@ -183,7 +184,8 @@ end
 function MainWindow:BuildWindow()
     -- Contenedor Principal
     local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "MainFrame"
+    mainFrame.Name = "M_" .. math.random(100000, 999999)
+    mainFrame.Archivable = false
     mainFrame.Size = UDim2.new(0, 880, 0, 580)
     mainFrame.Position = UDim2.new(0.5, -440, 0.5, -290)
     mainFrame.BackgroundColor3 = Color3.fromRGB(15, 17, 24)
@@ -200,6 +202,8 @@ function MainWindow:BuildWindow()
     
     -- Barra de Título Arrastrable
     local titleBar = Instance.new("Frame")
+    titleBar.Name = "TB_" .. math.random(100000, 999999)
+    titleBar.Archivable = false
     titleBar.Size = UDim2.new(1, 0, 0, 42)
     titleBar.BackgroundColor3 = Color3.fromRGB(22, 25, 36)
     titleBar.Parent = mainFrame
@@ -243,7 +247,8 @@ function MainWindow:BuildWindow()
     -- WIDGET FLOTANTE AL MINIMIZAR (PARTE SUPERIOR CENTRAL - TOP CENTER PILL)
     -- =========================================================================
     local floatPill = Instance.new("TextButton")
-    floatPill.Name = "ApexTopCenterPill"
+    floatPill.Name = "P_" .. math.random(100000, 999999)
+    floatPill.Archivable = false
     floatPill.Size = UDim2.new(0, 210, 0, 32)
     floatPill.Position = UDim2.new(0.5, -105, 0, 10) -- Parte Superior Central
     floatPill.BackgroundColor3 = Color3.fromRGB(18, 22, 32)

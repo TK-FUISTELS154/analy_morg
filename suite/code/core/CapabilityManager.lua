@@ -83,9 +83,24 @@ function CapabilityManager:EvaluateCapabilities()
     local score = 0
 
     -- 1. GUI Segura (gethui, cloneref, protectgui)
-    apis.gethui = (type(gethui) == "function" and gethui) or nil
-    apis.cloneref = (type(cloneref) == "function" and cloneref) or function(x) return x end
-    apis.protectgui = (type(protectgui) == "function" and protectgui) or (type(protect_gui) == "function" and protect_gui) or nil
+    apis.gethui = (type(gethui) == "function" and gethui) or (type(get_hidden_gui) == "function" and get_hidden_gui) or nil
+    
+    local rawCloneref = (type(cloneref) == "function" and cloneref) or nil
+    apis.cloneref = function(inst)
+        if not rawCloneref or not inst then return inst end
+        local ok, cloned = pcall(rawCloneref, inst)
+        if ok and cloned and type(cloned) == "userdata" then
+            -- Validación de bug de cloneref en inyectores Nivel 3-4
+            local valid = pcall(function() return cloned.ClassName end)
+            if valid then return cloned end
+        end
+        return inst
+    end
+    
+    apis.protectgui = (type(protectgui) == "function" and protectgui)
+        or (type(protect_gui) == "function" and protect_gui)
+        or (type(syn) == "table" and type(syn.protect_gui) == "function" and syn.protect_gui)
+        or nil
     caps.HasSecureGUI = (apis.gethui ~= nil or apis.protectgui ~= nil)
     if caps.HasSecureGUI then score = score + 10 end
 
@@ -435,45 +450,32 @@ function CapabilityManager:ArmEnvironmentGuard()
     local newcclosure = self.APIs.newcclosure
     local checkcaller = self.APIs.checkcaller
 
-    if not hookfn then
-        return false, "hookfunction no disponible (requiere Nivel 6+)"
-    end
-
     local guards = 0
 
-    -- 1. Interceptar debug.info (trampa de callstack)
-    if type(debug) == "table" and type(debug.info) == "function" then
-        local originalDebugInfo = debug.info
-        pcall(function()
-            hookfn(debug.info, newcclosure(function(levelOrFunc, ...)
-                if checkcaller() then
-                    return originalDebugInfo(levelOrFunc, ...)
-                end
-                -- Cuando NO es nuestro caller (es el juego intentando inspeccionar),
-                -- ajustar nivel +1 para ocultar nuestro frame del stack
-                if type(levelOrFunc) == "number" then
-                    return originalDebugInfo(levelOrFunc + 1, ...)
-                end
-                return originalDebugInfo(levelOrFunc, ...)
-            end))
-            guards = guards + 1
-        end)
-    end
+    -- 1. Callstack Spoofing en getcallingscript (Técnica sigilosa probada)
+    -- Simula proveniencia de StarterPlayerScripts cuando la llamada proviene de un hilo exploit sin origen
+    if type(getcallingscript) == "function" then
+        local originalGetCallingScript = getcallingscript
+        local ok = pcall(function()
+            local starterScripts = nil
+            pcall(function()
+                local sp = game:GetService("StarterPlayer")
+                starterScripts = sp and sp:FindFirstChild("StarterPlayerScripts")
+            end)
 
-    -- 2. Interceptar getfenv (detección de entorno inyectado)
-    if type(getfenv) == "function" then
-        local originalGetfenv = getfenv
-        pcall(function()
-            hookfn(getfenv, newcclosure(function(levelOrFunc)
-                if checkcaller() then
-                    return originalGetfenv(levelOrFunc)
+            local spoofed = function()
+                local calling = originalGetCallingScript()
+                if calling == nil and starterScripts then
+                    return starterScripts
                 end
-                -- Devolver entorno limpio al juego
-                if type(levelOrFunc) == "number" and levelOrFunc > 0 then
-                    return originalGetfenv(0)
-                end
-                return originalGetfenv(levelOrFunc)
-            end))
+                return calling
+            end
+
+            if hookfn and newcclosure then
+                hookfn(getcallingscript, newcclosure(spoofed))
+            else
+                getcallingscript = spoofed
+            end
             guards = guards + 1
         end)
     end

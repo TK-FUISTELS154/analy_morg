@@ -50,91 +50,188 @@ function SecurityCore.new(capabilityManager, logger)
     self.AntiAFKConnection = nil
     self._kickHookInstalled = false
     self._envGuardInstalled = false
+    self.ProtectedGuis = {}
+    self.HookManager = nil
 
     return self
 end
 
--- =============================================================================
--- SECURE GUI: Contenedor seguro para la suite
--- =============================================================================
-
-function SecurityCore:GetSecureGuiParent()
-    local parent = nil
-
-    -- Intento 1: gethui() nativo
-    local gethuiFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.gethui) or (type(gethui) == "function" and gethui)
-    if gethuiFunc then
-        local s, res = pcall(gethuiFunc)
-        if s and res then parent = res end
+function SecurityCore:SetHookManager(hookManager)
+    self.HookManager = hookManager
+    for name, gui in pairs(self.ProtectedGuis) do
+        if self.HookManager and self.HookManager.RegisterProtectedInstance then
+            self.HookManager:RegisterProtectedInstance(gui, name)
+        end
     end
-
-    -- Intento 2: CoreGui con cloneref
-    if not parent and self.CoreGui then
-        local s, res = pcall(function()
-            local test = Instance.new("Folder")
-            test.Parent = self.CoreGui
-            test:Destroy()
-            return self.CoreGui
-        end)
-        if s and res then parent = self.CoreGui end
-    end
-
-    -- Intento 3: Fallback seguro en PlayerGui
-    if not parent and self.LocalPlayer then
-        parent = self.LocalPlayer:WaitForChild("PlayerGui", 5)
-    end
-
-    return parent or game:GetService("CoreGui")
 end
 
-function SecurityCore:CreateSafeScreenGui(name)
-    local parent = self:GetSecureGuiParent()
-    -- Anti-OCR: Nombre aleatorio imposible de escanear por texto
-    local randomId = math.random(1000000, 9999999)
-    local antiOCR = string.char(math.random(65, 90)) .. string.char(math.random(97, 122))
-    local safeName = (name or "AppContainer") .. "_" .. antiOCR .. tostring(randomId)
+-- =============================================================================
+-- SECURE GUI: Contenedor seguro para la suite (Adaptativo Niveles 3 a 8)
+-- =============================================================================
+-- Aplica el modelo multi-capa de Infinite Yield y DarkDex:
+--   Tier 1 (Nivel 8): gethui()
+--   Tier 2 (Nivel 8): protect_gui() + CoreGui
+--   Tier 3 (Nivel 3-4): Inyección de Folder en COREGUI.RobloxGui (Evita errores de ScreenGui en CoreGui)
+--   Tier 4 (Nivel 3-4): CoreGui directo si es accesible
+--   Tier 5 (Nivel 3): PlayerGui con camuflaje total (nombres aleatorios, Archivable=false, DisplayOrder=2e9)
 
-    -- Limpieza previa
-    local existing = parent:FindFirstChild(safeName)
-    if existing then pcall(function() existing:Destroy() end) end
+local function generateRandomName(len)
+    local chars = {}
+    local length = len or math.random(14, 22)
+    for i = 1, length do
+        local r = math.random(1, 3)
+        if r == 1 then
+            chars[i] = string.char(math.random(97, 122)) -- a-z
+        elseif r == 2 then
+            chars[i] = string.char(math.random(65, 90))  -- A-Z
+        else
+            chars[i] = string.char(math.random(48, 57))  -- 0-9
+        end
+    end
+    return table.concat(chars)
+end
 
-    local gui = Instance.new("ScreenGui")
-    gui.Name = safeName
-    gui.ResetOnSpawn = false
-    gui.DisplayOrder = 999999
+function SecurityCore:CreateSafeScreenGui(customName)
+    local safeName = generateRandomName()
+    local finalContainer = nil
 
-    -- Proteger si la API existe
-    local protectFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.protectgui)
-        or (type(protectgui) == "function" and protectgui)
-        or (type(protect_gui) == "function" and protect_gui)
-    if protectFunc then
-        pcall(protectFunc, gui)
+    local apis = self.Caps and self.Caps.APIs or {}
+    local gethuiFunc = apis.gethui or (type(gethui) == "function" and gethui) or (type(get_hidden_gui) == "function" and get_hidden_gui)
+    local protectFunc = apis.protectgui or (type(protectgui) == "function" and protectgui) or (type(protect_gui) == "function" and protect_gui) or (type(syn) == "table" and type(syn.protect_gui) == "function" and syn.protect_gui)
+
+    local function createBaseGui()
+        local gui = Instance.new("ScreenGui")
+        gui.Name = safeName
+        gui.ResetOnSpawn = false
+        gui.DisplayOrder = 2e9
+        gui.IgnoreGuiInset = true
+        gui.Archivable = false
+        return gui
     end
 
-    gui.Parent = parent
+    -- Tier 1: gethui() nativo (Nivel 8)
+    if gethuiFunc then
+        local ok, hui = pcall(gethuiFunc)
+        if ok and hui then
+            local gui = createBaseGui()
+            local pOk = pcall(function() gui.Parent = hui end)
+            if pOk and gui.Parent then
+                finalContainer = gui
+            end
+        end
+    end
+
+    -- Tier 2: protectgui() + CoreGui (Nivel 8)
+    if not finalContainer and protectFunc and self.CoreGui then
+        pcall(function()
+            local gui = createBaseGui()
+            protectFunc(gui)
+            gui.Parent = self.CoreGui
+            if gui.Parent then finalContainer = gui end
+        end)
+    end
+
+    -- Tier 3: TRUCO DE INFINITE YIELD / DARCKDEX (Nivel 3-4)
+    -- Inyectar dentro de RobloxGui como Folder para evitar error de ScreenGui anidado en CoreGui
+    if not finalContainer and self.CoreGui then
+        pcall(function()
+            local robloxGui = self.CoreGui:FindFirstChild("RobloxGui")
+            if robloxGui then
+                local folder = Instance.new("Folder")
+                folder.Name = safeName
+                folder.Archivable = false
+                folder.Parent = robloxGui
+                if folder.Parent then finalContainer = folder end
+            end
+        end)
+    end
+
+    -- Tier 4: CoreGui directo si es accesible (Nivel 4-6)
+    if not finalContainer and self.CoreGui then
+        pcall(function()
+            local gui = createBaseGui()
+            gui.Parent = self.CoreGui
+            if gui.Parent then finalContainer = gui end
+        end)
+    end
+
+    -- Tier 5: Fallback seguro en PlayerGui (Nivel 3)
+    if not finalContainer and self.LocalPlayer then
+        pcall(function()
+            local pGui = self.LocalPlayer:FindFirstChildOfClass("PlayerGui") or self.LocalPlayer:WaitForChild("PlayerGui", 5)
+            if pGui then
+                local gui = createBaseGui()
+                gui.Parent = pGui
+                if gui.Parent then finalContainer = gui end
+            end
+        end)
+    end
+
+    -- Fallback de emergencia
+    if not finalContainer then
+        finalContainer = createBaseGui()
+        pcall(function() finalContainer.Parent = game:GetService("CoreGui") end)
+    end
+
+    self.ProtectedGuis[safeName] = finalContainer
+    if self.HookManager and self.HookManager.RegisterProtectedInstance then
+        self.HookManager:RegisterProtectedInstance(finalContainer, safeName)
+    end
 
     if self.Logger then
-        self.Logger:Debug("SECURITY", "ScreenGui seguro creado en " .. tostring(parent:GetFullName()))
+        local pName = pcall(function() return finalContainer.Parent:GetFullName() end) and finalContainer.Parent:GetFullName() or tostring(finalContainer.Parent)
+        self.Logger:Debug("SECURITY", string.format("Contenedor seguro creado (%s) en: %s", finalContainer.ClassName, tostring(pName)))
     end
 
-    return gui
+    return finalContainer
+end
+
+function SecurityCore:GetSecureGuiParent()
+    -- Retrocompatibilidad
+    if self.ProtectedGuis then
+        for _, g in pairs(self.ProtectedGuis) do
+            if g and g.Parent then return g end
+        end
+    end
+    return self.CoreGui or game:GetService("CoreGui")
 end
 
 -- =============================================================================
--- ANTI-AFK: VirtualUser + Idled
+-- ANTI-AFK: Adaptativo (Nivel 7 Señal Silenciosa vs Nivel 3 VirtualUser)
 -- =============================================================================
 
 function SecurityCore:EnableAntiAFK()
     if self.IsAntiAFKEnabled then return end
     self.IsAntiAFKEnabled = true
 
-    local VirtualUser = nil
-    pcall(function()
-        VirtualUser = game:GetService("VirtualUser")
-    end)
+    local LocalPlayer = self.LocalPlayer
+    if not LocalPlayer then return end
 
-    if self.LocalPlayer then
-        self.AntiAFKConnection = self.LocalPlayer.Idled:Connect(function()
+    -- Método 1: Nivel 7 (Desconexión de señales - 100% silencioso y sin simular clicks físicos)
+    local getconnectionsFunc = (self.Caps and self.Caps.APIs and self.Caps.APIs.getconnections)
+        or (type(getconnections) == "function" and getconnections)
+        or (type(get_signal_cons) == "function" and get_signal_cons)
+
+    local signalDisabled = false
+    if getconnectionsFunc then
+        pcall(function()
+            for _, conn in pairs(getconnectionsFunc(LocalPlayer.Idled)) do
+                if conn.Disable then
+                    conn:Disable()
+                    signalDisabled = true
+                elseif conn.Disconnect then
+                    conn:Disconnect()
+                    signalDisabled = true
+                end
+            end
+        end)
+    end
+
+    -- Método 2: Nivel 3-4 (Fallback pasivo con VirtualUser)
+    if not signalDisabled then
+        local VirtualUser = nil
+        pcall(function() VirtualUser = game:GetService("VirtualUser") end)
+        self.AntiAFKConnection = LocalPlayer.Idled:Connect(function()
             if VirtualUser then
                 pcall(function()
                     VirtualUser:CaptureController()
@@ -145,12 +242,12 @@ function SecurityCore:EnableAntiAFK()
     end
 
     if self.Logger then
-        self.Logger:Info("SECURITY", "Anti-AFK activado con éxito.")
+        self.Logger:Info("SECURITY", string.format("Anti-AFK activado con éxito (Método: %s).", signalDisabled and "Nivel 7 Desconexión de Señal" or "Nivel 3 VirtualUser"))
     end
 end
 
 -- =============================================================================
--- ANTI-KICK: Hook de LocalPlayer:Kick
+-- ANTI-KICK: Multi-Capa (Niveles 3 a 8)
 -- =============================================================================
 
 function SecurityCore:ProtectPlayerKick()
@@ -159,37 +256,74 @@ function SecurityCore:ProtectPlayerKick()
     local hookfn = (self.Caps and self.Caps.APIs and self.Caps.APIs.hookfunction) or (type(hookfunction) == "function" and hookfunction)
     local checkcaller = (self.Caps and self.Caps.APIs and self.Caps.APIs.checkcaller) or (type(checkcaller) == "function" and checkcaller) or function() return false end
     local newcclosure = (self.Caps and self.Caps.APIs and self.Caps.APIs.newcclosure) or function(f) return f end
+    local getrawmetatable = (self.Caps and self.Caps.APIs and self.Caps.APIs.getrawmetatable) or (type(getrawmetatable) == "function" and getrawmetatable)
+    local setreadonly = (self.Caps and self.Caps.APIs and self.Caps.APIs.setreadonly) or (type(setreadonly) == "function" and setreadonly)
 
-    if not hookfn or not self.LocalPlayer then
-        if self.Logger then
-            self.Logger:Warn("SECURITY", "Anti-Kick requiere hookfunction (Nivel 6+). Mitigación pasiva.")
+    local player = self.LocalPlayer
+    local installedLayers = 0
+
+    -- Capa 1: Reemplazo o hook directo sobre LocalPlayer.Kick
+    if player and typeof(player.Kick) == "function" then
+        if hookfn then
+            local oldKick
+            local s = pcall(function()
+                oldKick = hookfn(player.Kick, newcclosure(function(inst, message, ...)
+                    if checkcaller() then
+                        return oldKick(inst, message, ...)
+                    end
+                    return nil
+                end))
+            end)
+            if s then installedLayers = installedLayers + 1 end
+        else
+            -- Nivel 3-4 (Sin hookfunction): Reemplazo directo
+            pcall(function()
+                player.Kick = newcclosure(function(...) return nil end)
+                installedLayers = installedLayers + 1
+            end)
         end
-        return false
     end
 
-    local oldKick
-    local logger = self.Logger
-    local s, _ = pcall(function()
-        oldKick = hookfn(self.LocalPlayer.Kick, newcclosure(function(inst, message, ...)
-            if checkcaller() then
-                return oldKick(inst, message, ...)
+    -- Capa 2: Hook en metatabla de Player (Nivel 4-6)
+    if player and getrawmetatable and setreadonly then
+        pcall(function()
+            local meta = getrawmetatable(player)
+            if meta then
+                setreadonly(meta, false)
+                local oldIndex = meta.__index
+                meta.__index = newcclosure(function(selfObj, key)
+                    if key == "Kick" and not checkcaller() then
+                        return function() return nil end
+                    end
+                    return oldIndex(selfObj, key)
+                end)
+                setreadonly(meta, true)
+                installedLayers = installedLayers + 1
             end
-            if logger then
-                logger:Vuln("SECURITY", string.format("LocalPlayer:Kick BLOQUEADO! Razón: %s", tostring(message)))
-            end
-            return nil
-        end))
-    end)
-
-    if s then
-        self._kickHookInstalled = true
-        if self.Logger then
-            self.Logger:Info("SECURITY", "Protección activa contra LocalPlayer:Kick instalada.")
-        end
-        return true
+        end)
     end
 
-    return false
+    -- Capa 3: Protección a través del servicio Players (Nivel 6)
+    if self.Players and hookfn then
+        pcall(function()
+            local origPlayersKick = self.Players.Kick
+            if origPlayersKick then
+                hookfn(origPlayersKick, newcclosure(function(selfSrv, targetPlr, ...)
+                    if targetPlr == player and not checkcaller() then
+                        return nil
+                    end
+                    return origPlayersKick(selfSrv, targetPlr, ...)
+                end))
+                installedLayers = installedLayers + 1
+            end
+        end)
+    end
+
+    self._kickHookInstalled = (installedLayers > 0)
+    if self.Logger then
+        self.Logger:Info("SECURITY", string.format("Anti-Kick instalado (%d capas activas).", installedLayers))
+    end
+    return self._kickHookInstalled
 end
 
 -- =============================================================================

@@ -407,6 +407,10 @@ end
 
 function RemoteAnalyzer:Start()
     self.IsActive = true
+    local hooks = self.Registry and self.Registry:Get("HookManager")
+    if hooks and not hooks.IsHooked then
+        hooks:InstallHooks()
+    end
     if self.Logger then
         self.Logger:Info("REMOTESPY", "Remote Analyzer avanzado activado (Lazy Serializer & Schema Profiler).")
     end

@@ -52,7 +52,10 @@ local function ApexImport(relPath)
     return nil
 end
 
-getgenv()._APEX_IMPORT = ApexImport
+local hasIsolatedGenv = (typeof(getgenv) == "function" and getgenv() ~= _G and getgenv() ~= shared)
+if hasIsolatedGenv then
+    getgenv()._APEX_IMPORT = ApexImport
+end
 
 -- 1. Cargar Núcleo Base (Core)
 local Class             = ApexImport("code/core/Class.lua")
@@ -61,7 +64,7 @@ local EventBus          = ApexImport("code/core/EventBus.lua")
 local Logger            = ApexImport("code/core/Logger.lua")
 local Registry          = ApexImport("code/core/Registry.lua")
 local ServiceResolver   = ApexImport("code/core/ServiceResolver.lua")
-if ServiceResolver then
+if ServiceResolver and hasIsolatedGenv then
     getgenv()._APEX_RESOLVER = ServiceResolver
 end
 
@@ -114,7 +117,11 @@ if registry and logger and eventBus then
     local hooks = HookManager and HookManager.new(caps, logger)
     if hooks then
         registry:Register("HookManager", hooks)
-        hooks:InstallHooks()
+        if security then
+            security:SetHookManager(hooks)
+        end
+        -- Sigilo pasivo (Estilo Infinite Yield): No hookear metatablas en el arranque.
+        -- Los hooks se activan bajo demanda cuando se inicia RemoteSpy o se bloquea un remote.
     end
     
     local memGuard = MemoryGuard and MemoryGuard.new(caps, logger)
@@ -155,7 +162,7 @@ if registry and logger and eventBus then
     local physics = PhysicsAuditor and PhysicsAuditor.new(heuristic, logger, caps, remoteAnalyzer)
     if physics then
         registry:Register("PhysicsAuditor", physics)
-        if getgenv then
+        if hasIsolatedGenv then
             getgenv()._APEX_PHYSICS_AUDITOR = physics
         end
     end
@@ -171,7 +178,7 @@ if registry and logger and eventBus then
     
     -- Inicializar GUI Segura
     if security and MainWindow then
-        local screenGui = security:CreateSafeScreenGui("ApexSuitePro")
+        local screenGui = security:CreateSafeScreenGui()
         local window = MainWindow.new(screenGui, registry)
         registry:Register("MainWindow", window)
     end

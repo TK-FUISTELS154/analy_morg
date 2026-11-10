@@ -12,6 +12,17 @@ ServiceResolver.ClassName = "ServiceResolver"
 
 local rawGame = (typeof(workspace) == "Instance" and workspace.Parent) or game
 
+local rawCloneref = (type(cloneref) == "function" and cloneref) or nil
+local function safeClone(inst)
+    if not inst or not rawCloneref then return inst end
+    local ok, cloned = pcall(rawCloneref, inst)
+    if ok and cloned and type(cloned) == "userdata" then
+        local valid = pcall(function() return cloned.ClassName end)
+        if valid then return cloned end
+    end
+    return inst
+end
+
 function ServiceResolver.GetService(className)
     if not className then return nil end
 
@@ -22,22 +33,22 @@ function ServiceResolver.GetService(className)
 
     -- Nivel 1: GetService oficial (resuelve por ClassName interno)
     local ok1, srv1 = pcall(function() return rawGame:GetService(className) end)
-    if ok1 and srv1 then return srv1 end
+    if ok1 and srv1 then return safeClone(srv1) end
 
     -- Nivel 2: FindFirstChildOfClass
     local ok2, srv2 = pcall(function() return rawGame:FindFirstChildOfClass(className) end)
-    if ok2 and srv2 then return srv2 end
+    if ok2 and srv2 then return safeClone(srv2) end
 
     -- Nivel 3: FindFirstChildWhichIsA
     local ok3, srv3 = pcall(function() return rawGame:FindFirstChildWhichIsA(className) end)
-    if ok3 and srv3 then return srv3 end
+    if ok3 and srv3 then return safeClone(srv3) end
 
     -- Nivel 4: Búsqueda exhaustiva por ClassName en todos los hijos directos del DataModel
     local ok4, children = pcall(function() return rawGame:GetChildren() end)
     if ok4 and children then
         for _, child in ipairs(children) do
             if child.ClassName == className then
-                return child
+                return safeClone(child)
             end
         end
     end
