@@ -17,10 +17,11 @@ local MainWindow = {}
 MainWindow.__index = MainWindow
 MainWindow.ClassName = "MainWindow"
 
-function MainWindow.new(screenGui, registry)
+function MainWindow.new(screenGui, registry, customImport)
     local self = setmetatable({}, MainWindow)
     self.ScreenGui = screenGui
     self.Registry = registry
+    self.Import = customImport or (registry and registry:Get("Import"))
     self.Views = {}
     self.CurrentTab = "Audit"
     
@@ -52,7 +53,7 @@ function MainWindow:ShowSplashAndBuild()
     titleLabel.Size = UDim2.new(1, 0, 0, 32)
     titleLabel.Position = UDim2.new(0, 0, 0, 18)
     titleLabel.BackgroundTransparency = 1
-    titleLabel.Text = "🛡️ APEX SUITE PRO"
+    titleLabel.Text = "⚡ RUNTIME DIAGNOSTICS"
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleLabel.Font = Enum.Font.GothamBold
     titleLabel.TextSize = 18
@@ -63,7 +64,7 @@ function MainWindow:ShowSplashAndBuild()
     subLabel.Size = UDim2.new(1, 0, 0, 18)
     subLabel.Position = UDim2.new(0, 0, 0, 48)
     subLabel.BackgroundTransparency = 1
-    subLabel.Text = "Advanced Reverse Engineering & Realtime Security Engine"
+    subLabel.Text = "Workspace Explorer & Telemetry Monitor"
     subLabel.TextColor3 = Color3.fromRGB(130, 145, 175)
     subLabel.Font = Enum.Font.GothamMedium
     subLabel.TextSize = 10
@@ -74,7 +75,7 @@ function MainWindow:ShowSplashAndBuild()
     statusLabel.Size = UDim2.new(1, -40, 0, 20)
     statusLabel.Position = UDim2.new(0, 20, 0, 95)
     statusLabel.BackgroundTransparency = 1
-    statusLabel.Text = "Iniciando subsistemas..."
+    statusLabel.Text = "Loading components..."
     statusLabel.TextColor3 = Color3.fromRGB(0, 220, 255)
     statusLabel.Font = Enum.Font.Code
     statusLabel.TextSize = 11
@@ -117,7 +118,7 @@ function MainWindow:ShowSplashAndBuild()
     footerLabel.Size = UDim2.new(1, 0, 0, 18)
     footerLabel.Position = UDim2.new(0, 0, 1, -26)
     footerLabel.BackgroundTransparency = 1
-    footerLabel.Text = "Adaptativo Niveles 3 - 8 | Sandbox Seguro"
+    footerLabel.Text = "System Telemetry & Diagnostics"
     footerLabel.TextColor3 = Color3.fromRGB(80, 95, 120)
     footerLabel.Font = Enum.Font.Gotham
     footerLabel.TextSize = 9
@@ -133,11 +134,11 @@ function MainWindow:ShowSplashAndBuild()
     -- Secuencia de Carga y Telemetría
     task.spawn(function()
         local steps = {
-            { P = 0.20, Text = "[1/5] Inicializando Security Core & Hooks de Red..." },
-            { P = 0.45, Text = "[2/5] Calibrando CapabilityManager & MemoryGuard..." },
-            { P = 0.70, Text = "[3/5] Indexando Heurística, Remotes & Físicas..." },
-            { P = 0.90, Text = "[4/5] Construyendo VirtualTree & Dumper Engine..." },
-            { P = 1.00, Text = "[5/5] ¡Suite Lista! Cargando Interfaz..." },
+            { P = 0.20, Text = "[1/5] Indexing workspace objects..." },
+            { P = 0.45, Text = "[2/5] Calibrating telemetry streams..." },
+            { P = 0.70, Text = "[3/5] Initializing diagnostic nodes..." },
+            { P = 0.90, Text = "[4/5] Building virtual hierarchy..." },
+            { P = 1.00, Text = "[5/5] Ready! Opening workspace..." },
         }
 
         for _, step in ipairs(steps) do
@@ -213,7 +214,7 @@ function MainWindow:BuildWindow()
     titleText.Size = UDim2.new(1, -130, 1, 0)
     titleText.Position = UDim2.new(0, 14, 0, 0)
     titleText.BackgroundTransparency = 1
-    titleText.Text = "🛡️ APEX AUDIT & REVERSE ENGINE PRO  v5.0"
+    titleText.Text = "⚡ RUNTIME DIAGNOSTICS & EXPLORER"
     titleText.TextColor3 = Color3.fromRGB(240, 245, 255)
     titleText.Font = Enum.Font.GothamBold
     titleText.TextSize = 13
@@ -353,11 +354,11 @@ end
 
 function MainWindow:SetupTabs()
     local tabs = {
-        { Id = "Audit",     Label = "🛡️ Auditoría & Físicas" },
-        { Id = "Dumper",    Label = "📂 Dumper & Árbol" },
-        { Id = "RemoteSpy", Label = "📡 Remote Spy" },
-        { Id = "Economy",   Label = "🎰 Economía" },
-        { Id = "Tools",     Label = "⚙️ Herramientas" },
+        { Id = "Audit",     Label = "🔍 Diagnostics" },
+        { Id = "Dumper",    Label = "📂 Explorer" },
+        { Id = "RemoteSpy", Label = "📡 Network" },
+        { Id = "Economy",   Label = "📊 State" },
+        { Id = "Tools",     Label = "🛠️ Utilities" },
     }
     
     local tabWidth = 1 / #tabs
@@ -400,8 +401,8 @@ function MainWindow:SetupTabs()
         end)
     end
     
-    -- Cargar Vistas con Importador Resiliente
-    local import = getgenv()._APEX_IMPORT or function(p)
+    -- Cargar Vistas con Importador Resiliente (sin depender de getgenv)
+    local import = self.Import or (self.Registry and self.Registry:Get("Import")) or function(p)
         local s = (typeof(readfile) == "function" and typeof(isfile) == "function" and isfile("suite/" .. p) and readfile("suite/" .. p))
             or (pcall(function() return game:HttpGet("https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/suite/" .. p) end) and game:HttpGet("https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/suite/" .. p))
         return s and loadstring(s)()

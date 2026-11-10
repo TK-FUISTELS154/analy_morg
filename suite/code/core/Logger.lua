@@ -54,12 +54,15 @@ function Logger:Log(level, tag, message, data)
     local prefix = string.format("[APEX][%s][%s]", entry.LevelName, entry.Tag)
     local formatted = string.format("%s %s", prefix, entry.Message)
     
-    if level == Logger.LogLevel.ERROR then
-        warn(formatted)
-    elseif level == Logger.LogLevel.VULN then
-        print("🚨 " .. formatted)
-    else
-        print(formatted)
+    -- En Nivel 3-4, el silencio absoluto en la consola es obligatorio.
+    -- Los anti-cheats monitorean LogService.MessageOut para expulsar al detectar tags de exploits.
+    -- Los logs se conservan de forma segura en self.History y se transmiten a la GUI interna vía EventBus.
+    if self.EnableConsoleOutput then
+        if level == Logger.LogLevel.ERROR then
+            pcall(warn, formatted)
+        else
+            pcall(print, formatted)
+        end
     end
     
     if self.EventBus then

@@ -117,7 +117,7 @@ function ActionRecorder:GetCurrentPlayerSnapshot()
     -- 1. Intentar obtener el snapshot oficial de 24 parámetros desde PhysicsAuditor
     local physicsAuditor = (self.Registry and self.Registry:Get("PhysicsAuditor"))
         or (self.Caps and self.Caps.PhysicsAuditor)
-        or (getgenv and getgenv()._APEX_PHYSICS_AUDITOR)
+        or (typeof(getgenv) == "function" and pcall(function() return getgenv()._APEX_PHYSICS_AUDITOR end) and getgenv()._APEX_PHYSICS_AUDITOR)
     
     local snap = nil
     if physicsAuditor and type(physicsAuditor.CapturePlayerPhysicsSnapshot) == "function" then

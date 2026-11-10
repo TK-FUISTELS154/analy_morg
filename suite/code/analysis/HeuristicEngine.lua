@@ -583,7 +583,7 @@ end
 
 function HeuristicEngine:CollectCandidates(targetContainers)
     local resolveSrv = function(name)
-        if getgenv()._APEX_RESOLVER then
+        if typeof(getgenv) == "function" and pcall(function() return getgenv()._APEX_RESOLVER end) and getgenv()._APEX_RESOLVER then
             return getgenv()._APEX_RESOLVER.GetService(name)
         end
         local ok, s = pcall(function() return game:GetService(name) end)
@@ -593,7 +593,7 @@ function HeuristicEngine:CollectCandidates(targetContainers)
     end
 
     local getPlayerGui = function()
-        if getgenv()._APEX_RESOLVER then
+        if typeof(getgenv) == "function" and pcall(function() return getgenv()._APEX_RESOLVER end) and getgenv()._APEX_RESOLVER then
             return getgenv()._APEX_RESOLVER.GetPlayerGui()
         end
         local players = resolveSrv("Players")

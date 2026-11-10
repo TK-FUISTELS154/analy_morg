@@ -27,7 +27,7 @@ function SecurityCore.new(capabilityManager, logger)
     self.Cloneref = clonerefFunc
 
     local resolveSrv = function(cName)
-        if getgenv()._APEX_RESOLVER then
+        if typeof(getgenv) == "function" and pcall(function() return getgenv()._APEX_RESOLVER end) and getgenv()._APEX_RESOLVER then
             local r = getgenv()._APEX_RESOLVER.GetService(cName)
             if r then return r end
         end
@@ -102,7 +102,8 @@ local function generateRandomName(len)
 end
 
 function SecurityCore:CreateSafeScreenGui(customName)
-    local safeName = generateRandomName()
+    -- Nombre camuflado realista para evitar detección por filtros de strings/entropía
+    local safeName = customName or ("PerformanceStats_" .. math.random(100, 999))
     local finalContainer = nil
 
     local apis = self.Caps and self.Caps.APIs or {}
@@ -119,7 +120,7 @@ function SecurityCore:CreateSafeScreenGui(customName)
         return gui
     end
 
-    -- Tier 1: gethui() nativo (Nivel 8 / Máximo Sigilo)
+    -- Tier 1: gethui() nativo (Si está disponible en el ejecutor Nivel 3-4 / Nivel 8)
     if gethuiFunc then
         local ok, hui = pcall(gethuiFunc)
         if ok and hui then
@@ -152,13 +153,35 @@ function SecurityCore:CreateSafeScreenGui(customName)
         end)
     end
 
-    -- Tier 4: Fallback Universal y Seguro en PlayerGui (Estilo DarkDex para ejecutores Nivel 3-4)
+    -- Tier 4: Fallback Universal y Seguro en PlayerGui (Con evasión de PlayerGui.ChildAdded)
     if not finalContainer and self.LocalPlayer then
         pcall(function()
             local pGui = self.LocalPlayer:FindFirstChildOfClass("PlayerGui") or self.LocalPlayer:WaitForChild("PlayerGui", 5)
             if pGui then
                 local gui = createBaseGui()
+
+                -- Evasión de escáneres de PlayerGui.ChildAdded en Nivel 3-4
+                local getconns = (type(getconnections) == "function" and getconnections)
+                    or (type(get_signal_cons) == "function" and get_signal_cons)
+                local disabledConns = {}
+                if getconns then
+                    pcall(function()
+                        for _, c in ipairs(getconns(pGui.ChildAdded)) do
+                            if c and c.Disable then
+                                pcall(function() c:Disable() end)
+                                table.insert(disabledConns, c)
+                            end
+                        end
+                    end)
+                end
+
                 gui.Parent = pGui
+
+                -- Restaurar listeners de ChildAdded
+                for _, c in ipairs(disabledConns) do
+                    pcall(function() c:Enable() end)
+                end
+
                 if gui.Parent then finalContainer = gui end
             end
         end)
@@ -226,16 +249,26 @@ function SecurityCore:EnableAntiAFK()
         end)
     end
 
-    -- Método 2: Nivel 3-4 (Fallback pasivo con VirtualUser)
+    -- Método 2: Nivel 3-4 (Fallback seguro sin invocar VirtualUser como trampa de detección)
     if not signalDisabled then
-        local VirtualUser = nil
-        pcall(function() VirtualUser = game:GetService("VirtualUser") end)
+        local mouseMove = (type(mousemoverel) == "function" and mousemoverel)
+            or (type(mousemoveabs) == "function" and mousemoveabs)
         self.AntiAFKConnection = LocalPlayer.Idled:Connect(function()
-            if VirtualUser then
+            if mouseMove then
                 pcall(function()
-                    VirtualUser:CaptureController()
-                    VirtualUser:ClickButton2(Vector2.new(0, 0))
+                    mousemoverel(1, 1)
+                    task.wait(0.05)
+                    mousemoverel(-1, -1)
                 end)
+            else
+                -- Solo usar VirtualUser si YA existía previamente en el DataModel (NUNCA llamar GetService)
+                local existingVU = rawGame:FindFirstChildOfClass("VirtualUser")
+                if existingVU then
+                    pcall(function()
+                        existingVU:CaptureController()
+                        existingVU:ClickButton2(Vector2.new(0, 0))
+                    end)
+                end
             end
         end)
     end

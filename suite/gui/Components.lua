@@ -5,7 +5,7 @@
     Colección de componentes POO para interfaces modulares y fluidas.
 --]]
 
-local Theme = (getgenv()._APEX_IMPORT and getgenv()._APEX_IMPORT("gui/Theme.lua"))
+local Theme = (typeof(getgenv) == "function" and pcall(function() return getgenv()._APEX_IMPORT end) and getgenv()._APEX_IMPORT and getgenv()._APEX_IMPORT("gui/Theme.lua"))
     or (typeof(readfile) == "function" and typeof(isfile) == "function" and isfile("suite/gui/Theme.lua") and loadstring(readfile("suite/gui/Theme.lua"))())
     or (pcall(function() return game:HttpGet("https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/suite/gui/Theme.lua") end) and loadstring(game:HttpGet("https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/suite/gui/Theme.lua"))())
 

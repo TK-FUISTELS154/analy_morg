@@ -42,19 +42,10 @@ local function ApexImport(relPath)
             local result = fn()
             ModuleCache[relPath] = result
             return result
-        else
-            warn("[APEX BOOT] Error de sintaxis en módulo '" .. relPath .. "': " .. tostring(err))
         end
-    else
-        warn("[APEX BOOT] No se pudo cargar el módulo: " .. relPath)
     end
     
     return nil
-end
-
-local hasIsolatedGenv = (typeof(getgenv) == "function" and getgenv() ~= _G and getgenv() ~= shared)
-if hasIsolatedGenv then
-    getgenv()._APEX_IMPORT = ApexImport
 end
 
 -- 1. Cargar Núcleo Base (Core)
@@ -64,9 +55,6 @@ local EventBus          = ApexImport("code/core/EventBus.lua")
 local Logger            = ApexImport("code/core/Logger.lua")
 local Registry          = ApexImport("code/core/Registry.lua")
 local ServiceResolver   = ApexImport("code/core/ServiceResolver.lua")
-if ServiceResolver and hasIsolatedGenv then
-    getgenv()._APEX_RESOLVER = ServiceResolver
-end
 
 -- 2. Cargar Seguridad (Security)
 local SecurityCore      = ApexImport("code/security/SecurityCore.lua")
@@ -103,6 +91,7 @@ local registry = Registry and Registry.new() or nil
 if registry and logger and eventBus then
     registry:Register("EventBus", eventBus)
     registry:Register("Logger", logger)
+    registry:Register("Import", ApexImport)
     if ServiceResolver then registry:Register("ServiceResolver", ServiceResolver) end
     
     local caps = CapabilityManager and CapabilityManager.new()
@@ -111,7 +100,8 @@ if registry and logger and eventBus then
     local security = SecurityCore and SecurityCore.new(caps, logger)
     if security then
         registry:Register("SecurityCore", security)
-        security:EnableAntiAFK()
+        -- Sigilo de Nivel 3-4: NO activar Anti-AFK automáticamente en el arranque.
+        -- Se deja disponible bajo demanda para evitar instanciación de VirtualUser en el boot.
     end
     
     local hooks = HookManager and HookManager.new(caps, logger)
@@ -162,9 +152,6 @@ if registry and logger and eventBus then
     local physics = PhysicsAuditor and PhysicsAuditor.new(heuristic, logger, caps, remoteAnalyzer)
     if physics then
         registry:Register("PhysicsAuditor", physics)
-        if hasIsolatedGenv then
-            getgenv()._APEX_PHYSICS_AUDITOR = physics
-        end
     end
     
     local dumper = SelectiveDumper and SelectiveDumper.new(caps, logger, registry)
@@ -179,7 +166,7 @@ if registry and logger and eventBus then
     -- Inicializar GUI Segura
     if security and MainWindow then
         local screenGui = security:CreateSafeScreenGui()
-        local window = MainWindow.new(screenGui, registry)
+        local window = MainWindow.new(screenGui, registry, ApexImport)
         registry:Register("MainWindow", window)
     end
     

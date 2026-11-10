@@ -661,7 +661,7 @@ end
 -- MODO 4: Extracción total del entorno de scripts del juego (Multihilo Concurrente con 8 Workers Distribuidos)
 function SelectiveDumper:DumpFullEnvironment(onProgress)
     local resolveSrv = function(name)
-        if getgenv()._APEX_RESOLVER then
+        if typeof(getgenv) == "function" and pcall(function() return getgenv()._APEX_RESOLVER end) and getgenv()._APEX_RESOLVER then
             return getgenv()._APEX_RESOLVER.GetService(name)
         end
         local ok, s = pcall(function() return game:GetService(name) end)
@@ -671,7 +671,7 @@ function SelectiveDumper:DumpFullEnvironment(onProgress)
     end
 
     local getPlayerGui = function()
-        if getgenv()._APEX_RESOLVER then
+        if typeof(getgenv) == "function" and pcall(function() return getgenv()._APEX_RESOLVER end) and getgenv()._APEX_RESOLVER then
             return getgenv()._APEX_RESOLVER.GetPlayerGui()
         end
         local players = resolveSrv("Players")

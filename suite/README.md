@@ -92,14 +92,14 @@ suite/
 ### 🔒 `code/security/` (Seguridad Activa y Sigilo Multi-Nivel)
 
 #### 1. `SecurityCore.lua`
-- **Jerarquía GUI 4-Tier Resiliente (Estilo DarkDex & Infinite Yield)**:
-  1. *Tier 1 (Nivel 8)*: `gethui()` o `get_hidden_gui()`.
+- **Jerarquía GUI 4-Tier Especializada para Nivel 3-4 (Solara / Celery / Web / Mobile)**:
+  1. *Tier 1 (Nivel 8 / gethui)*: `gethui()` o `get_hidden_gui()`.
   2. *Tier 2 (Nivel 8 / Elevado)*: `syn.protect_gui()` o `protectgui()` en `CoreGui`.
-  3. *Tier 3 (Nivel 4-6 / Elevado)*: `CoreGui` directo únicamente si la verificación de elevación (`pcall(CoreGui.GetFullName)`) es positiva.
-  4. *Tier 4 (Nivel 3-4 Básico / Solara / Mobile)*: `PlayerGui` con camuflaje total (nombres efímeros aleatorios, `Archivable = false`, `DisplayOrder = 2e9`).
-- **Anti-Kick Seguro**: Hook aislado en `player.Kick` y `Players.Kick` mediante `hookfunction` o bloqueo reactivo en `__namecall` vía `HookManager:BlockMethod("Kick")`, eliminando cualquier sobreescritura ilegal de userdata o mutación global de `__index`.
-- **Anti-AFK Adaptativo**: En Nivel 7 desconecta directamente la señal `LocalPlayer.Idled` (`conn:Disable()`) sin simular clics físicos (100% indetectable); en Nivel 3-4 aplica fallback con `VirtualUser` y fluctuación temporal (jitter).
-- **Anti-OCR y Nombres Efímeros**: Nombres 100% aleatorios alfanuméricos y `Archivable = false` en todos los contenedores para evitar escaneo por texto o clonación.
+  3. *Tier 3 (Nivel 4-6 / Elevado)*: `CoreGui` directo pasivo únicamente si la verificación (`pcall(CoreGui.GetFullName)`) es positiva.
+  4. *Tier 4 (Nivel 3-4 Estricto)*: `PlayerGui` con camuflaje realista (`PerformanceStats`), desactivación temporal de listeners `PlayerGui.ChildAdded` durante el montaje (`getconnections`), `Archivable = false` y `DisplayOrder = 2e9`.
+- **Anti-AFK Bajo Demanda y Seguro**: En Nivel 3-4 ya no invoca `game:GetService("VirtualUser")` en el arranque (evitando alertas de anti-cheats en `game.ChildAdded`). Utiliza `mousemoverel` o desconexión pasiva de `LocalPlayer.Idled`.
+- **Silencio Absoluto en Consola (Anti-MessageOut)**: `Logger.lua` no imprime en consola de Roblox; no genera registros en `LogService.MessageOut`.
+- **Camuflaje Visual y Anti-OCR**: Nombres de interfaz neutros y técnicos (`Runtime Diagnostics`, `Workspace Explorer`) libres de palabras clave sospechosas.
 
 #### 2. `HookManager.lua`
 - **Hooks Bajo Demanda (Cero Hooks en Boot)**: No intercepta metatablas en el arranque para evitar detección por escáneres de integridad en el spawn del personaje. Se activa solo cuando se inicia RemoteSpy o se bloquea un remote.

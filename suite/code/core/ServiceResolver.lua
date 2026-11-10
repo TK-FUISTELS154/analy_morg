@@ -12,13 +12,13 @@ ServiceResolver.ClassName = "ServiceResolver"
 
 local rawGame = (typeof(workspace) == "Instance" and workspace.Parent) or game
 
--- Comprobación dinámica de elevación (Identidad con acceso a CoreGui, estilo DarkDex)
+-- Comprobación pasiva de elevación (sin forzar GetService de CoreGui)
 local isElevated = false
 pcall(function()
-    local cg = rawGame:GetService("CoreGui")
+    local cg = rawGame:FindFirstChild("CoreGui")
     if cg then
-        local _ = cg:GetFullName()
-        isElevated = true
+        local s = pcall(function() return cg:GetFullName() end)
+        if s then isElevated = true end
     end
 end)
 ServiceResolver.IsElevated = isElevated

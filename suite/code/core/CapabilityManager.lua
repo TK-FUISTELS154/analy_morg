@@ -12,7 +12,7 @@
          proteger la suite de trampas de introspección del anti-cheat del juego.
 --]]
 
-local Class = (getgenv and getgenv()._APEX_IMPORT and getgenv()._APEX_IMPORT("code/core/Class.lua"))
+local Class = (typeof(getgenv) == "function" and pcall(function() return getgenv()._APEX_IMPORT end) and getgenv()._APEX_IMPORT and getgenv()._APEX_IMPORT("code/core/Class.lua"))
     or (typeof(readfile) == "function" and typeof(isfile) == "function" and isfile("suite/code/core/Class.lua") and loadstring(readfile("suite/code/core/Class.lua"))())
     or (pcall(function() return game:HttpGet("https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/suite/code/core/Class.lua") end) and loadstring(game:HttpGet("https://raw.githubusercontent.com/TK-FUISTELS154/analy_morg/main/suite/code/core/Class.lua"))())
 
@@ -132,8 +132,6 @@ function CapabilityManager:EvaluateCapabilities()
         decompilerFunc = decompile
     elseif getgenv and type(getgenv().decompile) == "function" then
         decompilerFunc = getgenv().decompile
-    elseif getrenv and type(getrenv().decompile) == "function" then
-        decompilerFunc = getrenv().decompile
     elseif type(getscriptsource) == "function" then
         decompilerFunc = getscriptsource
     elseif getgenv and type(getgenv().getscriptsource) == "function" then
@@ -154,8 +152,6 @@ function CapabilityManager:EvaluateCapabilities()
         bytecodeFunc = getscriptbytecode
     elseif getgenv and type(getgenv().getscriptbytecode) == "function" then
         bytecodeFunc = getgenv().getscriptbytecode
-    elseif getrenv and type(getrenv().getscriptbytecode) == "function" then
-        bytecodeFunc = getrenv().getscriptbytecode
     elseif type(get_script_bytecode) == "function" then
         bytecodeFunc = get_script_bytecode
     elseif getgenv and type(getgenv().get_script_bytecode) == "function" then

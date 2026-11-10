@@ -1026,7 +1026,8 @@ function DumperView:Render()
 
                     -- 1. Intentar detectar objeto 2D en PlayerGui
                     pcall(function()
-                        local lp = (getgenv()._APEX_RESOLVER and getgenv()._APEX_RESOLVER.GetLocalPlayer()) or (Players and Players.LocalPlayer)
+                        local resolver = typeof(getgenv) == "function" and pcall(function() return getgenv()._APEX_RESOLVER end) and getgenv()._APEX_RESOLVER
+                        local lp = (resolver and resolver.GetLocalPlayer()) or (Players and Players.LocalPlayer)
                         if lp then
                             local pGui = lp:FindFirstChildOfClass("PlayerGui") or lp:FindFirstChild("PlayerGui")
                             if pGui then
@@ -1047,7 +1048,8 @@ function DumperView:Render()
                             local cam = Workspace.CurrentCamera
                             if cam then
                                 local ray = cam:ViewportPointToRay(mousePos.X, mousePos.Y)
-                                local lp = (getgenv()._APEX_RESOLVER and getgenv()._APEX_RESOLVER.GetLocalPlayer()) or (Players and Players.LocalPlayer)
+                                local resolver = typeof(getgenv) == "function" and pcall(function() return getgenv()._APEX_RESOLVER end) and getgenv()._APEX_RESOLVER
+                                local lp = (resolver and resolver.GetLocalPlayer()) or (Players and Players.LocalPlayer)
                                 local params = RaycastParams.new()
                                 params.FilterType = RaycastFilterType.Exclude
                                 if lp and lp.Character then
@@ -1874,8 +1876,9 @@ function DumperView:Render()
                     end
 
                     if #queue == 0 then
-                        local rs = getgenv()._APEX_RESOLVER and getgenv()._APEX_RESOLVER.GetService("ReplicatedStorage") or game:GetService("ReplicatedStorage")
-                        local sp = getgenv()._APEX_RESOLVER and getgenv()._APEX_RESOLVER.GetService("StarterPlayer") or game:GetService("StarterPlayer")
+                        local resolver = typeof(getgenv) == "function" and pcall(function() return getgenv()._APEX_RESOLVER end) and getgenv()._APEX_RESOLVER
+                        local rs = (resolver and resolver.GetService("ReplicatedStorage")) or game:GetService("ReplicatedStorage")
+                        local sp = (resolver and resolver.GetService("StarterPlayer")) or game:GetService("StarterPlayer")
                         queue = { rs, sp }
                     end
                     package = dumper:DumpManualNodes(queue, onProgress)
