@@ -303,6 +303,9 @@ function DumperView:Render()
     frame.Parent = self.Parent
     self.ViewFrame = frame
 
+    -- Declaración anticipada de rebuildFlatTree para evitar errores de scope (upvalue)
+    local rebuildFlatTree
+
     -- BARRA SUPERIOR DE MODOS DE EXTRACCIÓN
     local modeBar = Instance.new("Frame")
     modeBar.Size = UDim2.new(1, 0, 0, 30)
@@ -457,6 +460,8 @@ function DumperView:Render()
     treeScroll.ScrollBarThickness = 4
     treeScroll.ScrollBarImageColor3 = Color3.fromRGB(60, 70, 95)
     treeScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    treeScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    treeScroll.ClipsDescendants = true
     treeScroll.Parent = leftPanel
 
     -- Barra de Acción Rápida del Árbol
@@ -566,13 +571,6 @@ function DumperView:Render()
     inspectorBox.TextEditable = false
     inspectorBox.Parent = rightPanel
     Instance.new("UICorner", inspectorBox).CornerRadius = UDim.new(0, 6)
-
-    -- Barra de Exportación de Volcados (JSON, Markdown, Disco, VFS)
-    local dumpActionRow = Instance.new("Frame")
-    dumpActionRow.Size = UDim2.new(1, -12, 0, 28)
-    dumpActionRow.Position = UDim2.new(0, 6, 1, -62)
-    dumpActionRow.BackgroundTransparency = 1
-    dumpActionRow.Parent = rightPanel
 
     -- Barra de Exportación de Volcados (JSON, MD Unificado, Disco, SaveInstance)
     local dumpActionRow = Instance.new("Frame")
@@ -1190,7 +1188,7 @@ function DumperView:Render()
         return true
     end
 
-    function rebuildFlatTree()
+    rebuildFlatTree = function()
         table.clear(self.FlatTree)
 
         if self.IsSearching then
@@ -1233,7 +1231,8 @@ function DumperView:Render()
             traverse(self.RootNodes, 0)
         end
 
-        treeScroll.CanvasSize = UDim2.new(0, 1600, 0, #self.FlatTree * ROW_HEIGHT)
+        -- Canvas: ancho automático (0) para evitar scroll horizontal innecesario
+        treeScroll.CanvasSize = UDim2.new(0, 0, 0, #self.FlatTree * ROW_HEIGHT)
         task.defer(updateVisibleTree)
     end
 
@@ -1446,10 +1445,10 @@ function DumperView:Render()
 
     -- Cargar Raíces del Explorador
     local commonServices = { "Workspace", "Players", "Lighting", "ReplicatedFirst", "ReplicatedStorage", "StarterGui", "StarterPack", "StarterPlayer" }
-    local resolver = getgenv and getgenv()._APEX_RESOLVER
+    local resolver = (typeof(getgenv) == "function") and pcall(function() return getgenv()._APEX_RESOLVER end) and getgenv()._APEX_RESOLVER or nil
     for _, sName in ipairs(commonServices) do
         pcall(function()
-            local srv = (resolver and resolver.GetService(sName)) or game:GetService(sName)
+            local srv = (resolver and resolver.GetService and resolver.GetService(sName)) or game:GetService(sName)
             if srv then table.insert(self.RootNodes, srv) end
         end)
     end
@@ -1893,11 +1892,12 @@ function DumperView:Render()
             end)
 
             if not ok or not package or (currentDumpTracker and currentDumpTracker:IsCancelled()) then
+                local wasCancelled = currentDumpTracker and currentDumpTracker:IsCancelled()
                 isDumping = false
                 currentDumpTracker = nil
                 setButtonsDumpingState(false)
                 
-                if currentDumpTracker and currentDumpTracker:IsCancelled() then
+                if wasCancelled then
                     treeStatus.Text = "🛑 Volcado cancelado por el usuario."
                     modalCounter.Text = "🛑 Volcado cancelado"
                 else

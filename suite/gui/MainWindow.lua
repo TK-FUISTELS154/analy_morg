@@ -53,7 +53,7 @@ function MainWindow:ShowSplashAndBuild()
     titleLabel.Size = UDim2.new(1, 0, 0, 32)
     titleLabel.Position = UDim2.new(0, 0, 0, 18)
     titleLabel.BackgroundTransparency = 1
-    titleLabel.Text = "⚡ RUNTIME DIAGNOSTICS"
+    titleLabel.Text = "⚡ DIAGNÓSTICOS EN TIEMPO REAL"
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleLabel.Font = Enum.Font.GothamBold
     titleLabel.TextSize = 18
@@ -64,7 +64,7 @@ function MainWindow:ShowSplashAndBuild()
     subLabel.Size = UDim2.new(1, 0, 0, 18)
     subLabel.Position = UDim2.new(0, 0, 0, 48)
     subLabel.BackgroundTransparency = 1
-    subLabel.Text = "Workspace Explorer & Telemetry Monitor"
+    subLabel.Text = "Explorador de Espacio de Trabajo y Monitor de Telemetría"
     subLabel.TextColor3 = Color3.fromRGB(130, 145, 175)
     subLabel.Font = Enum.Font.GothamMedium
     subLabel.TextSize = 10
@@ -75,7 +75,7 @@ function MainWindow:ShowSplashAndBuild()
     statusLabel.Size = UDim2.new(1, -40, 0, 20)
     statusLabel.Position = UDim2.new(0, 20, 0, 95)
     statusLabel.BackgroundTransparency = 1
-    statusLabel.Text = "Loading components..."
+    statusLabel.Text = "Cargando componentes..."
     statusLabel.TextColor3 = Color3.fromRGB(0, 220, 255)
     statusLabel.Font = Enum.Font.Code
     statusLabel.TextSize = 11
@@ -118,7 +118,7 @@ function MainWindow:ShowSplashAndBuild()
     footerLabel.Size = UDim2.new(1, 0, 0, 18)
     footerLabel.Position = UDim2.new(0, 0, 1, -26)
     footerLabel.BackgroundTransparency = 1
-    footerLabel.Text = "System Telemetry & Diagnostics"
+    footerLabel.Text = "Telemetría del Sistema y Diagnósticos"
     footerLabel.TextColor3 = Color3.fromRGB(80, 95, 120)
     footerLabel.Font = Enum.Font.Gotham
     footerLabel.TextSize = 9
@@ -134,11 +134,11 @@ function MainWindow:ShowSplashAndBuild()
     -- Secuencia de Carga y Telemetría
     task.spawn(function()
         local steps = {
-            { P = 0.20, Text = "[1/5] Indexing workspace objects..." },
-            { P = 0.45, Text = "[2/5] Calibrating telemetry streams..." },
-            { P = 0.70, Text = "[3/5] Initializing diagnostic nodes..." },
-            { P = 0.90, Text = "[4/5] Building virtual hierarchy..." },
-            { P = 1.00, Text = "[5/5] Ready! Opening workspace..." },
+            { P = 0.20, Text = "[1/5] Indexando objetos del workspace..." },
+            { P = 0.45, Text = "[2/5] Calibrando flujos de telemetría..." },
+            { P = 0.70, Text = "[3/5] Inicializando nodos de diagnóstico..." },
+            { P = 0.90, Text = "[4/5] Construyendo jerarquía virtual..." },
+            { P = 1.00, Text = "[5/5] ¡Listo! Abriendo explorador..." },
         }
 
         for _, step in ipairs(steps) do
@@ -152,14 +152,28 @@ function MainWindow:ShowSplashAndBuild()
 
         task.wait(0.2)
         
-        -- Transición de Revelación
+        -- Transición de Revelación (fix: animar correctamente cada tipo de hijo)
         TweenService:Create(splashFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
             BackgroundTransparency = 1,
             Position = UDim2.new(0.5, -210, 0.45, -105)
         }):Play()
 
         for _, desc in ipairs(splashFrame:GetDescendants()) do
-            if desc:IsA("TextLabel") or desc:IsA("Frame") or desc:IsA("UIStroke") then
+            if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+                pcall(function()
+                    TweenService:Create(desc, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {
+                        TextTransparency = 1
+                    }):Play()
+                end)
+            end
+            if desc:IsA("Frame") then
+                pcall(function()
+                    TweenService:Create(desc, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {
+                        BackgroundTransparency = 1
+                    }):Play()
+                end)
+            end
+            if desc:IsA("UIStroke") then
                 pcall(function()
                     TweenService:Create(desc, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {
                         Transparency = 1
@@ -214,7 +228,7 @@ function MainWindow:BuildWindow()
     titleText.Size = UDim2.new(1, -130, 1, 0)
     titleText.Position = UDim2.new(0, 14, 0, 0)
     titleText.BackgroundTransparency = 1
-    titleText.Text = "⚡ RUNTIME DIAGNOSTICS & EXPLORER"
+    titleText.Text = "⚡ DIAGNÓSTICOS Y EXPLORADOR EN TIEMPO REAL"
     titleText.TextColor3 = Color3.fromRGB(240, 245, 255)
     titleText.Font = Enum.Font.GothamBold
     titleText.TextSize = 13
@@ -354,11 +368,11 @@ end
 
 function MainWindow:SetupTabs()
     local tabs = {
-        { Id = "Audit",     Label = "🔍 Diagnostics" },
-        { Id = "Dumper",    Label = "📂 Explorer" },
-        { Id = "RemoteSpy", Label = "📡 Network" },
-        { Id = "Economy",   Label = "📊 State" },
-        { Id = "Tools",     Label = "🛠️ Utilities" },
+        { Id = "Audit",     Label = "🔍 Diagnósticos" },
+        { Id = "Dumper",    Label = "📂 Explorador" },
+        { Id = "RemoteSpy", Label = "📡 Red" },
+        { Id = "Economy",   Label = "📊 Estado" },
+        { Id = "Tools",     Label = "🛠️ Utilidades" },
     }
     
     local tabWidth = 1 / #tabs

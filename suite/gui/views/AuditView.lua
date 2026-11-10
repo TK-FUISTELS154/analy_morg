@@ -173,6 +173,7 @@ function AuditView:Render()
     previewBox.ClearTextOnFocus = false
     previewBox.MultiLine = true
     previewBox.TextEditable = false
+    previewBox.TextTruncate = Enum.TextTruncate.None
     previewBox.Parent = frame
     Instance.new("UICorner", previewBox).CornerRadius = UDim.new(0, 8)
     

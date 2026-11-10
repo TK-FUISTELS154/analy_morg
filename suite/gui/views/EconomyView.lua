@@ -108,8 +108,8 @@ function EconomyView:Render()
     itemIndicator.Parent = progressHud
     
     local resultBox = Instance.new("TextBox")
-    resultBox.Size = UDim2.new(1, 0, 1, -86)
-    resultBox.Position = UDim2.new(0, 0, 0, 86)
+    resultBox.Size = UDim2.new(1, 0, 1, -88)
+    resultBox.Position = UDim2.new(0, 0, 0, 88)
     resultBox.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
     resultBox.TextColor3 = Color3.fromRGB(210, 220, 235)
     resultBox.Text = "-- Presiona 'ESCANEO MULTIHILO' para auditar tiendas, ruletas, loot tables y remotes de compra en tiempo real."
@@ -120,6 +120,7 @@ function EconomyView:Render()
     resultBox.ClearTextOnFocus = false
     resultBox.MultiLine = true
     resultBox.TextEditable = false
+    resultBox.TextTruncate = Enum.TextTruncate.None
     resultBox.Parent = frame
     Instance.new("UICorner", resultBox).CornerRadius = UDim.new(0, 8)
     
