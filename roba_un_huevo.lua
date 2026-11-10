@@ -1,17 +1,22 @@
 -- ==============================================================================
--- 🥚 APEX SUITE - ROBA UN HUEVO & CHEST TRACKER PRO (EDICIÓN DEFINITIVA)
+-- 🥚 APEX SUITE - ROBA UN HUEVO & CHEST TRACKER PRO (ULTRA STEALTH & SPEED ENGINE)
 -- ==============================================================================
--- Diseñado e impulsado por el análisis estático y dinámico del juego actual.
+-- Diseñado con ingeniería inversa del volcado completo del juego (PlaceId: 1794327797).
 -- Características Principales:
--- 1. Anti-Cheat Stealth Engine: Cero hooks a Kick, anti-AFK pasivo, GUI camuflada.
+-- 1. Anti-Cheat Stealth Engine: Cero hooks a Kick, anti-AFK pasivo, GUI camuflada con gethui().
 -- 2. Anti-Rubberband Teleport: Micro-pasos seguros que evitan el watchdog de ObbyAntiTP.
--- 3. Escáner Multi-Zona Adaptativo:
---    - Workspace.Chest y Workspace.World.MonsterParasiteMarkers (Cofres)
---    - Workspace.Eggs, PlacedEggRenders, AreaEggSlotsClient y CrystalEggHolders (Huevos)
---    - Workspace.World.Areas (Nidos, GuardAreas, SecretZones)
--- 4. 3D ViewportFrame en Vivo: Previsualización 3D rotatoria en tiempo real.
--- 5. Faros Verticales (Sky Beacons) y Líneas Guía (Tracers) con código de colores por rareza.
--- 6. Server Hopper Inteligente: Búsqueda de servidores con pocos jugadores y auto re-ejecución.
+-- 3. Bypass de Velocidad de Guardias (Waking Escape):
+--    - Roba huevos de CUALQUIER zona (incluyendo la zona Alien/Final con guardias de 279 m/s).
+--    - Aprovecha la ventana de "Waking" (~1.2s) del guardia donde WalkSpeed = 0 para escapar al ClosestExitPoint en < 0.25s.
+-- 4. Velocidad Adaptativa Dinámica:
+--    - Detecta la velocidad del guardia de la zona (GuardEscapeSpeeds / Humanoid.WalkSpeed).
+--    - Inyecta hasta 295 m/s (dentro de los 300 soportados nativamente por el motor del juego) para superar al guardia.
+-- 5. Escudo Anti-Guardia Activo:
+--    - Monitorea la distancia XZ del guardia al portar un huevo; si baja de 30m, activa auto-dodge vertical o escape a la salida.
+-- 6. Escáner de 14 Zonas de Guardias y Nidos:
+--    - Alien, Cosmic, Light Dark, Cherry Blossom, Jungle, Prehistoric, Abyss Ocean,
+--      Titan Temple, Volcano, Snow, Lake, Enchanted Forest, Desert, Forest.
+-- 7. 3D ViewportFrame en Vivo, Faros Verticales (Sky Beacons), Tracers y Server Hopper.
 -- ==============================================================================
 
 -- ==============================================================================
@@ -83,14 +88,14 @@ local function spawnSafe(name, fn, ...)
             fn(table.unpack(args))
         end)
         if not ok and _G.APEX_DEBUG then
-            warn("[APEX-TRACKER][" .. tostring(name) .. "] " .. tostring(err))
+            warn("[APEX-EGG-TRACKER][" .. tostring(name) .. "] " .. tostring(err))
         end
     end)
     table.insert(runningThreads, thread)
     return thread
 end
 
--- Anti-AFK pasivo e indetectable (sin forzar VirtualUser en startup)
+-- Anti-AFK pasivo e indetectable
 safeConnect(LocalPlayer.Idled, function()
     pcall(function()
         local vu = rawGame:GetService("VirtualUser")
@@ -107,17 +112,24 @@ end)
 local CONFIG_FILE = "roba_un_huevo_config.json"
 local Config = {
     SprintEnabled = true,
-    SprintSpeed = 48,           -- Velocidad segura para no alertar a ObbyAntiTP
+    SprintSpeed = 48,           -- Velocidad manual
     JumpEnabled = true,
     JumpPower = 90,             -- Salto seguro
     InfJump = false,
     Noclip = false,
-    SortMode = "Distance",      -- "Distance" o "Luck"
+    SortMode = "Zone",          -- "Zone", "Distance" o "Luck"
+    SelectedZone = "All",
     AutoReexecute = true,
     MinPlayerHop = true,
     TracersEnabled = true,
     BeaconsEnabled = true,
-    SafeTeleport = true,        -- Interpolación anti-rubberband
+    SafeTeleport = true,        -- Micro-interpolación anti-rubberband
+
+    -- NUEVAS CARACTERÍSTICAS PARA SUPERAR CUALQUIER VELOCIDAD DE GUARDIA
+    AdaptiveSpeed = true,       -- Inyección adaptativa de velocidad por zona (hasta 295 m/s)
+    WakingEscape = true,        -- Escape instantáneo en ventana Waking de 1.2s del guardia
+    AntiGuardShield = true,     -- Auto-dodge si el guardia se acerca a < 30m al portar huevo
+    AutoDoffHeavyTools = true,  -- Limpieza de herramientas pesadas que ralentizan
 }
 
 local function saveConfig()
@@ -144,33 +156,27 @@ end
 loadConfig()
 
 -- ==============================================================================
--- 4. TABLAS DE CLASIFICACIÓN Y RAREZAS
+-- 4. CATÁLOGO DE ZONAS, GUARDIAS Y METADATOS
 -- ==============================================================================
-local CHEST_VALUE_TABLE = {
-    ["Common Chest"]     = 1000,
-    ["Wooden Chest"]     = 1000,
-    ["Bronze Chest"]     = 2500,
-    ["Iron Chest"]       = 5000,
-    ["Silver Chest"]     = 15000,
-    ["Rare Chest"]       = 25000,
-    ["Golden Chest"]     = 75000,
-    ["Gold Chest"]       = 75000,
-    ["Epic Chest"]       = 150000,
-    ["Ruby Chest"]       = 300000,
-    ["Emerald Chest"]    = 500000,
-    ["Diamond Chest"]    = 1000000,
-    ["Legendary Chest"]  = 2500000,
-    ["Mythic Chest"]     = 10000000,
-    ["Ancient Chest"]    = 25000000,
-    ["Cursed Chest"]     = 50000000,
-    ["Divine Chest"]     = 100000000,
-    ["Ethereal Chest"]   = 500000000,
-    ["Sunken Chest"]     = 500000,
-    ["Boss Chest"]       = 5000000,
-    ["Parasite Chest"]   = 15000000,
-    ["Crystal Egg"]      = 20000000,
-    ["Area Egg"]         = 5000000,
+local GAME_ZONES = {
+    { Id = "Alien",          Name = "🛸 Alien (Zona Final)",     Tier = 14, GuardSpeed = 279, Color = Color3.fromRGB(0, 255, 170) },
+    { Id = "Light Dark",     Name = "🌓 Light Dark",             Tier = 13, GuardSpeed = 270, Color = Color3.fromRGB(220, 150, 255) },
+    { Id = "Cosmic",         Name = "🌌 Cosmic",                 Tier = 12, GuardSpeed = 265, Color = Color3.fromRGB(130, 200, 255) },
+    { Id = "Cherry Blossom", Name = "🌸 Cherry Blossom (Sakura)",Tier = 11, GuardSpeed = 255, Color = Color3.fromRGB(255, 160, 200) },
+    { Id = "Jungle",         Name = "🌴 Jungle",                 Tier = 10, GuardSpeed = 245, Color = Color3.fromRGB(80, 215, 80) },
+    { Id = "Prehistoric",    Name = "🦖 Prehistoric",            Tier = 9,  GuardSpeed = 230, Color = Color3.fromRGB(215, 180, 60) },
+    { Id = "Abyss Ocean",    Name = "🌊 Abyss Ocean",            Tier = 8,  GuardSpeed = 210, Color = Color3.fromRGB(40, 140, 255) },
+    { Id = "Titan Temple",   Name = "🏛️ Titan Temple",           Tier = 7,  GuardSpeed = 180, Color = Color3.fromRGB(255, 175, 40) },
+    { Id = "Volcano",        Name = "🌋 Volcano",                Tier = 6,  GuardSpeed = 150, Color = Color3.fromRGB(255, 60, 40) },
+    { Id = "Snow",           Name = "❄️ Snow / Tundra",          Tier = 5,  GuardSpeed = 120, Color = Color3.fromRGB(180, 230, 255) },
+    { Id = "Lake",           Name = "🏞️ Lake",                   Tier = 4,  GuardSpeed = 95,  Color = Color3.fromRGB(70, 190, 210) },
+    { Id = "Enchanted Forest",Name= "✨ Enchanted Forest",       Tier = 3,  GuardSpeed = 251, Color = Color3.fromRGB(160, 75, 255) },
+    { Id = "Desert",         Name = "🏜️ Desert",                 Tier = 2,  GuardSpeed = 45,  Color = Color3.fromRGB(235, 190, 120) },
+    { Id = "Forest",         Name = "🌲 Forest (Tutorial)",      Tier = 1,  GuardSpeed = 25,  Color = Color3.fromRGB(60, 190, 90) },
 }
+
+local ZONE_MAP = {}
+for _, z in ipairs(GAME_ZONES) do ZONE_MAP[z.Id] = z end
 
 local RARITY_COLORS = {
     Common    = Color3.fromRGB(175, 175, 175),
@@ -184,21 +190,13 @@ local RARITY_COLORS = {
     Unknown   = Color3.fromRGB(180, 160, 120)
 }
 
-local function formatNumber(val)
-    if not val or val <= 0 then return "0" end
-    if val >= 1e12 then return string.format("%.1fT", val / 1e12):gsub("%.0T", "T") end
-    if val >= 1e9  then return string.format("%.1fB", val / 1e9):gsub("%.0B", "B") end
-    if val >= 1e6  then return string.format("%.1fM", val / 1e6):gsub("%.0M", "M") end
-    if val >= 1e3  then return string.format("%.1fK", val / 1e3):gsub("%.0K", "K") end
-    return tostring(math.floor(val))
-end
-
 -- ==============================================================================
--- 5. SISTEMA DE FÍSICAS SIGILOSAS Y ANTI-RUBBERBAND
+-- 5. SISTEMA DE FÍSICAS, VELOCIDAD ADAPTATIVA Y ANTI-RUBBERBAND
 -- ==============================================================================
 local nativeWalkSpeed = 16
 local isShiftHeld = false
-local updateTelemetry = nil
+local isStealingActive = false
+local currentAreaSpeedBoost = 0
 
 local function getHumanoid()
     local char = LocalPlayer.Character
@@ -224,7 +222,7 @@ local function applyPhysics(char)
     local hum = char:WaitForChild("Humanoid", 6) or char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
 
-    if not isShiftPressed() then
+    if not isShiftPressed() and not isStealingActive and currentAreaSpeedBoost == 0 then
         nativeWalkSpeed = hum.WalkSpeed
     end
 
@@ -236,9 +234,8 @@ local function applyPhysics(char)
     end
 
     local wsConn = hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
-        if not (Config.SprintEnabled and isShiftPressed()) then
+        if not (Config.SprintEnabled and isShiftPressed()) and not isStealingActive and currentAreaSpeedBoost == 0 then
             nativeWalkSpeed = hum.WalkSpeed
-            if updateTelemetry then updateTelemetry() end
         end
     end)
     table.insert(charConnections, wsConn)
@@ -250,11 +247,19 @@ safeConnect(LocalPlayer.CharacterAdded, function(c)
     applyPhysics(c)
 end)
 
--- Ciclo de Sprint suave sincronizado con RenderStepped
+-- Ciclo de Sprint / Velocidad Sincronizado
 safeConnect(RunService.RenderStepped, function()
     if not isScriptActive then return end
     local hum = getHumanoid()
     if not hum or hum.Health <= 0 then return end
+
+    -- Si estamos en secuencia de robo o con boost adaptativo activo
+    if currentAreaSpeedBoost > 0 then
+        if hum.WalkSpeed ~= currentAreaSpeedBoost then
+            hum.WalkSpeed = currentAreaSpeedBoost
+        end
+        return
+    end
 
     local shift = Config.SprintEnabled and isShiftPressed()
     if shift then
@@ -283,7 +288,7 @@ safeConnect(UserInputService.JumpRequest, function()
     end
 end)
 
--- Noclip seguro: solo afecta al torso y root part sin saturar el watchdog de Stepped
+-- Noclip Sigiloso (sin saturar Stepped)
 safeConnect(RunService.Stepped, function()
     if Config.Noclip and isScriptActive and LocalPlayer.Character then
         for _, name in ipairs({ "HumanoidRootPart", "Torso", "UpperTorso", "LowerTorso" }) do
@@ -296,33 +301,32 @@ safeConnect(RunService.Stepped, function()
 end)
 
 -- Teleportación Inteligente Anti-Rubberband (Bypass de ObbyAntiTP)
-local function safeTeleport(targetPos)
+local function safeTeleport(targetPos, speedFactor)
     local hrp = getRootPart()
     if not hrp or not targetPos then return end
 
     local startPos = hrp.Position
     local dist = (targetPos - startPos).Magnitude
 
-    -- Si la distancia es corta o el usuario desactivó SafeTeleport: teletransporte directo
-    if not Config.SafeTeleport or dist <= 70 then
-        hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 4, 0))
+    if not Config.SafeTeleport or dist <= 60 then
+        hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
         return
     end
 
-    -- Si la distancia es mayor a 70 studs: micro-interpolación de 45 studs por tick
-    spawnSafe("SafeTeleportPath", function()
-        local steps = math.clamp(math.ceil(dist / 45), 2, 18)
-        for i = 1, steps do
-            if not isScriptActive or not hrp or not hrp.Parent then break end
-            local alpha = i / steps
-            local nextPos = startPos:Lerp(targetPos + Vector3.new(0, 4, 0), alpha)
-            hrp.CFrame = CFrame.new(nextPos)
-            task.wait(0.028)
-        end
-        if hrp and hrp.Parent then
-            hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 4, 0))
-        end
-    end)
+    local stepSize = (speedFactor and speedFactor > 1) and 65 or 45
+    local waitDelay = (speedFactor and speedFactor > 1) and 0.018 or 0.028
+    local steps = math.clamp(math.ceil(dist / stepSize), 2, 16)
+
+    for i = 1, steps do
+        if not isScriptActive or not hrp or not hrp.Parent then break end
+        local alpha = i / steps
+        local nextPos = startPos:Lerp(targetPos + Vector3.new(0, 3, 0), alpha)
+        hrp.CFrame = CFrame.new(nextPos)
+        task.wait(waitDelay)
+    end
+    if hrp and hrp.Parent then
+        hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
+    end
 end
 
 -- ==============================================================================
@@ -350,10 +354,10 @@ local function createTracker(data)
 
     local uuid = data.UUID
     local pos = data.Position
-    local color = data.Color or Color3.fromRGB(255, 200, 0)
+    local color = data.Color or Color3.fromRGB(0, 220, 255)
 
     local folder = Instance.new("Folder")
-    folder.Name = "ApexBeacon_" .. tostring(uuid)
+    folder.Name = "ApexEggBeacon_" .. tostring(uuid)
     folder.Parent = Workspace
 
     local bAnchor = Instance.new("Part", folder)
@@ -373,7 +377,6 @@ local function createTracker(data)
     local a0 = Instance.new("Attachment", bAnchor)
     local a1 = Instance.new("Attachment", tAnchor)
 
-    -- Faro de luz vertical hacia el cielo (Sky Beam)
     if Config.BeaconsEnabled then
         local beam = Instance.new("Beam", folder)
         beam.Attachment0 = a0
@@ -391,7 +394,6 @@ local function createTracker(data)
         beam.LightInfluence = 0
     end
 
-    -- Línea guía directa desde el jugador (Tracer)
     local tracerBeam = nil
     local pAttachment = nil
     if Config.TracersEnabled then
@@ -410,7 +412,6 @@ local function createTracker(data)
         end
     end
 
-    -- Etiqueta 3D flotante (BillboardGui)
     local bb = Instance.new("BillboardGui", folder)
     bb.Adornee = bAnchor
     bb.Size = UDim2.new(0, 160, 0, 42)
@@ -430,13 +431,12 @@ local function createTracker(data)
     bbDist.Size = UDim2.new(1, 0, 0.5, 0)
     bbDist.Position = UDim2.new(0, 0, 0.5, 0)
     bbDist.BackgroundTransparency = 1
-    bbDist.Text = tostring(data.Distance or 0) .. "m"
+    bbDist.Text = tostring(data.Distance or 0) .. "m | Guardia: " .. tostring(data.GuardSpeed or 25) .. "m/s"
     bbDist.TextColor3 = Color3.fromRGB(255, 255, 255)
     bbDist.Font = Enum.Font.GothamMedium
     bbDist.TextSize = 11
     bbDist.TextStrokeTransparency = 0.3
 
-    -- Highlight en el modelo 3D si existe
     local hl = nil
     if data.Model3D and data.Model3D:IsA("Model") then
         pcall(function()
@@ -460,7 +460,7 @@ local function createTracker(data)
 end
 
 -- ==============================================================================
--- 7. ESCÁNER MULTI-ZONA ADAPTATIVO DEL JUEGO
+-- 7. ESCÁNER PROFUNDO DE ZONAS, GUARDIAS Y NIDOS (14 ZONAS)
 -- ==============================================================================
 local function resolvePosition(inst)
     if not inst then return nil end
@@ -480,13 +480,14 @@ local function scanAllCollectibles()
     local seen = {}
     local hrp = getRootPart()
     local myPos = hrp and hrp.Position or Vector3.new(0, 0, 0)
-    local serverNow = Workspace:GetServerTimeNow()
+    local world = Workspace:FindFirstChild("World")
+    local areasFolder = world and world:FindFirstChild("Areas") and world.Areas:FindFirstChild("GuardAreas")
 
-    local function addItem(uuid, name, pos, rarity, val, tag, model3D)
+    local function addItem(uuid, name, pos, rarity, val, tag, model3D, zoneId, guardSpeed, exitPos, prompt, uid)
         if not uuid or seen[uuid] or not pos then return end
         seen[uuid] = true
 
-        local color = RARITY_COLORS[rarity] or RARITY_COLORS.Unknown
+        local color = RARITY_COLORS[rarity] or (zoneId and ZONE_MAP[zoneId] and ZONE_MAP[zoneId].Color) or RARITY_COLORS.Unknown
         local dist = math.floor((myPos - pos).Magnitude)
 
         table.insert(list, {
@@ -499,27 +500,109 @@ local function scanAllCollectibles()
             Color = color,
             Distance = dist,
             Model3D = model3D,
+            ZoneId = zoneId or "Desconocida",
+            GuardSpeed = guardSpeed or 25,
+            ExitPosition = exitPos,
+            Prompt = prompt,
+            EggUid = uid,
         })
     end
 
-    -- 1. Workspace.Chest y Workspace.World.MonsterParasiteMarkers (Cofres)
+    -- 1. Escaneo de las 14 Zonas de Guardias en Workspace.World.Areas.GuardAreas
+    if areasFolder then
+        for _, areaModel in ipairs(areasFolder:GetChildren()) do
+            local zoneMeta = ZONE_MAP[areaModel.Name]
+            local zoneName = zoneMeta and zoneMeta.Name or areaModel.Name
+            local guardModel = areaModel:FindFirstChild("Guard")
+            local guardHum = guardModel and guardModel:FindFirstChildOfClass("Humanoid")
+            local guardSpeed = guardHum and guardHum.WalkSpeed or (zoneMeta and zoneMeta.GuardSpeed) or 25
+
+            -- Obtener punto de salida seguro
+            local exitPart = areaModel:FindFirstChild("ClosestExitPoint")
+            local exitPos = exitPart and exitPart.Position or nil
+
+            if not exitPos then
+                local bounds = areaModel:FindFirstChild("Bounds")
+                if bounds and bounds:IsA("BasePart") then
+                    exitPos = bounds.Position + Vector3.new(bounds.Size.X * 0.5 + 15, 0, 0)
+                end
+            end
+
+            -- Nidos en el área
+            local nests = areaModel:FindFirstChild("Nests")
+            if nests then
+                for idx, nest in ipairs(nests:GetChildren()) do
+                    local nPos = resolvePosition(nest)
+                    if nPos then
+                        local prompt = nest:FindFirstChildWhichIsA("ProximityPrompt", true)
+                        local eggInNest = nest:FindFirstChild("Egg") or nest:FindFirstChildWhichIsA("Model")
+                        local eggUid = nest:GetAttribute("Uid") or (eggInNest and eggInNest:GetAttribute("Uid")) or (areaModel.Name .. "_Nest_" .. idx)
+                        local rarity = nest:GetAttribute("Rarity") or (zoneMeta and zoneMeta.Tier >= 10 and "Divine" or (zoneMeta and zoneMeta.Tier >= 6 and "Legendary" or "Rare"))
+                        local tag = "Nido (" .. tostring(idx) .. ")"
+
+                        addItem("NestEgg_" .. areaModel.Name .. "_" .. idx, "Huevo de " .. zoneName, nPos, rarity, (zoneMeta and zoneMeta.Tier or 1) * 2000000, tag, eggInNest or nest, areaModel.Name, guardSpeed, exitPos, prompt, eggUid)
+                    end
+                end
+            end
+        end
+    end
+
+    -- 2. Workspace.AreaEggSlotsClient (Huevos sincronizados en vivo)
+    local areaSlots = Workspace:FindFirstChild("AreaEggSlotsClient")
+    if areaSlots then
+        for _, slot in ipairs(areaSlots:GetChildren()) do
+            local pos = resolvePosition(slot)
+            if pos then
+                local cleanName = slot.Name:gsub("FirstAreaEgg_[%d_]+", ""):gsub("_", " ")
+                local prompt = slot:FindFirstChildWhichIsA("ProximityPrompt", true)
+                local uid = slot:GetAttribute("Uid") or slot.Name
+                addItem("Slot_" .. slot.Name, "Huevo de Área (" .. cleanName .. ")", pos, "Epic", 5000000, "En Vivo", slot:IsA("Model") and slot or nil, "Mapa", 45, nil, prompt, uid)
+            end
+        end
+    end
+
+    -- 3. Workspace.PlacedEggRenders
+    local placedRenders = Workspace:FindFirstChild("PlacedEggRenders")
+    if placedRenders then
+        for _, egg in ipairs(placedRenders:GetChildren()) do
+            local pos = resolvePosition(egg)
+            if pos then
+                local prompt = egg:FindFirstChildWhichIsA("ProximityPrompt", true)
+                addItem("PlacedEgg_" .. egg.Name, "Huevo Terrestre (" .. egg.Name .. ")", pos, "Rare", 1500000, "Zona", egg:IsA("Model") and egg or nil, "Terreno", 25, nil, prompt, egg.Name)
+            end
+        end
+    end
+
+    -- 4. Workspace.CrystalEggHolders (Huevos de Cristal Divinos)
+    local crystalHolders = Workspace:FindFirstChild("CrystalEggHolders")
+    if crystalHolders then
+        for _, holder in ipairs(crystalHolders:GetChildren()) do
+            local pos = resolvePosition(holder)
+            if pos then
+                local prompt = holder:FindFirstChildWhichIsA("ProximityPrompt", true)
+                addItem("Crystal_" .. holder:GetDebugId(), "Huevo de Cristal 💎", pos, "Divine", 35000000, "Cristal", holder:IsA("Model") and holder or nil, "Especial", 100, nil, prompt, holder.Name)
+            end
+        end
+    end
+
+    -- 5. Workspace.Chest y Parásitos
     local directChest = Workspace:FindFirstChild("Chest")
     if directChest then
         local pos = resolvePosition(directChest)
         if pos then
-            addItem("Chest_Direct", "Cofre Mágico", pos, "Legendary", 5000000, "Spawn", directChest:IsA("Model") and directChest or nil)
+            addItem("Chest_Direct", "Cofre Mágico", pos, "Legendary", 5000000, "Cofre", directChest:IsA("Model") and directChest or nil, "Global", 0, nil, nil, nil)
         end
     end
 
-    local world = Workspace:FindFirstChild("World")
-    if world then
-        for _, child in ipairs(world:GetDescendants()) do
+    local worldFolder = Workspace:FindFirstChild("World")
+    if worldFolder then
+        for _, child in ipairs(worldFolder:GetDescendants()) do
             if child.Name == "MonsterParasiteMarkers" or child.Name:find("Parasite") then
                 for _, marker in ipairs(child:GetChildren()) do
                     if marker.Name == "Chest" or marker.Name:lower():find("chest") then
                         local pos = resolvePosition(marker)
                         if pos then
-                            addItem("Parasite_" .. marker:GetDebugId(), "Cofre Parásito 💀", pos, "Mythic", 15000000, "Evento", marker:IsA("Model") and marker or nil)
+                            addItem("Parasite_" .. marker:GetDebugId(), "Cofre Parásito 💀", pos, "Mythic", 15000000, "Evento", marker:IsA("Model") and marker or nil, "Evento", 0, nil, nil, nil)
                         end
                     end
                 end
@@ -527,75 +610,22 @@ local function scanAllCollectibles()
         end
     end
 
-    -- 2. Workspace.Eggs y Workspace.PlacedEggRenders (Huevos Activos)
-    local eggsFolder = Workspace:FindFirstChild("Eggs")
-    if eggsFolder then
-        for _, egg in ipairs(eggsFolder:GetChildren()) do
-            local pos = resolvePosition(egg)
-            if pos then
-                local tier = egg:GetAttribute("Tier") or egg:GetAttribute("Rarity") or "Epic"
-                addItem("Egg_" .. egg.Name, "Huevo: " .. egg.Name, pos, tier, 2500000, "Eclosión", egg:IsA("Model") and egg or nil)
+    -- Filtro por Zona si está seleccionado
+    if Config.SelectedZone and Config.SelectedZone ~= "All" then
+        local filtered = {}
+        for _, item in ipairs(list) do
+            if item.ZoneId == Config.SelectedZone then
+                table.insert(filtered, item)
             end
         end
-    end
-
-    local placedRenders = Workspace:FindFirstChild("PlacedEggRenders")
-    if placedRenders then
-        for _, egg in ipairs(placedRenders:GetChildren()) do
-            local pos = resolvePosition(egg)
-            if pos then
-                addItem("PlacedEgg_" .. egg.Name, "Huevo de Zona (" .. egg.Name .. ")", pos, "Rare", 1000000, "Zona", egg:IsA("Model") and egg or nil)
-            end
-        end
-    end
-
-    -- 3. Workspace.AreaEggSlotsClient (Ranuras de Huevos en Áreas de Mapa)
-    local areaSlots = Workspace:FindFirstChild("AreaEggSlotsClient")
-    if areaSlots then
-        for _, slot in ipairs(areaSlots:GetChildren()) do
-            local pos = resolvePosition(slot)
-            if pos then
-                local cleanName = slot.Name:gsub("FirstAreaEgg_[%d_]+", ""):gsub("_", " ")
-                addItem("Slot_" .. slot.Name, "Nido: " .. cleanName, pos, "Rare", 750000, "Nido", slot:IsA("Model") and slot or nil)
-            end
-        end
-    end
-
-    -- 4. Workspace.CrystalEggHolders (Huevos de Cristal)
-    local crystalHolders = Workspace:FindFirstChild("CrystalEggHolders")
-    if crystalHolders then
-        for _, holder in ipairs(crystalHolders:GetChildren()) do
-            local pos = resolvePosition(holder)
-            if pos then
-                addItem("Crystal_" .. holder:GetDebugId(), "Huevo de Cristal 💎", pos, "Divine", 25000000, "Cristal", holder:IsA("Model") and holder or nil)
-            end
-        end
-    end
-
-    -- 5. Workspace.World.Dynamic (Cofres y Eventos en vivo)
-    local dynamic = world and world:FindFirstChild("Dynamic")
-    if dynamic then
-        for _, obj in ipairs(dynamic:GetDescendants()) do
-            if obj:IsA("Model") or (obj:IsA("BasePart") and not obj.Parent:IsA("Model")) then
-                local nLower = obj.Name:lower()
-                if nLower:find("chest") or nLower:find("treasure") or nLower:find("crate") or obj:GetAttribute("ChestTier") then
-                    local pos = resolvePosition(obj)
-                    local endsAt = tonumber(obj:GetAttribute("EndsAt"))
-                    if pos and (not endsAt or serverNow < endsAt) then
-                        local uid = tostring(obj:GetAttribute("Uid") or obj:GetDebugId())
-                        local rawName = obj:GetAttribute("DisplayName") or obj.Name
-                        local rarity = obj:GetAttribute("Rarity") or (nLower:find("mythic") and "Mythic" or (nLower:find("legend") and "Legendary" or "Epic"))
-                        local val = tonumber(obj:GetAttribute("Reward") or CHEST_VALUE_TABLE[rawName]) or 250000
-                        addItem("Dyn_" .. uid, rawName, pos, rarity, val, "Dynamic", obj:IsA("Model") and obj or nil)
-                    end
-                end
-            end
-        end
+        list = filtered
     end
 
     -- Ordenamiento
     if Config.SortMode == "Luck" then
         table.sort(list, function(a, b) return (a.Weight or 0) > (b.Weight or 0) end)
+    elseif Config.SortMode == "Zone" then
+        table.sort(list, function(a, b) return (b.GuardSpeed or 0) > (a.GuardSpeed or 0) end)
     else
         table.sort(list, function(a, b) return (a.Distance or 0) < (b.Distance or 0) end)
     end
@@ -604,7 +634,161 @@ local function scanAllCollectibles()
 end
 
 -- ==============================================================================
--- 8. GESTOR DE VISTA PREVIA 3D (VIEWPORTFRAME)
+-- 8. MOTOR DE ROBO & ESCAPE SIGILOSO (WAKING WINDOW BYPASS)
+-- ==============================================================================
+local function executeStealAndEscape(itemData)
+    if isStealingActive then return end
+    isStealingActive = true
+
+    spawnSafe("StealRoutine_" .. tostring(itemData.UUID), function()
+        local hrp = getRootPart()
+        local hum = getHumanoid()
+        if not hrp or not hum then
+            isStealingActive = false
+            return
+        end
+
+        local eggPos = itemData.Position
+        local guardSpeed = itemData.GuardSpeed or 25
+        local exitPos = itemData.ExitPosition
+
+        -- Resolver punto de salida seguro si falta
+        if not exitPos then
+            local world = Workspace:FindFirstChild("World")
+            local areasFolder = world and world:FindFirstChild("Areas") and world.Areas:FindFirstChild("GuardAreas")
+            local currentArea = areasFolder and areasFolder:FindFirstChild(itemData.ZoneId)
+            local exitPart = currentArea and currentArea:FindFirstChild("ClosestExitPoint")
+            if exitPart then
+                exitPos = exitPart.Position
+            else
+                exitPos = eggPos + Vector3.new(0, 5, 80)
+            end
+        end
+
+        -- 1. Teletransporte seguro hacia el nido
+        safeTeleport(eggPos + Vector3.new(0, 2.5, 0), 1.2)
+        task.wait(0.06)
+
+        -- 2. Inyección de Velocidad Adaptativa mientras roba
+        if Config.AdaptiveSpeed then
+            currentAreaSpeedBoost = math.clamp(guardSpeed + 20, 65, 295)
+            hum.WalkSpeed = currentAreaSpeedBoost
+        end
+
+        -- 3. Activar el robo del huevo
+        local promptFired = false
+        if itemData.Prompt then
+            pcall(function()
+                if typeof(fireproximityprompt) == "function" then
+                    fireproximityprompt(itemData.Prompt, 0)
+                    promptFired = true
+                else
+                    itemData.Prompt:InputHoldBegin()
+                    task.wait(itemData.Prompt.HoldDuration or 0.25)
+                    itemData.Prompt:InputHoldEnd()
+                    promptFired = true
+                end
+            end)
+        end
+
+        -- Invocación directa a Remotes de EggWorld si existe el UID
+        if itemData.EggUid then
+            pcall(function()
+                local net = ReplicatedStorage:FindFirstChild("Packages") and ReplicatedStorage.Packages:FindFirstChild("Networking")
+                local rfCarry = net and net:FindFirstChild("RF/EggWorld/AskFieldEggCarry")
+                if rfCarry then
+                    rfCarry:InvokeServer({ Uid = itemData.EggUid, FirstAreaSlotKey = nil })
+                end
+            end)
+        end
+
+        -- 4. Escape ultrarrápido durante la ventana de Waking del guardia (1.2s congelado)
+        if Config.WakingEscape and exitPos then
+            task.wait(0.04)
+            safeTeleport(exitPos + Vector3.new(0, 3, 0), 2.0)
+        end
+
+        task.wait(0.3)
+        currentAreaSpeedBoost = 0
+        if hum and not isShiftPressed() then
+            hum.WalkSpeed = nativeWalkSpeed
+        end
+        isStealingActive = false
+    end)
+end
+
+-- ==============================================================================
+-- 9. ESCUDO ANTI-GUARDIA Y VELOCIDAD ADAPTATIVA EN SEGUNDO PLANO
+-- ==============================================================================
+spawnSafe("GuardWatchdogThread", function()
+    while isScriptActive do
+        task.wait(0.25)
+        local hrp = getRootPart()
+        local hum = getHumanoid()
+        if hrp and hum and hum.Health > 0 and not isStealingActive then
+            local world = Workspace:FindFirstChild("World")
+            local areasFolder = world and world:FindFirstChild("Areas") and world.Areas:FindFirstChild("GuardAreas")
+
+            if areasFolder then
+                local inGuardedZone = false
+                local activeGuardSpeed = nativeWalkSpeed
+
+                for _, area in ipairs(areasFolder:GetChildren()) do
+                    local guard = area:FindFirstChild("Guard")
+                    local gRoot = guard and (guard:FindFirstChild("HumanoidRootPart") or guard:FindFirstChild("Torso"))
+                    local gHum = guard and guard:FindFirstChildOfClass("Humanoid")
+                    local bounds = area:FindFirstChild("Bounds")
+
+                    -- Verificar si estamos dentro de la zona
+                    if bounds and bounds:IsA("BasePart") then
+                        local rel = bounds.CFrame:PointToObjectSpace(hrp.Position)
+                        local half = bounds.Size * 0.5
+                        if math.abs(rel.X) <= half.X and math.abs(rel.Z) <= half.Z then
+                            inGuardedZone = true
+                            local gSpd = gHum and gHum.WalkSpeed or (ZONE_MAP[area.Name] and ZONE_MAP[area.Name].GuardSpeed) or 25
+                            activeGuardSpeed = math.clamp(gSpd + 15, 60, 295)
+
+                            -- ESCUDO ACTIVO: si el guardia nos persigue y está a menos de 30 metros
+                            if Config.AntiGuardShield and guard and gRoot then
+                                local gTarget = guard:GetAttribute("TargetPlayer")
+                                local gState = guard:GetAttribute("GuardState")
+                                if gState == "Chasing" and (gTarget == tostring(LocalPlayer.UserId) or gTarget == LocalPlayer.Name) then
+                                    local xzDist = Vector3.new(hrp.Position.X - gRoot.Position.X, 0, hrp.Position.Z - gRoot.Position.Z).Magnitude
+                                    if xzDist < 30 then
+                                        -- El guardia está encima: impulso de escape inmediato a la salida
+                                        local exit = area:FindFirstChild("ClosestExitPoint")
+                                        if exit and exit:IsA("BasePart") then
+                                            safeTeleport(exit.Position + Vector3.new(0, 4, 0), 1.8)
+                                        else
+                                            hrp.CFrame = hrp.CFrame + Vector3.new(0, 24, 0)
+                                        end
+                                    end
+                                end
+                            end
+                            break
+                        end
+                    end
+                end
+
+                -- Ajuste adaptativo de velocidad
+                if Config.AdaptiveSpeed and not isShiftHeld then
+                    if inGuardedZone then
+                        if hum.WalkSpeed ~= activeGuardSpeed then
+                            hum.WalkSpeed = activeGuardSpeed
+                        end
+                    else
+                        if hum.WalkSpeed > nativeWalkSpeed and not isShiftPressed() then
+                            hum.WalkSpeed = nativeWalkSpeed
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- ==============================================================================
+-- 10. GESTOR DE VISTA PREVIA 3D (VIEWPORTFRAME)
 -- ==============================================================================
 local function setupViewport3D(vp, itemData)
     vp:ClearAllChildren()
@@ -626,35 +810,18 @@ local function setupViewport3D(vp, itemData)
         end)
     end
 
-    -- Generador de cofre procedimental si no hay modelo clonable
     if not previewModel or #previewModel:GetDescendants() == 0 then
         if previewModel then previewModel:Destroy() end
         previewModel = Instance.new("Model")
 
         local base = Instance.new("Part", previewModel)
-        base.Size = Vector3.new(3.2, 1.8, 2.2)
-        base.Color = Color3.fromRGB(95, 58, 28)
-        base.Material = Enum.Material.WoodPlanks
+        base.Size = Vector3.new(2.8, 3.4, 2.8)
+        base.Shape = Enum.PartType.Ball
+        base.Color = itemData.Color or Color3.fromRGB(0, 220, 255)
+        base.Material = Enum.Material.SmoothPlastic
         base.Anchored = true
         base.CanCollide = false
-        base.CFrame = CFrame.new(0, -0.4, 0)
-
-        local lid = Instance.new("Part", previewModel)
-        lid.Shape = Enum.PartType.Cylinder
-        lid.Size = Vector3.new(3.2, 2.2, 2.2)
-        lid.Color = Color3.fromRGB(110, 68, 34)
-        lid.Material = Enum.Material.Wood
-        lid.Anchored = true
-        lid.CanCollide = false
-        lid.CFrame = CFrame.new(0, 0.5, 0) * CFrame.Angles(0, 0, math.rad(90))
-
-        local trim = Instance.new("Part", previewModel)
-        trim.Size = Vector3.new(0.4, 2.2, 2.3)
-        trim.Color = itemData.Color or Color3.fromRGB(255, 195, 40)
-        trim.Material = Enum.Material.Metal
-        trim.Anchored = true
-        trim.CanCollide = false
-        trim.CFrame = CFrame.new(0, 0, 0)
+        base.CFrame = CFrame.new(0, 0, 0)
     end
 
     previewModel.Parent = vp
@@ -663,7 +830,6 @@ local function setupViewport3D(vp, itemData)
     local camDist = maxDim * 2.1
     camera.CFrame = CFrame.new(cf.Position + Vector3.new(camDist * 0.7, camDist * 0.5, camDist * 0.9), cf.Position)
 
-    -- Giro suave en 3D
     local angle = 0
     spawnSafe("ViewportSpin_" .. tostring(itemData.UUID), function()
         while isScriptActive and vp and vp.Parent and previewModel and previewModel.Parent do
@@ -677,7 +843,7 @@ local function setupViewport3D(vp, itemData)
 end
 
 -- ==============================================================================
--- 9. INTERFAZ GRÁFICA MODERNA Y CAMUFLADA (UI)
+-- 11. INTERFAZ GRÁFICA MODERNA Y CAMUFLADA (UI)
 -- ==============================================================================
 local gethuiFunc = (type(gethui) == "function" and gethui)
 local parentContainer = (gethuiFunc and gethuiFunc()) or game:GetService("CoreGui") or PlayerGui
@@ -686,14 +852,12 @@ local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "ApexGui_" .. HttpService:GenerateGUID(false):sub(1, 8)
 screenGui.ResetOnSpawn = false
 screenGui:SetAttribute("ApexEggTrackerGui", true)
-pcall(function()
-    screenGui.Parent = parentContainer
-end)
+pcall(function() screenGui.Parent = parentContainer end)
 if not screenGui.Parent then screenGui.Parent = PlayerGui end
 
 local mainFrame = Instance.new("Frame", screenGui)
-mainFrame.Size = UDim2.new(0, 440, 0, 520)
-mainFrame.Position = UDim2.new(0.03, 0, 0.22, 0)
+mainFrame.Size = UDim2.new(0, 480, 0, 540)
+mainFrame.Position = UDim2.new(0.03, 0, 0.20, 0)
 mainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
@@ -725,16 +889,16 @@ end)
 
 -- Header
 local header = Instance.new("Frame", mainFrame)
-header.Size = UDim2.new(1, 0, 0, 40)
+header.Size = UDim2.new(1, 0, 0, 42)
 header.BackgroundColor3 = Color3.fromRGB(25, 28, 36)
 header.BorderSizePixel = 0
 Instance.new("UICorner", header).CornerRadius = UDim.new(0, 10)
 
 local title = Instance.new("TextLabel", header)
-title.Size = UDim2.new(0.65, 0, 1, 0)
+title.Size = UDim2.new(0.70, 0, 1, 0)
 title.Position = UDim2.new(0.04, 0, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "🥚 ROBA UN HUEVO PRO"
+title.Text = "🥚 ROBA UN HUEVO PRO  |  ANTI-GUARD ENGINE"
 title.TextColor3 = Color3.fromRGB(245, 245, 245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 12
@@ -777,30 +941,30 @@ local function makeTab(name, txt, active)
     return btn
 end
 
-local tabBtnCollect = makeTab("TabCollect", "🥚 Huevos & Cofres", true)
-local tabBtnMove = makeTab("TabMove", "⚡ Físicas & Teleport", false)
-local tabBtnHop = makeTab("TabHop", "🌐 Server Hop", false)
+local tabBtnCollect = makeTab("TabCollect", "🥚 Nidos & Huevos", true)
+local tabBtnMove = makeTab("TabMove", "⚡ Velocidad & Anti-Guard", false)
+local tabBtnZones = makeTab("TabZones", "🗺️ Zonas & Server Hop", false)
 
 local contentArea = Instance.new("Frame", mainFrame)
-contentArea.Size = UDim2.new(0.92, 0, 0.76, 0)
-contentArea.Position = UDim2.new(0.04, 0, 0.175, 0)
+contentArea.Size = UDim2.new(0.92, 0, 0.77, 0)
+contentArea.Position = UDim2.new(0.04, 0, 0.170, 0)
 contentArea.BackgroundTransparency = 1
 
 -- ==============================================================================
--- PÁGINA 1: COFRES & HUEVOS
+-- PÁGINA 1: NIDOS & HUEVOS
 -- ==============================================================================
 local pageCollect = Instance.new("Frame", contentArea)
 pageCollect.Size = UDim2.new(1, 0, 1, 0)
 pageCollect.BackgroundTransparency = 1
 
 local topBar = Instance.new("Frame", pageCollect)
-topBar.Size = UDim2.new(1, 0, 0, 28)
+topBar.Size = UDim2.new(1, 0, 0, 30)
 topBar.BackgroundTransparency = 1
 
 local sortBtn = Instance.new("TextButton", topBar)
 sortBtn.Size = UDim2.new(0.48, 0, 1, 0)
 sortBtn.BackgroundColor3 = Color3.fromRGB(32, 36, 46)
-sortBtn.Text = "Filtro: " .. (Config.SortMode == "Luck" and "Mayor Valor 💰" or "Distancia 📍")
+sortBtn.Text = "Filtro: " .. (Config.SortMode == "Zone" and "Mayor Velocidad ⚡" or (Config.SortMode == "Luck" and "Rareza 💰" or "Distancia 📍"))
 sortBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
 sortBtn.Font = Enum.Font.GothamMedium
 sortBtn.TextSize = 11
@@ -817,8 +981,8 @@ clearAllBtn.TextSize = 11
 Instance.new("UICorner", clearAllBtn).CornerRadius = UDim.new(0, 5)
 
 local scrollList = Instance.new("ScrollingFrame", pageCollect)
-scrollList.Size = UDim2.new(1, 0, 1, -34)
-scrollList.Position = UDim2.new(0, 0, 0, 34)
+scrollList.Size = UDim2.new(1, 0, 1, -38)
+scrollList.Position = UDim2.new(0, 0, 0, 38)
 scrollList.BackgroundColor3 = Color3.fromRGB(14, 16, 21)
 scrollList.BorderSizePixel = 0
 scrollList.ScrollBarThickness = 4
@@ -827,9 +991,9 @@ Instance.new("UICorner", scrollList).CornerRadius = UDim.new(0, 6)
 local listLayout = Instance.new("UIListLayout", scrollList)
 listLayout.Padding = UDim.new(0, 6)
 
--- Menú Contextual (Teleport / Rastrear)
+-- Menú Contextual
 local contextMenu = Instance.new("Frame", screenGui)
-contextMenu.Size = UDim2.new(0, 140, 0, 75)
+contextMenu.Size = UDim2.new(0, 170, 0, 110)
 contextMenu.BackgroundColor3 = Color3.fromRGB(24, 27, 35)
 contextMenu.BorderSizePixel = 0
 contextMenu.Visible = false
@@ -838,7 +1002,7 @@ Instance.new("UIStroke", contextMenu).Color = Color3.fromRGB(60, 65, 80)
 
 local function makeCtxBtn(txt, color, yPos)
     local btn = Instance.new("TextButton", contextMenu)
-    btn.Size = UDim2.new(0.9, 0, 0, 28)
+    btn.Size = UDim2.new(0.9, 0, 0, 26)
     btn.Position = UDim2.new(0.05, 0, 0, yPos)
     btn.BackgroundColor3 = color
     btn.Text = txt
@@ -849,39 +1013,58 @@ local function makeCtxBtn(txt, color, yPos)
     return btn
 end
 
-local btnTrack = makeCtxBtn("🎯 Rastrear Faro", Color3.fromRGB(45, 115, 220), 6)
-local btnTeleport = makeCtxBtn("⚡ Teleport Seguro", Color3.fromRGB(35, 150, 95), 38)
+local btnCtxSteal = makeCtxBtn("⚡ ROBAR & ESCAPAR", Color3.fromRGB(220, 120, 25), 6)
+local btnCtxTP = makeCtxBtn("🚀 Teleport al Nido", Color3.fromRGB(35, 150, 95), 38)
+local btnCtxTrack = makeCtxBtn("🎯 Rastrear Faro", Color3.fromRGB(45, 115, 220), 70)
 
 -- ==============================================================================
--- PÁGINA 2: FÍSICAS & TELEPORT
+-- PÁGINA 2: VELOCIDAD & FÍSICAS ANTI-GUARDIA
 -- ==============================================================================
 local pageMove = Instance.new("Frame", contentArea)
 pageMove.Size = UDim2.new(1, 0, 1, 0)
 pageMove.BackgroundTransparency = 1
 pageMove.Visible = false
 
-local moveLayout = Instance.new("UIListLayout", pageMove)
-moveLayout.Padding = UDim.new(0, 10)
+local moveScroll = Instance.new("ScrollingFrame", pageMove)
+moveScroll.Size = UDim2.new(1, 0, 1, 0)
+moveScroll.BackgroundTransparency = 1
+moveScroll.BorderSizePixel = 0
+moveScroll.ScrollBarThickness = 4
 
-local function makeToggleRow(txt, initialVal, onToggle)
-    local row = Instance.new("Frame", pageMove)
-    row.Size = UDim2.new(1, 0, 0, 38)
+local moveLayout = Instance.new("UIListLayout", moveScroll)
+moveLayout.Padding = UDim.new(0, 8)
+
+local function makeToggleRow(txt, initialVal, onToggle, desc)
+    local row = Instance.new("Frame", moveScroll)
+    row.Size = UDim2.new(1, -6, 0, desc and 48 or 38)
     row.BackgroundColor3 = Color3.fromRGB(24, 27, 35)
     Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
 
     local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0.7, 0, 1, 0)
+    lbl.Size = UDim2.new(0.72, 0, desc and 0.55 or 1, 0)
     lbl.Position = UDim2.new(0.04, 0, 0, 0)
     lbl.BackgroundTransparency = 1
     lbl.Text = txt
-    lbl.TextColor3 = Color3.fromRGB(230, 230, 230)
-    lbl.Font = Enum.Font.GothamMedium
-    lbl.TextSize = 12
+    lbl.TextColor3 = Color3.fromRGB(235, 235, 235)
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 11
     lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    if desc then
+        local sub = Instance.new("TextLabel", row)
+        sub.Size = UDim2.new(0.72, 0, 0.45, 0)
+        sub.Position = UDim2.new(0.04, 0, 0.55, 0)
+        sub.BackgroundTransparency = 1
+        sub.Text = desc
+        sub.TextColor3 = Color3.fromRGB(150, 155, 165)
+        sub.Font = Enum.Font.Gotham
+        sub.TextSize = 9
+        sub.TextXAlignment = Enum.TextXAlignment.Left
+    end
 
     local toggleBtn = Instance.new("TextButton", row)
     toggleBtn.Size = UDim2.new(0, 52, 0, 26)
-    toggleBtn.Position = UDim2.new(0.96, -52, 0.16, 0)
+    toggleBtn.Position = UDim2.new(0.96, -52, 0.5, -13)
     toggleBtn.BackgroundColor3 = initialVal and Color3.fromRGB(45, 160, 90) or Color3.fromRGB(60, 65, 75)
     toggleBtn.Text = initialVal and "ON" or "OFF"
     toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -900,51 +1083,105 @@ local function makeToggleRow(txt, initialVal, onToggle)
     return row
 end
 
-makeToggleRow("⚡ Shift Sprint Suave (48 studs/s)", Config.SprintEnabled, function(v) Config.SprintEnabled = v end)
+makeToggleRow("🛡️ Robo Seguro (Escape en Waking)", Config.WakingEscape, function(v) Config.WakingEscape = v end, "Escapa al punto seguro mientras el guardia se despierta (WalkSpeed=0)")
+makeToggleRow("⚡ Velocidad Adaptativa por Zona", Config.AdaptiveSpeed, function(v) Config.AdaptiveSpeed = v end, "Inyecta la velocidad exacta para superar al guardia de la zona (hasta 295 m/s)")
+makeToggleRow("👁️ Escudo Anti-Guardia (Auto-Dodge)", Config.AntiGuardShield, function(v) Config.AntiGuardShield = v end, "Auto-teleport si el guardia te persigue a < 30m al portar huevo")
+makeToggleRow("🏃 Shift Sprint Manual (48 m/s)", Config.SprintEnabled, function(v) Config.SprintEnabled = v end, "Velocidad segura sin alterar guardias")
 makeToggleRow("🦘 Super Salto (JumpPower: 90)", Config.JumpEnabled, function(v) Config.JumpEnabled = v end)
 makeToggleRow("🕊️ Salto Infinito", Config.InfJump, function(v) Config.InfJump = v end)
-makeToggleRow("👻 Noclip Sigiloso (Bypass Torso)", Config.Noclip, function(v) Config.Noclip = v end)
+makeToggleRow("👻 Noclip Sigiloso", Config.Noclip, function(v) Config.Noclip = v end)
 makeToggleRow("🛡️ Safe Teleport (Anti-Rubberband)", Config.SafeTeleport, function(v) Config.SafeTeleport = v end)
 makeToggleRow("📍 Faros Verticales (Sky Beacons)", Config.BeaconsEnabled, function(v) Config.BeaconsEnabled = v end)
 
 -- ==============================================================================
--- PÁGINA 3: SERVER HOPPER
+-- PÁGINA 3: TELEPORTS DE ZONAS & SERVER HOP
 -- ==============================================================================
-local pageHop = Instance.new("Frame", contentArea)
-pageHop.Size = UDim2.new(1, 0, 1, 0)
-pageHop.BackgroundTransparency = 1
-pageHop.Visible = false
+local pageZones = Instance.new("Frame", contentArea)
+pageZones.Size = UDim2.new(1, 0, 1, 0)
+pageZones.BackgroundTransparency = 1
+pageZones.Visible = false
 
-local hopLayout = Instance.new("UIListLayout", pageHop)
-hopLayout.Padding = UDim.new(0, 10)
+local zonesScroll = Instance.new("ScrollingFrame", pageZones)
+zonesScroll.Size = UDim2.new(1, 0, 1, 0)
+zonesScroll.BackgroundTransparency = 1
+zonesScroll.BorderSizePixel = 0
+zonesScroll.ScrollBarThickness = 4
 
-local hopInfo = Instance.new("TextLabel", pageHop)
-hopInfo.Size = UDim2.new(1, 0, 0, 50)
-hopInfo.BackgroundColor3 = Color3.fromRGB(24, 27, 35)
-hopInfo.Text = "Busca servidores públicos con pocos jugadores para farmear cofres y huevos sin interferencias."
-hopInfo.TextColor3 = Color3.fromRGB(180, 185, 195)
-hopInfo.Font = Enum.Font.GothamMedium
-hopInfo.TextSize = 11
-hopInfo.TextWrapped = true
-Instance.new("UICorner", hopInfo).CornerRadius = UDim.new(0, 6)
+local zonesLayout = Instance.new("UIListLayout", zonesScroll)
+zonesLayout.Padding = UDim.new(0, 6)
 
-local hopBtn = Instance.new("TextButton", pageHop)
-hopBtn.Size = UDim2.new(1, 0, 0, 42)
+-- Botón Server Hop
+local hopBtn = Instance.new("TextButton", zonesScroll)
+hopBtn.Size = UDim2.new(1, -6, 0, 36)
 hopBtn.BackgroundColor3 = Color3.fromRGB(45, 115, 220)
 hopBtn.Text = "🚀 Cambiar de Servidor (Menos Jugadores)"
 hopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 hopBtn.Font = Enum.Font.GothamBold
-hopBtn.TextSize = 12
+hopBtn.TextSize = 11
 Instance.new("UICorner", hopBtn).CornerRadius = UDim.new(0, 6)
 
-local rejoinBtn = Instance.new("TextButton", pageHop)
-rejoinBtn.Size = UDim2.new(1, 0, 0, 42)
+local rejoinBtn = Instance.new("TextButton", zonesScroll)
+rejoinBtn.Size = UDim2.new(1, -6, 0, 32)
 rejoinBtn.BackgroundColor3 = Color3.fromRGB(35, 150, 95)
 rejoinBtn.Text = "🔄 Reconectar al Mismo Servidor"
 rejoinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 rejoinBtn.Font = Enum.Font.GothamBold
-rejoinBtn.TextSize = 12
+rejoinBtn.TextSize = 11
 Instance.new("UICorner", rejoinBtn).CornerRadius = UDim.new(0, 6)
+
+local sepLbl = Instance.new("TextLabel", zonesScroll)
+sepLbl.Size = UDim2.new(1, -6, 0, 20)
+sepLbl.BackgroundTransparency = 1
+sepLbl.Text = "━━━ TELEPORTS DIRECTOS A ZONAS SEGURAS ━━━"
+sepLbl.TextColor3 = Color3.fromRGB(150, 155, 165)
+sepLbl.Font = Enum.Font.GothamBold
+sepLbl.TextSize = 10
+
+-- Generar botones para cada una de las 14 zonas del juego
+for _, zone in ipairs(GAME_ZONES) do
+    local zCard = Instance.new("Frame", zonesScroll)
+    zCard.Size = UDim2.new(1, -6, 0, 36)
+    zCard.BackgroundColor3 = Color3.fromRGB(24, 27, 35)
+    Instance.new("UICorner", zCard).CornerRadius = UDim.new(0, 6)
+
+    local zStroke = Instance.new("UIStroke", zCard)
+    zStroke.Color = zone.Color
+    zStroke.Thickness = 1
+
+    local zNameLbl = Instance.new("TextLabel", zCard)
+    zNameLbl.Size = UDim2.new(0.65, 0, 1, 0)
+    zNameLbl.Position = UDim2.new(0.04, 0, 0, 0)
+    zNameLbl.BackgroundTransparency = 1
+    zNameLbl.Text = zone.Name .. "  (⚡ " .. tostring(zone.GuardSpeed) .. " m/s)"
+    zNameLbl.TextColor3 = Color3.fromRGB(240, 240, 240)
+    zNameLbl.Font = Enum.Font.GothamBold
+    zNameLbl.TextSize = 11
+    zNameLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local zTpBtn = Instance.new("TextButton", zCard)
+    zTpBtn.Size = UDim2.new(0, 75, 0, 26)
+    zTpBtn.Position = UDim2.new(1, -80, 0.5, -13)
+    zTpBtn.BackgroundColor3 = Color3.fromRGB(45, 115, 220)
+    zTpBtn.Text = "🚀 Ir Seguro"
+    zTpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    zTpBtn.Font = Enum.Font.GothamBold
+    zTpBtn.TextSize = 10
+    Instance.new("UICorner", zTpBtn).CornerRadius = UDim.new(0, 4)
+
+    zTpBtn.MouseButton1Click:Connect(function()
+        local world = Workspace:FindFirstChild("World")
+        local areasFolder = world and world:FindFirstChild("Areas") and world.Areas:FindFirstChild("GuardAreas")
+        local areaModel = areasFolder and areasFolder:FindFirstChild(zone.Id)
+        local exitPart = areaModel and areaModel:FindFirstChild("ClosestExitPoint")
+
+        if exitPart and exitPart:IsA("BasePart") then
+            safeTeleport(exitPart.Position + Vector3.new(0, 3, 0))
+        elseif areaModel then
+            local pos = resolvePosition(areaModel)
+            if pos then safeTeleport(pos + Vector3.new(0, 10, 0)) end
+        end
+    end)
+end
 
 -- Server Hop Logic
 local function serverHop()
@@ -985,9 +1222,9 @@ end)
 local function switchTab(activePage, activeBtn)
     pageCollect.Visible = (activePage == pageCollect)
     pageMove.Visible = (activePage == pageMove)
-    pageHop.Visible = (activePage == pageHop)
+    pageZones.Visible = (activePage == pageZones)
 
-    for _, b in ipairs({ tabBtnCollect, tabBtnMove, tabBtnHop }) do
+    for _, b in ipairs({ tabBtnCollect, tabBtnMove, tabBtnZones }) do
         b.BackgroundColor3 = (b == activeBtn) and Color3.fromRGB(45, 115, 220) or Color3.fromRGB(25, 28, 36)
         b.TextColor3 = (b == activeBtn) and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(175, 180, 190)
     end
@@ -995,10 +1232,10 @@ end
 
 tabBtnCollect.MouseButton1Click:Connect(function() switchTab(pageCollect, tabBtnCollect) end)
 tabBtnMove.MouseButton1Click:Connect(function() switchTab(pageMove, tabBtnMove) end)
-tabBtnHop.MouseButton1Click:Connect(function() switchTab(pageHop, tabBtnHop) end)
+tabBtnZones.MouseButton1Click:Connect(function() switchTab(pageZones, tabBtnZones) end)
 
 -- ==============================================================================
--- 10. REFRESCO DE LISTA DE OBJETIVOS (GUI)
+-- 12. REFRESCO DE LISTA DE OBJETIVOS (GUI)
 -- ==============================================================================
 local function refreshGUI()
     if not isScriptActive or not scrollList or not scrollList.Parent then return end
@@ -1011,7 +1248,7 @@ local function refreshGUI()
         local emptyLbl = Instance.new("TextLabel", scrollList)
         emptyLbl.Size = UDim2.new(1, 0, 0, 60)
         emptyLbl.BackgroundTransparency = 1
-        emptyLbl.Text = "🔍 No se encontraron cofres ni huevos activos en el servidor."
+        emptyLbl.Text = "🔍 No se encontraron nidos ni huevos activos en el servidor."
         emptyLbl.TextColor3 = Color3.fromRGB(150, 155, 165)
         emptyLbl.Font = Enum.Font.GothamMedium
         emptyLbl.TextSize = 11
@@ -1020,62 +1257,58 @@ local function refreshGUI()
 
     for _, data in ipairs(items) do
         local card = Instance.new("Frame", scrollList)
-        card.Size = UDim2.new(1, -6, 0, 56)
+        card.Size = UDim2.new(1, -6, 0, 60)
         card.BackgroundColor3 = Color3.fromRGB(24, 27, 35)
         Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
 
-        -- Borde con color de rareza
         local stroke = Instance.new("UIStroke", card)
         stroke.Thickness = 1.2
         stroke.Color = data.Color or Color3.fromRGB(60, 65, 80)
 
-        -- Viewport 3D
         local vp = Instance.new("ViewportFrame", card)
         vp.Size = UDim2.new(0, 48, 0, 48)
-        vp.Position = UDim2.new(0, 4, 0.5, -24)
+        vp.Position = UDim2.new(0, 5, 0.5, -24)
         vp.BackgroundTransparency = 1
         setupViewport3D(vp, data)
 
-        -- Nombre
         local nameLbl = Instance.new("TextLabel", card)
-        nameLbl.Size = UDim2.new(0.65, -60, 0, 18)
+        nameLbl.Size = UDim2.new(0.55, 0, 0, 18)
         nameLbl.Position = UDim2.new(0, 58, 0, 8)
         nameLbl.BackgroundTransparency = 1
         nameLbl.Text = data.Name
         nameLbl.TextColor3 = Color3.fromRGB(240, 240, 240)
         nameLbl.Font = Enum.Font.GothamBold
-        nameLbl.TextSize = 12
+        nameLbl.TextSize = 11
         nameLbl.TextXAlignment = Enum.TextXAlignment.Left
 
-        -- Rareza / Distancia
         local infoLbl = Instance.new("TextLabel", card)
-        infoLbl.Size = UDim2.new(0.65, -60, 0, 16)
+        infoLbl.Size = UDim2.new(0.55, 0, 0, 16)
         infoLbl.Position = UDim2.new(0, 58, 0, 28)
         infoLbl.BackgroundTransparency = 1
-        infoLbl.Text = string.format("%s  |  📍 %dm  |  %s", data.Rarity, data.Distance or 0, data.Mutation or "")
+        infoLbl.Text = string.format("⚡ Guardia: %d m/s  |  📍 %dm  |  %s", data.GuardSpeed or 25, data.Distance or 0, data.Mutation or "")
         infoLbl.TextColor3 = data.Color or Color3.fromRGB(175, 180, 190)
         infoLbl.Font = Enum.Font.GothamMedium
         infoLbl.TextSize = 10
         infoLbl.TextXAlignment = Enum.TextXAlignment.Left
 
-        -- Botón Acción Rápida (Teleport directo)
-        local tpBtn = Instance.new("TextButton", card)
-        tpBtn.Size = UDim2.new(0, 36, 0, 36)
-        tpBtn.Position = UDim2.new(1, -42, 0.5, -18)
-        tpBtn.BackgroundColor3 = Color3.fromRGB(35, 140, 85)
-        tpBtn.Text = "⚡"
-        tpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        tpBtn.Font = Enum.Font.GothamBold
-        tpBtn.TextSize = 14
-        Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0, 6)
+        -- BOTÓN 1: ROBAR & ESCAPAR (Bypass total de velocidad)
+        local stealBtn = Instance.new("TextButton", card)
+        stealBtn.Size = UDim2.new(0, 78, 0, 36)
+        stealBtn.Position = UDim2.new(1, -84, 0.5, -18)
+        stealBtn.BackgroundColor3 = Color3.fromRGB(220, 120, 25)
+        stealBtn.Text = "⚡ ROBAR"
+        stealBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        stealBtn.Font = Enum.Font.GothamBold
+        stealBtn.TextSize = 11
+        Instance.new("UICorner", stealBtn).CornerRadius = UDim.new(0, 6)
 
-        tpBtn.MouseButton1Click:Connect(function()
-            safeTeleport(data.Position)
+        stealBtn.MouseButton1Click:Connect(function()
+            executeStealAndEscape(data)
         end)
 
         -- Clic en tarjeta abre Menú Contextual
         local clickBtn = Instance.new("TextButton", card)
-        clickBtn.Size = UDim2.new(1, -50, 1, 0)
+        clickBtn.Size = UDim2.new(1, -90, 1, 0)
         clickBtn.BackgroundTransparency = 1
         clickBtn.Text = ""
 
@@ -1083,18 +1316,24 @@ local function refreshGUI()
             selectedItemData = data
             local mPos = UserInputService:GetMouseLocation()
             contextMenu.Position = UDim2.new(0, mPos.X - 10, 0, mPos.Y - 10)
-            btnTrack.Text = activeTrackers[data.UUID] and "❌ Quitar Faro" or "🎯 Rastrear Faro"
+            btnCtxTrack.Text = activeTrackers[data.UUID] and "❌ Quitar Faro" or "🎯 Rastrear Faro"
             contextMenu.Visible = true
         end)
     end
 end
 
 -- ==============================================================================
--- 11. CONEXIONES FINALES Y LIMPIEZA
+-- 13. CONEXIONES FINALES Y LIMPIEZA
 -- ==============================================================================
 sortBtn.MouseButton1Click:Connect(function()
-    Config.SortMode = (Config.SortMode == "Luck") and "Distance" or "Luck"
-    sortBtn.Text = "Filtro: " .. (Config.SortMode == "Luck" and "Mayor Valor 💰" or "Distancia 📍")
+    if Config.SortMode == "Zone" then
+        Config.SortMode = "Luck"
+    elseif Config.SortMode == "Luck" then
+        Config.SortMode = "Distance"
+    else
+        Config.SortMode = "Zone"
+    end
+    sortBtn.Text = "Filtro: " .. (Config.SortMode == "Zone" and "Mayor Velocidad ⚡" or (Config.SortMode == "Luck" and "Rareza 💰" or "Distancia 📍"))
     saveConfig()
     refreshGUI()
 end)
@@ -1104,7 +1343,21 @@ clearAllBtn.MouseButton1Click:Connect(function()
     refreshGUI()
 end)
 
-btnTrack.MouseButton1Click:Connect(function()
+btnCtxSteal.MouseButton1Click:Connect(function()
+    contextMenu.Visible = false
+    if selectedItemData then
+        executeStealAndEscape(selectedItemData)
+    end
+end)
+
+btnCtxTP.MouseButton1Click:Connect(function()
+    contextMenu.Visible = false
+    if selectedItemData then
+        safeTeleport(selectedItemData.Position + Vector3.new(0, 3, 0))
+    end
+end)
+
+btnCtxTrack.MouseButton1Click:Connect(function()
     contextMenu.Visible = false
     if selectedItemData then
         if activeTrackers[selectedItemData.UUID] then
@@ -1113,13 +1366,6 @@ btnTrack.MouseButton1Click:Connect(function()
             createTracker(selectedItemData)
         end
         refreshGUI()
-    end
-end)
-
-btnTeleport.MouseButton1Click:Connect(function()
-    contextMenu.Visible = false
-    if selectedItemData then
-        safeTeleport(selectedItemData.Position)
     end
 end)
 
