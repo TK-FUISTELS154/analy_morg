@@ -1,16 +1,27 @@
 --[[
-    GUERRA DE BLOQUES — v9 (OPTIMIZADO Y PERFECCIONADO)
+    GUERRA DE BLOQUES — v11 (PRECISIÓN TOTAL & MIRA DINÁMICA ULTRA-SYNC)
     Nivel 3 Seguro (Sin hooks, 100% funcional)
 
-    Novedades v9:
-    1. Eliminado el HUD / tarjeta de la esquina ("🎯 AIM: OFF").
-    2. Eliminado el marco / cuadrado delimitador del ESP en los enemigos.
-       (Ahora el ESP es limpio: Texto + Barra de Vida + Highlight opcional).
-    3. Compensación activa de retroceso (Recoil Compensation):
-       Se enlaza a RenderPriority.Camera.Value + 4 (después del recoil del arma a +3)
-       para que la mira no se desvíe al disparar y permanezca fija en el enemigo.
-    4. Sincronización perfecta del centro del FOV con la mira de disparo.
-    5. Menú de configuración limpio [Tecla F] y apagado seguro [Tecla DEL].
+    Novedades v11:
+    1. Sincronización Dinámica con la Mira (Dynamic Sight Tracking):
+       El círculo de FOV y el punto central de impacto ya no están fijos en el centro estático.
+       Rastrean en tiempo real la posición física 3D de la mira (Sight / Scope / Lamp / Reticle)
+       y el cañón del arma (MuzzleAttachment / Handle) en el Viewmodel de la cámara.
+       Si el arma se mueve por respiración, balanceo o el culatazo de disparo, el FOV y el aim
+       se mueven milimétricamente junto con la mira.
+    2. Corrección Balística y Anti-Parallax:
+       Eliminado el error de ángulo angular que causaba que el tiro se desfasara.
+       La orientación se calcula directamente desde la cámara hacia el objetivo con
+       compensación geométrica precisa.
+    3. Compensación Activa de Retroceso (Anti-Recoil Compensator):
+       Mide en tiempo real la desviación angular (pitch y yaw) del cañón al disparar en ráfaga
+       y contrarresta exactamente la elevación del arma para que todas las balas impacten en la cabeza.
+    4. Arquitectura de Renderizado en 2 Fases (Sin temblores):
+       - Fase 1 (Aim Lock @ Camera.Value + 2): Apuntado limpio después del ratón del jugador
+         y antes de que el juego aplique el retroceso visual, evitando conflictos con ARRecoilUndo.
+       - Fase 2 (Visual Sync @ Camera.Value + 5): Sincronización visual del FOV y retícula
+         inmediatamente después de que el Viewmodel del arma se posicione para el fotograma.
+    5. ESP limpio optimizado, menú de configuración [F] y apagado seguro [DEL].
 ]]
 
 -- ══════════════════════════════════════════════════════════════════
@@ -37,24 +48,25 @@ local genv = getgenv and getgenv() or _G
 local scriptKey = tostring({}):sub(8)
 
 -- ══════════════════════════════════════════════════════════════════
--- 2 · CONFIGURACIÓN
+-- 2 · CONFIGURACIÓN Y PERSISTENCIA
 -- ══════════════════════════════════════════════════════════════════
 
 local CFG = {
     FOV             = 160,       -- Radio del FOV en píxeles
-    SPEED           = 0.50,      -- Velocidad del aimbot (0.05 a 1.0)
-    OFF_Y           = 0.0,       -- Ajuste vertical al apuntar
+    SPEED           = 0.85,      -- Firmeza de seguimiento (0.1 a 1.0, 1.0 = bloqueo instantáneo)
+    OFF_Y           = 0.0,       -- Offset de altura
     MAX_DIST        = 750,       -- Distancia máxima en studs
-    AIM_LMB         = true,      -- Apuntar al mantener Click Izquierdo
-    AIM_RMB         = true,      -- Apuntar al mantener Click Derecho
+    AIM_LMB         = true,      -- Aim con Click Izquierdo
+    AIM_RMB         = true,      -- Aim con Click Derecho
     WALL_CHECK      = true,      -- Chequeo de paredes
     TARGET_PART     = "Head",    -- "Head" o "HumanoidRootPart"
+    RECOIL_COMP     = true,      -- Compensar activamente el retroceso del arma al disparar
     ESP_ENABLED     = true,      -- Activar ESP
     ESP_HIGHLIGHT   = true,      -- Silueta coloreada
     ESP_ALLIES      = false,     -- Ocultar aliados (solo enemigos)
 }
 
-local CONFIG_FILE = "GDB_Config_v9.json"
+local CONFIG_FILE = "GDB_Config_v11.json"
 
 local function saveConfig()
     if writefile then
@@ -83,11 +95,13 @@ loadConfig()
 -- 3 · ESTADO GLOBAL
 -- ══════════════════════════════════════════════════════════════════
 
-local conns        = {}
-local espCache     = {}
-local renderName   = "GDB_Loop_" .. scriptKey
-local drawingFov   = nil
-local gui          = nil
+local conns                = {}
+local espCache             = {}
+local renderNameAim        = "GDB_AimLoop_" .. scriptKey
+local renderNameVisual     = "GDB_VisualLoop_" .. scriptKey
+local drawingFov           = nil
+local gui                  = nil
+local currentReticleCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
 
 local function isAimKeyPressed()
     if not CFG.AIM_LMB and not CFG.AIM_RMB then return false end
@@ -97,7 +111,108 @@ local function isAimKeyPressed()
 end
 
 -- ══════════════════════════════════════════════════════════════════
--- 4 · LÓGICA DE EQUIPOS REAL (NATIVA DEL JUEGO)
+-- 4 · RASTREO DINÁMICO DEL CAÑÓN Y DE LA MIRA (3D ENGINE SYNC)
+-- ══════════════════════════════════════════════════════════════════
+
+local function getWeaponAimData()
+    local char = LocalPlayer.Character
+    local cam  = Workspace.CurrentCamera
+
+    -- 1. Prioridad: Buscar en el Viewmodel que el juego añade dentro de CurrentCamera
+    -- El Viewmodel es el modelo en primera persona que experimenta el retroceso, la respiración y el balanceo.
+    for _, model in ipairs(cam:GetChildren()) do
+        if model:IsA("Model") then
+            -- A) Salida del cañón (Muzzle)
+            local att = model:FindFirstChild("MuzzleAttachment", true)
+            local muzzleCF = nil
+            if att and att:IsA("Attachment") then
+                muzzleCF = att.WorldCFrame
+            else
+                local mPart = model:FindFirstChild("Muzzle", true)
+                if mPart and mPart:IsA("BasePart") then
+                    muzzleCF = mPart.CFrame
+                else
+                    local handle = model:FindFirstChild("Handle", true)
+                    if handle and handle:IsA("BasePart") then
+                        local hAtt = handle:FindFirstChild("MuzzleAttachment")
+                        if hAtt and hAtt:IsA("Attachment") then
+                            muzzleCF = hAtt.WorldCFrame
+                        else
+                            muzzleCF = handle.CFrame * CFrame.new(0, 0, -1.5)
+                        end
+                    end
+                end
+            end
+
+            -- B) Detección de la mira física del arma (Sight / Scope / Lamp / Reticle)
+            local sightPart = model:FindFirstChild("Sight", true)
+                           or model:FindFirstChild("FrontSight", true)
+                           or model:FindFirstChild("ScopeGlass", true)
+                           or model:FindFirstChild("Reticle", true)
+                           or model:FindFirstChild("Lamp", true)
+            local sightCF = (sightPart and sightPart:IsA("BasePart")) and sightPart.CFrame or muzzleCF
+
+            if muzzleCF then
+                return muzzleCF, (sightCF or muzzleCF), true
+            end
+        end
+    end
+
+    -- 2. Respaldo: Buscar en la Tool equipada en el personaje (tercera persona)
+    if char then
+        local tool = char:FindFirstChildOfClass("Tool")
+        if tool then
+            local att = tool:FindFirstChild("MuzzleAttachment", true)
+            if att and att:IsA("Attachment") then
+                return att.WorldCFrame, att.WorldCFrame, true
+            end
+            local handle = tool:FindFirstChild("Handle")
+            if handle and handle:IsA("BasePart") then
+                local hAtt = handle:FindFirstChild("MuzzleAttachment")
+                if hAtt and hAtt:IsA("Attachment") then
+                    return hAtt.WorldCFrame, hAtt.WorldCFrame, true
+                end
+                local hCF = handle.CFrame * CFrame.new(0, 0, -1.5)
+                return hCF, hCF, true
+            end
+        end
+    end
+
+    return cam.CFrame, cam.CFrame, false
+end
+
+-- ══════════════════════════════════════════════════════════════════
+-- 5 · CENTRO DINÁMICO DE LA MIRA Y DE DISPARO (EN PANTALLA 2D)
+-- ══════════════════════════════════════════════════════════════════
+
+local function getFiringReticleCenter()
+    local cam = Workspace.CurrentCamera
+    local muzzleCF, sightCF, hasWeapon = getWeaponAimData()
+
+    if hasWeapon then
+        -- 1. Proyectar la dirección hacia donde apunta físicamente el cañón/mira del arma
+        -- Cuando el arma dispara o se sacude por retroceso, LookVector se eleva en 3D
+        local aimWorldTarget = muzzleCF.Position + (muzzleCF.LookVector * 150)
+        local screenPos, onScreen = cam:WorldToViewportPoint(aimWorldTarget)
+
+        if onScreen and screenPos.Z > 0 then
+            return Vector2.new(screenPos.X, screenPos.Y), muzzleCF, sightCF, true
+        end
+
+        -- 2. Respaldo por posición de la mira física del arma
+        local sPos, sOnScreen = cam:WorldToViewportPoint(sightCF.Position)
+        if sOnScreen and sPos.Z > 0 then
+            return Vector2.new(sPos.X, sPos.Y), muzzleCF, sightCF, true
+        end
+    end
+
+    -- 3. Respaldo si no hay arma o está fuera de vista: centro exacto de la pantalla
+    local center = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+    return center, cam.CFrame, cam.CFrame, false
+end
+
+-- ══════════════════════════════════════════════════════════════════
+-- 6 · DETECCIÓN PRECISA DE EQUIPOS
 -- ══════════════════════════════════════════════════════════════════
 
 local function getMyTeamName()
@@ -143,7 +258,6 @@ local function getTargetTeamName(char)
         end
     end
 
-    -- Bots oficiales en workspace.BotRigs
     local bAttr = char:GetAttribute("Team")
     if bAttr and type(bAttr) == "string" and bAttr ~= "" then
         return bAttr
@@ -157,7 +271,6 @@ local function getTargetTeamName(char)
         end
     end
 
-    -- Accesorios de respaldo
     if char:FindFirstChild("Accessory (Keffiyeh_3)") then return "Reds" end
     if char:FindFirstChild("Accessory (Afrika Balaklava)") then return "Blues" end
 
@@ -167,7 +280,6 @@ end
 local function isEnemy(char)
     if not char or char == LocalPlayer.Character then return false end
 
-    -- Jugadores
     local player = Players:GetPlayerFromCharacter(char)
     if player then
         if player == LocalPlayer then return false end
@@ -192,7 +304,6 @@ local function isEnemy(char)
         return false
     end
 
-    -- Bots
     if char:GetAttribute("Alive") == false or char:GetAttribute("Protected") == true then
         return false
     end
@@ -212,14 +323,14 @@ local function isEnemy(char)
 end
 
 -- ══════════════════════════════════════════════════════════════════
--- 5 · RECOLECCIÓN DE OBJETIVOS
+-- 7 · RECOLECCIÓN DE OBJETIVOS
 -- ══════════════════════════════════════════════════════════════════
 
 local function getAllTargets()
     local targets = {}
     local seen = {}
 
-    -- 1. Jugadores
+    -- Jugadores
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
             local char = player.Character
@@ -239,7 +350,7 @@ local function getAllTargets()
         end
     end
 
-    -- 2. Bots oficiales (workspace.BotRigs)
+    -- Bots oficiales (workspace.BotRigs)
     local botRigs = Workspace:FindFirstChild("BotRigs")
     if botRigs then
         for _, bot in ipairs(botRigs:GetChildren()) do
@@ -259,7 +370,7 @@ local function getAllTargets()
         end
     end
 
-    -- 3. Carpeta Live
+    -- Live folder
     local live = Workspace:FindFirstChild("Live")
     if live then
         for _, obj in ipairs(live:GetChildren()) do
@@ -279,7 +390,7 @@ local function getAllTargets()
         end
     end
 
-    -- 4. Otros modelos en Workspace
+    -- Otros modelos
     for _, child in ipairs(Workspace:GetChildren()) do
         if child:IsA("Model") and child ~= LocalPlayer.Character and not seen[child] then
             if not child:FindFirstChildOfClass("VehicleSeat") and child.Name ~= "Terrain" then
@@ -302,7 +413,7 @@ local function getAllTargets()
 end
 
 -- ══════════════════════════════════════════════════════════════════
--- 6 · COMPROBACIÓN DE LÍNEA DE VISIÓN
+-- 8 · VISIBILIDAD (RAYCAST LIMPIO)
 -- ══════════════════════════════════════════════════════════════════
 
 local rayParams = RaycastParams.new()
@@ -327,45 +438,12 @@ local function canSee(targetPart, targetChar, myChar)
 end
 
 -- ══════════════════════════════════════════════════════════════════
--- 7 · CENTRO EXACTO DEL DISPARO / MIRA
--- ══════════════════════════════════════════════════════════════════
-
-local function getCrosshairCenter()
-    -- 1. Si el juego tiene la mira en pantalla (WeaponHud)
-    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    if pGui then
-        local wHud = pGui:FindFirstChild("WeaponHud")
-        if wHud and wHud.Enabled then
-            local crosshair = wHud:FindFirstChild("Crosshair")
-            if crosshair and crosshair.Visible then
-                local pos = crosshair.AbsolutePosition
-                local size = crosshair.AbsoluteSize
-                if size.X > 0 and size.Y > 0 then
-                    return Vector2.new(pos.X + size.X / 2, pos.Y + size.Y / 2)
-                end
-            end
-        end
-    end
-
-    -- 2. Si el cursor está bloqueado al centro (ShiftLock / Primera Persona)
-    local isLocked = (UIS.MouseBehavior == Enum.MouseBehavior.LockCenter 
-                   or UIS.MouseBehavior == Enum.MouseBehavior.LockCurrentPosition)
-    if isLocked then
-        return Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
-    end
-
-    -- 3. Cursor del ratón en tercera persona libre
-    local m = UIS:GetMouseLocation()
-    return Vector2.new(m.X, m.Y)
-end
-
--- ══════════════════════════════════════════════════════════════════
--- 8 · INTERFAZ Y CÍRCULO FOV
+-- 9 · INTERFAZ Y CÍRCULO FOV
 -- ══════════════════════════════════════════════════════════════════
 
 do
     local sg = Instance.new("ScreenGui")
-    sg.Name           = "GDB_v9_" .. scriptKey
+    sg.Name           = "GDB_Core_" .. scriptKey
     sg.ResetOnSpawn   = false
     sg.IgnoreGuiInset = true
     sg.DisplayOrder   = 999
@@ -416,23 +494,23 @@ guiFovStroke.Color        = Color3.fromRGB(255, 220, 0)
 guiFovStroke.Thickness    = 1.5
 guiFovStroke.Transparency = 0.35
 
--- Punto central
-local centerDot = Instance.new("Frame")
-centerDot.Size             = UDim2.new(0, 4, 0, 4)
-centerDot.AnchorPoint      = Vector2.new(0.5, 0.5)
-centerDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-centerDot.BorderSizePixel  = 0
-centerDot.ZIndex           = 20
-centerDot.Parent           = gui
-Instance.new("UICorner", centerDot).CornerRadius = UDim.new(1, 0)
+-- Punto central sincronizado con el impacto
+local reticleDot = Instance.new("Frame")
+reticleDot.Size             = UDim2.new(0, 4, 0, 4)
+reticleDot.AnchorPoint      = Vector2.new(0.5, 0.5)
+reticleDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+reticleDot.BorderSizePixel  = 0
+reticleDot.ZIndex           = 20
+reticleDot.Parent           = gui
+Instance.new("UICorner", reticleDot).CornerRadius = UDim.new(1, 0)
 
 -- ══════════════════════════════════════════════════════════════════
--- 9 · PANEL DE AJUSTES [TECLA F]
+-- 10 · PANEL DE CONFIGURACIÓN [TECLA F]
 -- ══════════════════════════════════════════════════════════════════
 
 local panel = Instance.new("Frame")
-panel.Size             = UDim2.new(0, 300, 0, 390)
-panel.Position         = UDim2.new(0.5, -150, 0.5, -195)
+panel.Size             = UDim2.new(0, 300, 0, 420)
+panel.Position         = UDim2.new(0.5, -150, 0.5, -210)
 panel.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
 panel.BorderSizePixel  = 0
 panel.Visible          = false
@@ -449,7 +527,7 @@ pTitle.Position          = UDim2.new(0, 12, 0, 8)
 pTitle.BackgroundTransparency = 1
 pTitle.Font              = Enum.Font.GothamBold
 pTitle.TextSize          = 13
-pTitle.Text              = "⚔  GUERRA DE BLOQUES · V9"
+pTitle.Text              = "⚔  GUERRA DE BLOQUES · V11"
 pTitle.TextColor3        = Color3.fromRGB(255, 215, 60)
 pTitle.TextXAlignment    = Enum.TextXAlignment.Left
 pTitle.ZIndex            = 51
@@ -548,22 +626,23 @@ local function createToggle(labelTxt, key, posY)
 end
 
 createNumInput("Radio del FOV (px):",   "FOV",         60, false)
-createNumInput("Velocidad de Aim:",     "SPEED",       86, true)
+createNumInput("Velocidad Aim (0.1-1):","SPEED",       86, true)
 createNumInput("Distancia Máxima (m):", "MAX_DIST",    112, false)
 createNumInput("Ajuste Altura Y:",      "OFF_Y",       138, true)
 createSep(164)
 
 createToggle("Aim con Click Izq (LMB):", "AIM_LMB",     172)
 createToggle("Aim con Click Der (RMB):", "AIM_RMB",     198)
-createToggle("Chequeo de Paredes:",      "WALL_CHECK",  224)
-createToggle("Activar ESP:",             "ESP_ENABLED", 250)
-createToggle("Siluetas (Highlight):",    "ESP_HIGHLIGHT", 276)
-createToggle("Mostrar Aliados en ESP:",  "ESP_ALLIES",  302)
-createSep(330)
+createToggle("Compensar Retroceso:",     "RECOIL_COMP", 224)
+createToggle("Chequeo de Paredes:",      "WALL_CHECK",  250)
+createToggle("Activar ESP:",             "ESP_ENABLED", 276)
+createToggle("Siluetas (Highlight):",    "ESP_HIGHLIGHT", 302)
+createToggle("Mostrar Aliados en ESP:",  "ESP_ALLIES",  328)
+createSep(356)
 
 local partBtn = Instance.new("TextButton", panel)
 partBtn.Size              = UDim2.new(1, -28, 0, 26)
-partBtn.Position          = UDim2.new(0, 14, 0, 340)
+partBtn.Position          = UDim2.new(0, 14, 0, 366)
 partBtn.BackgroundColor3  = Color3.fromRGB(32, 42, 68)
 partBtn.BorderSizePixel   = 0
 partBtn.Font              = Enum.Font.GothamBold
@@ -625,7 +704,7 @@ do
 end
 
 -- ══════════════════════════════════════════════════════════════════
--- 10 · ESP LIMPIO (SIN CUADRADO, SOLO TEXTO + VIDA + SILUETA)
+-- 11 · ESP LIMPIO (SIN CUADRADO, SOLO TEXTO + VIDA + SILUETA)
 -- ══════════════════════════════════════════════════════════════════
 
 local function clearESP(char)
@@ -673,7 +752,6 @@ local function renderESP(target, myPos)
         bb.ResetOnSpawn = false
         bb.Parent       = espFolder
 
-        -- Etiqueta Nombre y Equipo (Sin marco cuadrado)
         local nameLbl = Instance.new("TextLabel", bb)
         nameLbl.Size              = UDim2.new(1, 0, 0, 15)
         nameLbl.Position          = UDim2.new(0, 0, 0, 0)
@@ -683,7 +761,6 @@ local function renderESP(target, myPos)
         nameLbl.TextStrokeTransparency = 0.2
         nameLbl.TextColor3        = mainColor
 
-        -- Etiqueta Distancia
         local distLbl = Instance.new("TextLabel", bb)
         distLbl.Size              = UDim2.new(1, 0, 0, 13)
         distLbl.Position          = UDim2.new(0, 0, 0, 16)
@@ -693,7 +770,6 @@ local function renderESP(target, myPos)
         distLbl.TextStrokeTransparency = 0.2
         distLbl.TextColor3        = Color3.fromRGB(225, 225, 225)
 
-        -- Barra de vida horizontal compacta abajo del nombre
         local hpBg = Instance.new("Frame", bb)
         hpBg.Size             = UDim2.new(0.7, 0, 0, 3)
         hpBg.Position         = UDim2.new(0.15, 0, 0, 31)
@@ -708,7 +784,6 @@ local function renderESP(target, myPos)
         entry.distLbl   = distLbl
         entry.hpFill    = hpFill
 
-        -- Silueta (Highlight)
         if CFG.ESP_HIGHLIGHT then
             pcall(function()
                 local hl = Instance.new("Highlight")
@@ -756,10 +831,10 @@ local function updateAllESP(allTargets, myPos)
 end
 
 -- ══════════════════════════════════════════════════════════════════
--- 11 · SELECCIÓN DEL MEJOR OBJETIVO
+-- 12 · SELECCIÓN Y BLOQUEO DEL OBJETIVO (AIMBOT)
 -- ══════════════════════════════════════════════════════════════════
 
-local function getBestTarget(allTargets, fovCenter, myChar)
+local function getBestTarget(allTargets, reticlePos, myChar)
     local bestTarget  = nil
     local bestPart    = nil
     local minDistance = CFG.FOV
@@ -774,7 +849,7 @@ local function getBestTarget(allTargets, fovCenter, myChar)
             if part then
                 local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
                 if onScreen and screenPos.Z > 0 then
-                    local dist2D = (Vector2.new(screenPos.X, screenPos.Y) - fovCenter).Magnitude
+                    local dist2D = (Vector2.new(screenPos.X, screenPos.Y) - reticlePos).Magnitude
                     if dist2D <= minDistance then
                         if canSee(part, char, myChar) then
                             minDistance = dist2D
@@ -791,7 +866,7 @@ local function getBestTarget(allTargets, fovCenter, myChar)
 end
 
 -- ══════════════════════════════════════════════════════════════════
--- 12 · TECLAS DE ACCESO RÁPIDO
+-- 13 · TECLAS DE ACCESO RÁPIDO
 -- ══════════════════════════════════════════════════════════════════
 
 conns[#conns+1] = UIS.InputBegan:Connect(function(inp, gpe)
@@ -809,72 +884,101 @@ conns[#conns+1] = UIS.InputBegan:Connect(function(inp, gpe)
 end)
 
 -- ══════════════════════════════════════════════════════════════════
--- 13 · BUCLE DE RENDERIZADO CON ANTI-RETROCESO (POST-RECOIL)
+-- 14 · BUCLE DE RENDERIZADO EN 2 FASES (PRECISIÓN TOTAL & ULTRA-SYNC)
 -- ══════════════════════════════════════════════════════════════════
 
--- Enlazar a Camera.Value + 4 para ejecutarse DESPUÉS del recoil nativo del arma (Camera.Value + 3)
-RunService:BindToRenderStep(renderName, Enum.RenderPriority.Camera.Value + 4, function()
-    local crosshairPos = getCrosshairCenter()
-    local myChar       = LocalPlayer.Character
-    local myRoot       = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    local myPos        = myRoot and myRoot.Position or Camera.CFrame.Position
+-- FASE 1: BLOQUEO DE AIM Y COMPENSACIÓN ANTI-RETROCESO (@ Camera.Value + 2)
+-- Se ejecuta inmediatamente después del ratón de Roblox (Camera.Value) y ANTES de que el juego
+-- aplique su retroceso visual temporal (Camera.Value + 3). Esto garantiza que el aim se aplique
+-- sobre la base de la cámara sin romper el ciclo ARRecoil / ARRecoilUndo del juego.
+RunService:BindToRenderStep(renderNameAim, Enum.RenderPriority.Camera.Value + 2, function()
+    local isAiming = isAimKeyPressed()
+    if not isAiming then return end
 
-    -- 1. Actualizar el círculo del FOV centrado exactamente en la mira
+    local myChar = LocalPlayer.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myChar or not myRoot then return end
+
+    local allTargets = getAllTargets()
+    local target, targetPart = getBestTarget(allTargets, currentReticleCenter, myChar)
+
+    if target and targetPart then
+        local targetPos = targetPart.Position + Vector3.new(0, CFG.OFF_Y, 0)
+        local camPos    = Camera.CFrame.Position
+
+        -- Vector limpio y directo hacia el objetivo (elimina cualquier desfase de parallax)
+        local targetDir = (targetPos - camPos).Unit
+        local desiredLook = CFrame.lookAt(camPos, camPos + targetDir)
+
+        local finalLook = desiredLook
+        if CFG.RECOIL_COMP then
+            local muzzleCF, _, hasWeapon = getWeaponAimData()
+            if hasWeapon then
+                -- Medir la desviación angular local del cañón respecto a la cámara producida por el recoil
+                local localDev = Camera.CFrame.Rotation:ToObjectSpace(muzzleCF.Rotation)
+                local devPitch, devYaw, _ = localDev:ToOrientation()
+
+                -- Contrarrestar exactamente la elevación y dispersión del retroceso
+                local compAngles = CFrame.Angles(-devPitch, -devYaw, 0)
+                finalLook = desiredLook * compAngles
+            end
+        end
+
+        local snapSpeed = math.clamp(CFG.SPEED, 0.05, 1.0)
+        if snapSpeed >= 1.0 then
+            Camera.CFrame = finalLook
+        else
+            Camera.CFrame = Camera.CFrame:Lerp(finalLook, snapSpeed)
+        end
+    end
+end)
+
+-- FASE 2: SINCRONIZACIÓN VISUAL DE LA MIRA (FOV) Y ESP (@ Camera.Value + 5)
+-- Se ejecuta después de que el Viewmodel del juego (Camera.Value + 4) posicione el arma para el fotograma.
+-- De esta forma, el círculo de FOV y el punto de impacto se anclan y mueven en tiempo real
+-- exactamente con la mira física del arma y el salto del retroceso.
+RunService:BindToRenderStep(renderNameVisual, Enum.RenderPriority.Camera.Value + 5, function()
+    local reticleCenter = getFiringReticleCenter()
+    currentReticleCenter = reticleCenter
+
+    local myChar = LocalPlayer.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local myPos  = myRoot and myRoot.Position or Camera.CFrame.Position
+
+    -- 1. Actualizar el círculo de FOV anclado al centro dinámico de la mira
     local diameter = CFG.FOV * 2
     if drawingFov then
-        drawingFov.Position = crosshairPos
+        drawingFov.Position = reticleCenter
         drawingFov.Radius   = CFG.FOV
         drawingFov.Visible  = true
         guiFov.Visible      = false
     else
-        guiFov.Position = UDim2.new(0, crosshairPos.X, 0, crosshairPos.Y)
+        guiFov.Position = UDim2.new(0, reticleCenter.X, 0, reticleCenter.Y)
         guiFov.Size     = UDim2.new(0, diameter, 0, diameter)
         guiFov.Visible  = true
     end
 
-    centerDot.Position = UDim2.new(0, crosshairPos.X, 0, crosshairPos.Y)
+    reticleDot.Position = UDim2.new(0, reticleCenter.X, 0, reticleCenter.Y)
 
-    -- 2. Recolectar objetivos
-    local allTargets = getAllTargets()
-
-    -- 3. Actualizar ESP limpio
-    updateAllESP(allTargets, myPos)
-
-    -- 4. Comprobar si se está apuntando
+    -- 2. Cambiar color del retículo si se está apuntando
     local isAiming = isAimKeyPressed()
-
-    if isAiming and myChar and myRoot then
-        -- Cambiar color de FOV a rojo al apuntar
+    if isAiming then
         if drawingFov then drawingFov.Color = Color3.fromRGB(255, 60, 60) end
         guiFovStroke.Color = Color3.fromRGB(255, 60, 60)
-        centerDot.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
-
-        -- 5. Seleccionar mejor enemigo
-        local target, targetPart = getBestTarget(allTargets, crosshairPos, myChar)
-
-        if target and targetPart then
-            -- 6. Orientar la cámara directamente al objetivo
-            -- Al ejecutarse después del recoil nativo (+4), anula la desviación del arma
-            local camPos = Camera.CFrame.Position
-            local aimPos = targetPart.Position + Vector3.new(0, CFG.OFF_Y, 0)
-            local targetLook = CFrame.lookAt(camPos, aimPos)
-
-            if CFG.SPEED >= 1 then
-                Camera.CFrame = targetLook
-            else
-                Camera.CFrame = Camera.CFrame:Lerp(targetLook, math.clamp(CFG.SPEED, 0.05, 1))
-            end
-        end
+        reticleDot.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
     else
-        -- Color amarillo neutro al no apuntar
         if drawingFov then drawingFov.Color = Color3.fromRGB(255, 220, 0) end
         guiFovStroke.Color = Color3.fromRGB(255, 220, 0)
-        centerDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        reticleDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     end
+
+    -- 3. Actualizar ESP limpio
+    local allTargets = getAllTargets()
+    updateAllESP(allTargets, myPos)
 end)
 
 -- ══════════════════════════════════════════════════════════════════
--- 14 · APAGADO LIMPIO
+-- 15 · APAGADO LIMPIO
 -- ══════════════════════════════════════════════════════════════════
 
 local function shutdown()
@@ -884,7 +988,8 @@ local function shutdown()
     table.clear(conns)
 
     pcall(function()
-        RunService:UnbindFromRenderStep(renderName)
+        RunService:UnbindFromRenderStep(renderNameAim)
+        RunService:UnbindFromRenderStep(renderNameVisual)
     end)
 
     if drawingFov then
@@ -902,17 +1007,16 @@ local function shutdown()
     end
 
     genv.__GDB_SHUTDOWN = nil
-    print("[GDB v9] Script apagado correctamente.")
+    print("[GDB v11] Script apagado correctamente.")
 end
 
 genv.__GDB_SHUTDOWN = shutdown
 
 -- ══════════════════════════════════════════════════════════════════
--- 15 · INICIO
+-- 16 · INICIO
 -- ══════════════════════════════════════════════════════════════════
 
-print(string.format("[GDB v9] Listo | FOV: %dpx | Click Izq: %s | Click Der: %s | Menú: F",
+print(string.format("[GDB v11] Listo | Mira dinámica ultra-sync | FOV: %dpx | Bloqueo firme: %.2f | Menú: F",
     CFG.FOV,
-    CFG.AIM_LMB and "ON" or "OFF",
-    CFG.AIM_RMB and "ON" or "OFF"
+    CFG.SPEED
 ))
