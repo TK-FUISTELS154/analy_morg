@@ -121,9 +121,6 @@ local LIVE_FOLDER_NAME = "Live"
 local DEFAULT = {
     FOV           = 120,
     SPEED         = 0.18,       -- lerp aim
-    PREDICT       = true,
-    BULLET_SPEED  = 390,
-    GRAVITY       = 196,
     OFF_X         = 0,
     OFF_Y         = -0.15,
     MAX_DIST      = 500,
@@ -154,8 +151,7 @@ end
 
 local aimPressCount = 0
 local conns         = {}
-local espCache      = {}   -- [char] = { box, nameLabel, distLabel, bar }
-local kinematics    = {}   -- [char] = { vel, lastPos, lastT }
+local espCache      = {}   -- [char] = { billboard, boxStroke, nameLabel, distLabel, hpFill }
 local renderName    = "GDB_Render_" .. Securi._randName
 
 local function isAiming()
@@ -233,17 +229,6 @@ centerDot.ZIndex            = 20
 centerDot.Parent            = gui
 Instance.new("UICorner", centerDot).CornerRadius = UDim.new(1,0)
 
--- ── Punto de predicción (cian) ────────────────────────────────────
-local predDot = Instance.new("Frame")
-predDot.Size             = UDim2.new(0,5,0,5)
-predDot.AnchorPoint      = Vector2.new(0.5,0.5)
-predDot.BackgroundColor3 = Color3.fromRGB(0,220,255)
-predDot.BorderSizePixel  = 0
-predDot.Visible          = false
-predDot.ZIndex           = 20
-predDot.Parent           = gui
-Instance.new("UICorner", predDot).CornerRadius = UDim.new(1,0)
-
 -- ── Círculo FOV ───────────────────────────────────────────────────
 local fovFrame = Instance.new("Frame")
 fovFrame.Size              = UDim2.new(0,0,0,0)
@@ -296,7 +281,7 @@ end
 -- SECCIÓN 4b · PANEL DE CONFIGURACIÓN
 -- ══════════════════════════════════════════════════════════════════
 
-local PANEL_W, PANEL_H = 300, 510
+local PANEL_W, PANEL_H = 300, 420
 local cfgPanel = mkFrame(gui, {
     Size     = UDim2.new(0,PANEL_W,0,PANEL_H),
     Position = UDim2.new(0.5,-PANEL_W/2, 0.5,-PANEL_H/2),
@@ -391,37 +376,27 @@ mkLabel(cfgPanel, {
     Text="PUNTERÍA", TextSize=11, Font=Enum.Font.GothamBold,
     TextColor3=Color3.fromRGB(255,180,60), TextXAlignment=Enum.TextXAlignment.Left, ZIndex=32,
 })
-addInputRow("FOV  (px)",          "FOV",         94,  true)
-addInputRow("Velocidad lerp",     "SPEED",       120, true)
-addInputRow("Desplaz. X",         "OFF_X",       146, true)
-addInputRow("Desplaz. Y",         "OFF_Y",       172, true)
-addInputRow("Dist. máxima (m)",   "MAX_DIST",    198, true)
+addInputRow("FOV  (px)",         "FOV",      94,  true)
+addInputRow("Velocidad lerp",    "SPEED",    120, true)
+addInputRow("Desplaz. X",        "OFF_X",    146, true)
+addInputRow("Desplaz. Y",        "OFF_Y",    172, true)
+addInputRow("Dist. máxima (m)",  "MAX_DIST", 198, true)
 mkSeparator(cfgPanel, 224)
 
 mkLabel(cfgPanel, {
     Size=UDim2.new(1,-16,0,16), Position=UDim2.new(0,8,0,238),
-    Text="PROYECTIL", TextSize=11, Font=Enum.Font.GothamBold,
-    TextColor3=Color3.fromRGB(100,180,255), TextXAlignment=Enum.TextXAlignment.Left, ZIndex=32,
-})
-addInputRow("Veloc. bala (u/s)",  "BULLET_SPEED", 258, true)
-addInputRow("Gravedad (u/s²)",    "GRAVITY",      284, true)
-mkSeparator(cfgPanel, 312)
-
-mkLabel(cfgPanel, {
-    Size=UDim2.new(1,-16,0,16), Position=UDim2.new(0,8,0,326),
     Text="OPCIONES", TextSize=11, Font=Enum.Font.GothamBold,
     TextColor3=Color3.fromRGB(180,100,255), TextXAlignment=Enum.TextXAlignment.Left, ZIndex=32,
 })
-addToggleRow("LMB activa aim",    "AIM_LMB",    348)
-addToggleRow("RMB activa aim",    "AIM_RMB",    374)
-addToggleRow("Chequeo de pared",  "WALL_CHECK", 400)
-addToggleRow("Predicción",        "PREDICT",    426)
-mkSeparator(cfgPanel, 452)
+addToggleRow("LMB activa aim",   "AIM_LMB",    260)
+addToggleRow("RMB activa aim",   "AIM_RMB",    286)
+addToggleRow("Chequeo de pared", "WALL_CHECK", 312)
+mkSeparator(cfgPanel, 342)
 
 -- Botón parte objetivo
 local partBtn = mkButton(cfgPanel, {
     Size = UDim2.new(1,-24,0,26),
-    Position = UDim2.new(0,12, 0, 468),
+    Position = UDim2.new(0,12, 0, 358),
     Text = "Parte: "..CFG.TARGET_PART,
     TextSize = 12,
     ZIndex = 33,
@@ -526,49 +501,6 @@ local function isVisible(targetPart, targetChar, myChar)
 end
 
 -- ══════════════════════════════════════════════════════════════════
--- SECCIÓN 7 · PREDICCIÓN CINEMÁTICA
--- ══════════════════════════════════════════════════════════════════
-
-local function getPingS()
-    local ok, v = pcall(function() return LocalPlayer:GetNetworkPing() end)
-    return (ok and type(v) == "number") and v or 0.065
-end
-
-local function updateKinematics(char, root)
-    local now = tick()
-    local k = kinematics[char]
-    if not k then
-        kinematics[char] = { vel = Vector3.zero, lastPos = root.Position, lastT = now }
-        return
-    end
-    local dt = now - k.lastT
-    if dt > 0.001 then
-        k.vel     = (root.Position - k.lastPos) / dt
-        k.lastPos = root.Position
-        k.lastT   = now
-    end
-end
-
-local function predictPos(char, targetPart, root, camPos)
-    if not CFG.PREDICT then return targetPart.Position end
-    local k = kinematics[char]
-    local vel = k and k.vel or Vector3.zero
-    local ping = getPingS()
-    local dist = (targetPart.Position - camPos).Magnitude
-    local tFlight = dist / math.max(CFG.BULLET_SPEED, 1)
-    -- iterar para convergencia
-    for _ = 1, 3 do
-        local predictedPos = targetPart.Position + vel * (ping + tFlight)
-        local newDist = (predictedPos - camPos).Magnitude
-        tFlight = newDist / math.max(CFG.BULLET_SPEED, 1)
-    end
-    local predicted = targetPart.Position + vel * (ping + tFlight)
-    -- compensación de gravedad
-    local dropY = 0.5 * CFG.GRAVITY * tFlight * tFlight
-    return predicted + Vector3.new(CFG.OFF_X, dropY + CFG.OFF_Y, 0)
-end
-
--- ══════════════════════════════════════════════════════════════════
 -- SECCIÓN 8 · ESP
 -- ══════════════════════════════════════════════════════════════════
 
@@ -582,7 +514,6 @@ local function clearESP(char)
         end
         espCache[char] = nil
     end
-    kinematics[char] = nil
 end
 
 local function makeOrUpdateESP(char, hum, root, myRootPos, myChar)
@@ -684,7 +615,6 @@ local function updateAllESP()
         local root = char:FindFirstChild("HumanoidRootPart")
         if hum and root and isAlive(char, hum, root) then
             seen[char] = true
-            updateKinematics(char, root)
             makeOrUpdateESP(char, hum, root, myRootPos, myChar)
         end
     end
@@ -700,7 +630,8 @@ end
 -- ══════════════════════════════════════════════════════════════════
 
 local function getAimRef()
-    return Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    local mouse = UserInputService:GetMouseLocation()
+    return Vector2.new(mouse.X, mouse.Y)
 end
 
 local function getBestTarget(aimCenter, myChar, myTeam, cam)
@@ -803,10 +734,10 @@ local function bindToggle(key)
     end)
 end
 
-for _, key in ipairs({"FOV","SPEED","OFF_X","OFF_Y","MAX_DIST","BULLET_SPEED","GRAVITY"}) do
+for _, key in ipairs({"FOV","SPEED","OFF_X","OFF_Y","MAX_DIST"}) do
     bindNumInput(key)
 end
-for _, key in ipairs({"AIM_LMB","AIM_RMB","WALL_CHECK","PREDICT"}) do
+for _, key in ipairs({"AIM_LMB","AIM_RMB","WALL_CHECK"}) do
     bindToggle(key)
 end
 
@@ -815,14 +746,17 @@ end
 -- ══════════════════════════════════════════════════════════════════
 
 RunService:BindToRenderStep(renderName, Enum.RenderPriority.Camera.Value + 1, function(dt)
-    -- Mover dot central y FOV
-    local vpSize  = Camera.ViewportSize
-    local cx, cy  = vpSize.X/2, vpSize.Y/2
-    centerDot.Position = UDim2.new(0, cx-3, 0, cy-3)
+    -- Posición del mouse (el FOV lo sigue)
+    local mouse   = UserInputService:GetMouseLocation()
+    local mx, my  = mouse.X, mouse.Y
 
+    -- Dot en el mouse
+    centerDot.Position = UDim2.new(0, mx - 3, 0, my - 3)
+
+    -- Círculo FOV centrado en el mouse
     local fovPx = CFG.FOV * 2
     fovFrame.Size     = UDim2.new(0, fovPx, 0, fovPx)
-    fovFrame.Position = UDim2.new(0, cx - fovPx/2, 0, cy - fovPx/2)
+    fovFrame.Position = UDim2.new(0, mx - fovPx/2, 0, my - fovPx/2)
 
     -- ESP
     updateAllESP()
@@ -830,7 +764,6 @@ RunService:BindToRenderStep(renderName, Enum.RenderPriority.Camera.Value + 1, fu
     -- Aim
     if not isAiming() then
         updateStateLabel(false, nil)
-        predDot.Visible = false
         return
     end
 
@@ -843,29 +776,21 @@ RunService:BindToRenderStep(renderName, Enum.RenderPriority.Camera.Value + 1, fu
     if not myRoot then return end
     local myTeam = getTeam(myChar)
 
-    local aimCenter = getAimRef()
+    local aimCenter = getAimRef()   -- posición del mouse en pantalla
     local bestChar, bestPart, bestRoot = getBestTarget(aimCenter, myChar, myTeam, Camera)
 
     if not bestChar then
         updateStateLabel(false, nil)
-        predDot.Visible = false
         return
     end
 
-    -- Predicción
-    local camPos    = Camera.CFrame.Position
-    local predicted = predictPos(bestChar, bestPart, bestRoot, camPos)
+    -- Apuntar directo a la parte objetivo + offsets
+    local camPos   = Camera.CFrame.Position
+    local aimPos   = bestPart.Position + Vector3.new(CFG.OFF_X, CFG.OFF_Y, 0)
 
     -- Mover cámara (lerp suave)
-    local targetCF = CFrame.lookAt(camPos, predicted)
+    local targetCF = CFrame.lookAt(camPos, aimPos)
     Camera.CFrame  = Camera.CFrame:Lerp(targetCF, math.clamp(CFG.SPEED, 0.01, 1))
-
-    -- Punto de predicción en pantalla
-    local predScreen, predOnScreen = Camera:WorldToViewportPoint(predicted)
-    predDot.Visible = predOnScreen
-    if predOnScreen then
-        predDot.Position = UDim2.new(0, predScreen.X - 2, 0, predScreen.Y - 2)
-    end
 
     updateStateLabel(true, bestChar.Name)
 end)
@@ -886,7 +811,6 @@ local function shutdown()
 
     -- Limpiar ESP
     for char in pairs(espCache) do clearESP(char) end
-    table.clear(kinematics)
 
     -- Resetear estado
     aimPressCount = 0
