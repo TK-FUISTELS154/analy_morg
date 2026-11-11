@@ -1,59 +1,75 @@
 --[[
-    GUERRA DE BLOQUES — v6
-    ESP + AIM + FOV centrado en mouse
-    LMB / RMB → aim  |  F → panel  |  DEL → apagar
+    GUERRA DE BLOQUES — v7 (PERFECCIONADO)
+    Seguridad Nivel 3 (Sin hooks)
+    
+    Características:
+    - Detección REAL de equipos (Teams service: Reds vs Blues, BotRigs, atributos de juego)
+    - Escaneo dinámico de TODOS los objetivos (Jugadores reales y Bots)
+    - FOV adaptativo (Sigue al cursor / Centro en ShiftLock y Primera Persona) con Drawing API + GUI fallback
+    - ESP avanzado con Highlights y BillboardGui (Nombres, Barra de Salud, Distancia, Equipos)
+    - Aim asistido fluido con LMB y RMB (Lerp configurable, chequeo de paredes, selector Cabeza/Torso)
+    - Panel de configuración interactivo y arrastrable [Tecla F]
+    - Apagado limpio y seguro [Tecla DEL]
 ]]
 
--- ═══════════════════════════════════════════════════
--- 1 · SERVICIOS
--- ═══════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════════════════
+-- 1 · SERVICIOS Y NÚCLEO SEGURO (NIVEL 3)
+-- ══════════════════════════════════════════════════════════════════
 
-local function safeCloneref(o)
-    if cloneref then local ok,r = pcall(cloneref,o) if ok and r then return r end end
-    return o
+local function safeCloneref(obj)
+    if cloneref then
+        local ok, res = pcall(cloneref, obj)
+        if ok and res then return res end
+    end
+    return obj
 end
 
 local Players         = safeCloneref(game:GetService("Players"))
+local Teams           = safeCloneref(game:GetService("Teams"))
 local RunService      = safeCloneref(game:GetService("RunService"))
 local UIS             = safeCloneref(game:GetService("UserInputService"))
 local Workspace       = safeCloneref(game:GetService("Workspace"))
-local HttpService      = safeCloneref(game:GetService("HttpService"))
+local HttpService     = safeCloneref(game:GetService("HttpService"))
 local LocalPlayer     = Players.LocalPlayer
 local Camera          = Workspace.CurrentCamera
 
--- ═══════════════════════════════════════════════════
--- 2 · CONFIG
--- ═══════════════════════════════════════════════════
+local genv = getgenv and getgenv() or _G
+local scriptId = tostring({}):sub(8)
 
--- Accesorios que identifican cada equipo en este juego
-local TEAM1_ACC = "Accessory (Keffiyeh_3)"
-local TEAM2_ACC = "Accessory (Afrika Balaklava)"
-local LIVE      = "Live"   -- carpeta donde viven los personajes
+-- ══════════════════════════════════════════════════════════════════
+-- 2 · CONFIGURACIÓN Y PERSISTENCIA
+-- ══════════════════════════════════════════════════════════════════
 
 local CFG = {
-    FOV        = 150,    -- radio del círculo en píxeles
-    SPEED      = 0.20,   -- lerp del aim (0.01 lento – 1 snap)
-    OFF_Y      = 0.0,    -- desplazamiento vertical al apuntar
-    MAX_DIST   = 600,    -- distancia máxima en studs para ESP y aim
-    AIM_LMB    = true,   -- LMB activa aim
-    AIM_RMB    = true,   -- RMB activa aim
-    WALL_CHECK = true,   -- ignorar enemigos detrás de paredes
-    TARGET     = "Head", -- "Head" o "HumanoidRootPart"
-    ESP_ON     = true,   -- mostrar ESP
+    FOV             = 160,       -- Radio del FOV en píxeles
+    SPEED           = 0.22,      -- Suavizado lerp (0.01 - 1.0)
+    OFF_Y           = 0.0,       -- Desplazamiento vertical al apuntar
+    MAX_DIST        = 650,       -- Distancia máxima en studs
+    AIM_LMB         = true,      -- Apuntar con Click Izquierdo
+    AIM_RMB         = true,      -- Apuntar con Click Derecho
+    WALL_CHECK      = true,      -- Chequeo de visibilidad por paredes
+    TARGET_PART     = "Head",    -- "Head" o "HumanoidRootPart"
+    ESP_ENABLED     = true,      -- Activar ESP
+    ESP_HIGHLIGHT   = true,      -- Silueta de color traspasando paredes
+    ESP_ALLIES      = false,     -- Mostrar también aliados en el ESP
+    DRAWING_FOV     = true,      -- Usar Drawing API si está disponible
 }
 
--- Almacenamiento sencillo
-local SAVE_KEY = "GDB_v6.json"
+local CONFIG_FILE = "GDB_Config_v7.json"
+
 local function saveConfig()
-    if writefile then pcall(writefile, SAVE_KEY, HttpService:JSONEncode(CFG)) end
+    if writefile then
+        pcall(writefile, CONFIG_FILE, HttpService:JSONEncode(CFG))
+    end
 end
+
 local function loadConfig()
-    if readfile and isfile and isfile(SAVE_KEY) then
-        local ok, raw = pcall(readfile, SAVE_KEY)
-        if ok and raw ~= "" then
-            local ok2, t = pcall(HttpService.JSONDecode, HttpService, raw)
-            if ok2 and type(t) == "table" then
-                for k, v in pairs(t) do
+    if readfile and isfile and isfile(CONFIG_FILE) then
+        local ok, content = pcall(readfile, CONFIG_FILE)
+        if ok and content and content ~= "" then
+            local ok2, data = pcall(HttpService.JSONDecode, HttpService, content)
+            if ok2 and type(data) == "table" then
+                for k, v in pairs(data) do
                     if CFG[k] ~= nil and type(v) == type(CFG[k]) then
                         CFG[k] = v
                     end
@@ -64,27 +80,289 @@ local function loadConfig()
 end
 loadConfig()
 
--- ═══════════════════════════════════════════════════
--- 3 · ESTADO
--- ═══════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════════════════
+-- 3 · ESTADO GLOBAL
+-- ══════════════════════════════════════════════════════════════════
 
 local conns        = {}
-local espCache     = {}   -- [char] → {billboard, stroke, nameLbl, distLbl, hpFill}
-local aimCount     = 0    -- cuántos botones de aim están presionados
-local renderName   = "GDB_v6_" .. tostring({}):sub(8)
-local genv         = getgenv and getgenv() or _G
+local espCache     = {}
+local aimCount     = 0
+local renderName   = "GDB_RenderLoop_" .. scriptId
+local drawingFov   = nil
+local gui          = nil
 
--- ═══════════════════════════════════════════════════
--- 4 · GUI
--- ═══════════════════════════════════════════════════
+local function isAiming()
+    return aimCount > 0
+end
 
-local gui
+-- ══════════════════════════════════════════════════════════════════
+-- 4 · DETECCIÓN PRECISA DE EQUIPOS (JUGADORES + BOTS)
+-- ══════════════════════════════════════════════════════════════════
+
+-- Obtiene el equipo del LocalPlayer de forma fiable
+local function getMyTeam()
+    -- 1. Propiedad oficial Player.Team
+    if LocalPlayer.Team then
+        return LocalPlayer.Team.Name, LocalPlayer.Team
+    end
+    -- 2. Atributo en LocalPlayer
+    local attr = LocalPlayer:GetAttribute("Team")
+    if attr and type(attr) == "string" and attr ~= "" then
+        return attr, nil
+    end
+    -- 3. Atributo en el Personaje
+    if LocalPlayer.Character then
+        local cAttr = LocalPlayer.Character:GetAttribute("Team")
+        if cAttr and type(cAttr) == "string" and cAttr ~= "" then
+            return cAttr, nil
+        end
+    end
+    -- 4. TeamColor del Player
+    if LocalPlayer.TeamColor then
+        local colName = LocalPlayer.TeamColor.Name
+        if colName:find("Red") or colName:find("red") then
+            return "Reds", nil
+        elseif colName:find("Blue") or colName:find("blue") then
+            return "Blues", nil
+        end
+    end
+    return nil, nil
+end
+
+-- Obtiene el equipo de cualquier personaje (Jugador o Bot)
+local function getTargetTeam(char)
+    if not char then return nil end
+
+    -- A. Si es un jugador humano
+    local player = Players:GetPlayerFromCharacter(char)
+    if player then
+        if player.Team then
+            return player.Team.Name, player.Team
+        end
+        local pAttr = player:GetAttribute("Team")
+        if pAttr and type(pAttr) == "string" and pAttr ~= "" then
+            return pAttr, nil
+        end
+        if player.TeamColor then
+            local colName = player.TeamColor.Name
+            if colName:find("Red") or colName:find("red") then
+                return "Reds", nil
+            elseif colName:find("Blue") or colName:find("blue") then
+                return "Blues", nil
+            end
+        end
+    end
+
+    -- B. Si es un Bot (en BotRigs tienen el atributo "Team" oficial del juego)
+    local bAttr = char:GetAttribute("Team")
+    if bAttr and type(bAttr) == "string" and bAttr ~= "" then
+        return bAttr, nil
+    end
+
+    -- C. Atributos en HumanoidRootPart
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        local rAttr = hrp:GetAttribute("Team")
+        if rAttr and type(rAttr) == "string" and rAttr ~= "" then
+            return rAttr, nil
+        end
+    end
+
+    -- D. Fallback adicional por accesorios conocidos
+    if char:FindFirstChild("Accessory (Keffiyeh_3)") then return "Reds", nil end
+    if char:FindFirstChild("Accessory (Afrika Balaklava)") then return "Blues", nil end
+
+    return nil, nil
+end
+
+-- Comprueba si el personaje objetivo es un ENEMIGO
+local function isEnemy(char)
+    if not char or char == LocalPlayer.Character then return false end
+
+    local player = Players:GetPlayerFromCharacter(char)
+    if player == LocalPlayer then return false end
+
+    -- Ignorar si tiene atributos de invisibilidad, invencibilidad o protección de spawn
+    if player and (player:GetAttribute("Invisible") == true or player:GetAttribute("God") == true) then
+        return false
+    end
+    if char:GetAttribute("Protected") == true or char:GetAttribute("Invisible") == true then
+        return false
+    end
+
+    local myTeamName, myTeamObj = getMyTeam()
+    local targetTeamName, targetTeamObj = getTargetTeam(char)
+
+    -- Comparar por objeto Team oficial
+    if myTeamObj and targetTeamObj then
+        return myTeamObj ~= targetTeamObj
+    end
+
+    -- Comparar por nombre de equipo ("Reds" vs "Blues")
+    if myTeamName and targetTeamName then
+        return myTeamName ~= targetTeamName
+    end
+
+    -- Si el objetivo está en la carpeta de Bots
+    if char.Parent and char.Parent.Name == "BotRigs" then
+        if myTeamName and targetTeamName then
+            return myTeamName ~= targetTeamName
+        end
+        return true -- Bot hostil por defecto
+    end
+
+    -- Si nosotros no tenemos equipo detectado (ej. modo Todos contra Todos / FFA)
+    if not myTeamName and player and player ~= LocalPlayer then
+        return true
+    end
+
+    return false
+end
+
+-- ══════════════════════════════════════════════════════════════════
+-- 5 · BÚSQUEDA EXHAUSTIVA DE OBJETIVOS (JUGADORES + BOTS)
+-- ══════════════════════════════════════════════════════════════════
+
+local function getAllTargets()
+    local targets = {}
+    local seen = {}
+
+    -- 1. Jugadores en la sesión
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            if char and not seen[char] and char:IsA("Model") then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                if hum and hrp and hum.Health > 0 then
+                    seen[char] = true
+                    table.insert(targets, {
+                        char = char,
+                        hum = hum,
+                        root = hrp,
+                        name = player.DisplayName or player.Name,
+                        isBot = false
+                    })
+                end
+            end
+        end
+    end
+
+    -- 2. Bots oficiales en workspace.BotRigs
+    local botRigs = Workspace:FindFirstChild("BotRigs")
+    if botRigs then
+        for _, bot in ipairs(botRigs:GetChildren()) do
+            if bot:IsA("Model") and not seen[bot] then
+                local hum = bot:FindFirstChildOfClass("Humanoid")
+                local hrp = bot:FindFirstChild("HumanoidRootPart")
+                if hum and hrp and hum.Health > 0 and bot:GetAttribute("Alive") ~= false then
+                    seen[bot] = true
+                    table.insert(targets, {
+                        char = bot,
+                        hum = hum,
+                        root = hrp,
+                        name = "[BOT] " .. bot.Name,
+                        isBot = true
+                    })
+                end
+            end
+        end
+    end
+
+    -- 3. Carpeta Live (si el mapa o modo la usa)
+    local live = Workspace:FindFirstChild("Live")
+    if live then
+        for _, obj in ipairs(live:GetChildren()) do
+            if obj:IsA("Model") and obj ~= LocalPlayer.Character and not seen[obj] then
+                local hum = obj:FindFirstChildOfClass("Humanoid")
+                local hrp = obj:FindFirstChild("HumanoidRootPart")
+                if hum and hrp and hum.Health > 0 then
+                    seen[obj] = true
+                    table.insert(targets, {
+                        char = obj,
+                        hum = hum,
+                        root = hrp,
+                        name = obj.Name,
+                        isBot = true
+                    })
+                end
+            end
+        end
+    end
+
+    -- 4. Cualquier otro modelo con Humanoid en Workspace
+    for _, child in ipairs(Workspace:GetChildren()) do
+        if child:IsA("Model") and child ~= LocalPlayer.Character and not seen[child] then
+            if not child:FindFirstChildOfClass("VehicleSeat") and child.Name ~= "Terrain" then
+                local hum = child:FindFirstChildOfClass("Humanoid")
+                local hrp = child:FindFirstChild("HumanoidRootPart")
+                if hum and hrp and hum.Health > 0 then
+                    seen[child] = true
+                    table.insert(targets, {
+                        char = child,
+                        hum = hum,
+                        root = hrp,
+                        name = child.Name,
+                        isBot = true
+                    })
+                end
+            end
+        end
+    end
+
+    return targets
+end
+
+-- ══════════════════════════════════════════════════════════════════
+-- 6 · COMPROBACIÓN DE VISIBILIDAD (RAYCAST)
+-- ══════════════════════════════════════════════════════════════════
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+rayParams.IgnoreWater = true
+
+local function canSee(targetPart, targetChar, myChar)
+    if not CFG.WALL_CHECK then return true end
+    if not targetPart or not targetChar or not myChar then return false end
+
+    local origin = Camera.CFrame.Position
+    local direction = targetPart.Position - origin
+    rayParams.FilterDescendantsInstances = {myChar, targetChar}
+
+    local result = Workspace:Raycast(origin, direction, rayParams)
+    if not result then return true end
+
+    local hit = result.Instance
+    return hit:IsDescendantOf(targetChar)
+end
+
+-- ══════════════════════════════════════════════════════════════════
+-- 7 · POSICIÓN DEL FOV (MOUSE VS CENTRO BLOQUEADO)
+-- ══════════════════════════════════════════════════════════════════
+
+local function getFovCenter()
+    local isLocked = (UIS.MouseBehavior == Enum.MouseBehavior.LockCenter 
+                   or UIS.MouseBehavior == Enum.MouseBehavior.LockCurrentPosition)
+    local vp = Camera.ViewportSize
+    if isLocked then
+        return Vector2.new(vp.X / 2, vp.Y / 2)
+    else
+        local m = UIS:GetMouseLocation()
+        return Vector2.new(m.X, m.Y)
+    end
+end
+
+-- ══════════════════════════════════════════════════════════════════
+-- 8 · CREACIÓN DE INTERFAZ PROTEGIDA
+-- ══════════════════════════════════════════════════════════════════
+
 do
     local sg = Instance.new("ScreenGui")
-    sg.Name           = renderName
+    sg.Name           = "GDB_Interface_" .. scriptId
     sg.ResetOnSpawn   = false
     sg.IgnoreGuiInset = true
     sg.DisplayOrder   = 999
+
     if syn and syn.protect_gui then
         pcall(syn.protect_gui, sg)
         sg.Parent = safeCloneref(game:GetService("CoreGui"))
@@ -94,549 +372,530 @@ do
         local ok = pcall(function()
             sg.Parent = safeCloneref(game:GetService("CoreGui"))
         end)
-        if not ok then sg.Parent = LocalPlayer:FindFirstChildOfClass("PlayerGui") end
+        if not ok then
+            sg.Parent = LocalPlayer:WaitForChild("PlayerGui")
+        end
     end
     gui = sg
 end
 
--- Carpeta para billboards ESP
 local espHolder = Instance.new("Folder")
-espHolder.Name   = "ESP"
+espHolder.Name   = "ESP_Containers"
 espHolder.Parent = gui
 
--- ── helpers UI ────────────────────────────────────
-local function newLabel(parent, t)
-    local l = Instance.new("TextLabel")
-    l.BackgroundTransparency = 1
-    l.TextColor3  = Color3.new(1,1,1)
-    l.Font        = Enum.Font.GothamBold
-    l.TextSize    = 13
-    l.Text        = ""
-    l.ZIndex      = 10
-    for k,v in pairs(t or {}) do l[k]=v end
-    l.Parent = parent
-    return l
-end
-
-local function newFrame(parent, t)
-    local f = Instance.new("Frame")
-    f.BackgroundColor3 = Color3.fromRGB(14,14,20)
-    f.BorderSizePixel  = 0
-    f.ZIndex           = 5
-    for k,v in pairs(t or {}) do f[k]=v end
-    f.Parent = parent
-    return f
-end
-
-local function newButton(parent, t)
-    local b = Instance.new("TextButton")
-    b.BackgroundColor3 = Color3.fromRGB(35,35,50)
-    b.BorderSizePixel  = 0
-    b.TextColor3       = Color3.new(1,1,1)
-    b.Font             = Enum.Font.GothamBold
-    b.TextSize         = 12
-    b.AutoButtonColor  = false
-    b.ZIndex           = 11
-    for k,v in pairs(t or {}) do b[k]=v end
-    b.Parent = parent
-    return b
-end
-
-local function corner(parent, r)
-    local c = Instance.new("UICorner", parent)
-    c.CornerRadius = UDim.new(0, r or 6)
-    return c
-end
-
-local function stroke(parent, color, thick, transp)
-    local s = Instance.new("UIStroke", parent)
-    s.Color        = color or Color3.fromRGB(80,80,120)
-    s.Thickness    = thick or 1.5
-    s.Transparency = transp or 0
-    return s
-end
-
--- ── Dot del cursor (punto central del FOV) ────────
-local cursorDot = Instance.new("Frame")
-cursorDot.Size             = UDim2.new(0,6,0,6)
-cursorDot.AnchorPoint      = Vector2.new(0.5,0.5)
-cursorDot.BackgroundColor3 = Color3.new(1,1,1)
-cursorDot.BorderSizePixel  = 0
-cursorDot.ZIndex           = 25
-cursorDot.Parent           = gui
-corner(cursorDot, 10)
-
--- ── Círculo FOV (anillo que sigue al mouse) ────────
--- Usamos un Frame transparente + UIStroke + UICorner
-local fovRing = Instance.new("Frame")
-fovRing.AnchorPoint          = Vector2.new(0.5,0.5)
-fovRing.BackgroundTransparency = 1
-fovRing.BorderSizePixel      = 0
-fovRing.ZIndex               = 20
-fovRing.Parent               = gui
-corner(fovRing, 999)   -- 999 = círculo perfecto
-local fovStroke = stroke(fovRing, Color3.fromRGB(255,220,0), 1.5, 0.3)
-
--- ── HUD estado (arriba izquierda) ─────────────────
-local hudBg = newFrame(gui, {
-    Size             = UDim2.new(0,220,0,56),
-    Position         = UDim2.new(0,10,0,10),
-    BackgroundColor3 = Color3.fromRGB(8,8,14),
-    ZIndex           = 18,
-})
-corner(hudBg, 8)
-stroke(hudBg, Color3.fromRGB(50,50,80), 1, 0)
-
-local stateLabel = newLabel(hudBg, {
-    Size = UDim2.new(1,-12,0,26),
-    Position = UDim2.new(0,8,0,4),
-    Text = "🎯  AIM: OFF",
-    TextXAlignment = Enum.TextXAlignment.Left,
-    TextColor3 = Color3.fromRGB(150,150,170),
-    TextSize = 13,
-    ZIndex = 19,
-})
-local targetLabel = newLabel(hudBg, {
-    Size = UDim2.new(1,-12,0,22),
-    Position = UDim2.new(0,8,0,30),
-    Text = "",
-    TextXAlignment = Enum.TextXAlignment.Left,
-    TextColor3 = Color3.fromRGB(0,200,255),
-    TextSize = 11,
-    ZIndex = 19,
-})
-
-local function setHUD(aiming, name)
-    if aiming then
-        stateLabel.Text       = "🎯  AIM: ACTIVO"
-        stateLabel.TextColor3 = Color3.fromRGB(80,255,120)
-        cursorDot.BackgroundColor3 = Color3.fromRGB(255,50,50)
-        fovStroke.Color       = Color3.fromRGB(255,80,80)
-    else
-        stateLabel.Text       = "🎯  AIM: OFF"
-        stateLabel.TextColor3 = Color3.fromRGB(150,150,170)
-        cursorDot.BackgroundColor3 = Color3.new(1,1,1)
-        fovStroke.Color       = Color3.fromRGB(255,220,0)
-    end
-    targetLabel.Text = name and ("▶  "..name) or ""
-end
-
--- ═══════════════════════════════════════════════════
--- 5 · PANEL CONFIG
--- ═══════════════════════════════════════════════════
-
-local PANEL_W, PANEL_H = 290, 400
-local panel = newFrame(gui, {
-    Size             = UDim2.new(0,PANEL_W,0,PANEL_H),
-    Position         = UDim2.new(0.5,-PANEL_W/2, 0.5,-PANEL_H/2),
-    BackgroundColor3 = Color3.fromRGB(10,10,16),
-    Visible          = false,
-    ZIndex           = 40,
-})
-corner(panel, 10)
-stroke(panel, Color3.fromRGB(60,60,110), 1.5, 0)
-
--- Título del panel
-newLabel(panel, {
-    Size = UDim2.new(1,-16,0,30),
-    Position = UDim2.new(0,8,0,8),
-    Text = "⚔  GUERRA DE BLOQUES  v6",
-    TextSize = 14,
-    TextColor3 = Color3.fromRGB(255,215,50),
-    TextXAlignment = Enum.TextXAlignment.Left,
-    ZIndex = 42,
-})
-newLabel(panel, {
-    Size = UDim2.new(1,-16,0,16),
-    Position = UDim2.new(0,8,0,38),
-    Text = "[F] cerrar  ·  [DEL] apagar",
-    TextSize = 10,
-    Font = Enum.Font.Gotham,
-    TextColor3 = Color3.fromRGB(80,80,110),
-    TextXAlignment = Enum.TextXAlignment.Left,
-    ZIndex = 42,
-})
-
--- Separador
-local function panelSep(y)
-    local s = Instance.new("Frame", panel)
-    s.Size             = UDim2.new(1,-20,0,1)
-    s.Position         = UDim2.new(0,10,0,y)
-    s.BackgroundColor3 = Color3.fromRGB(40,40,65)
-    s.BorderSizePixel  = 0
-    s.ZIndex           = 41
-end
-panelSep(58)
-
--- Fila de input numérico
-local inputs = {}
-local function panelInput(labelTxt, key, y)
-    newLabel(panel, {
-        Size = UDim2.new(0,145,0,24),
-        Position = UDim2.new(0,12,0,y),
-        Text = labelTxt,
-        TextSize = 12,
-        Font = Enum.Font.Gotham,
-        TextColor3 = Color3.fromRGB(200,200,220),
-        TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 42,
-    })
-    local box = Instance.new("TextBox")
-    box.Size               = UDim2.new(0,100,0,24)
-    box.Position           = UDim2.new(0,175,0,y)
-    box.BackgroundColor3   = Color3.fromRGB(22,22,36)
-    box.BorderSizePixel    = 0
-    box.TextColor3         = Color3.fromRGB(220,220,255)
-    box.Font               = Enum.Font.Gotham
-    box.TextSize           = 12
-    box.Text               = tostring(CFG[key])
-    box.ClearTextOnFocus   = false
-    box.ZIndex             = 43
-    box.Parent             = panel
-    corner(box, 5)
-    inputs[key] = box
-    box.FocusLost:Connect(function()
-        local n = tonumber(box.Text)
-        if n then CFG[key] = n saveConfig()
-        else box.Text = tostring(CFG[key]) end
+-- Círculo FOV vía Drawing API
+if Drawing and Drawing.new then
+    pcall(function()
+        drawingFov = Drawing.new("Circle")
+        drawingFov.Thickness = 1.5
+        drawingFov.Color = Color3.fromRGB(255, 220, 0)
+        drawingFov.Transparency = 0.65
+        drawingFov.Filled = false
+        drawingFov.Visible = true
     end)
 end
 
--- Fila de toggle booleano
-local toggleBtns = {}
-local function panelToggle(labelTxt, key, y)
-    newLabel(panel, {
-        Size = UDim2.new(0,160,0,24),
-        Position = UDim2.new(0,12,0,y),
-        Text = labelTxt,
-        TextSize = 12,
-        Font = Enum.Font.Gotham,
-        TextColor3 = Color3.fromRGB(200,200,220),
-        TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 42,
-    })
-    local function getColor(v) return v and Color3.fromRGB(60,220,100) or Color3.fromRGB(220,60,60) end
-    local function getTxt(v)   return v and "✓ SÍ" or "✗ NO" end
-    local btn = newButton(panel, {
-        Size = UDim2.new(0,76,0,24),
-        Position = UDim2.new(0,200,0,y),
-        Text = getTxt(CFG[key]),
-        TextColor3 = getColor(CFG[key]),
-        ZIndex = 43,
-    })
-    corner(btn, 5)
-    toggleBtns[key] = btn
+-- Fallback círculo FOV en GUI
+local guiFov = Instance.new("Frame")
+guiFov.AnchorPoint          = Vector2.new(0.5, 0.5)
+guiFov.BackgroundTransparency = 1
+guiFov.BorderSizePixel      = 0
+guiFov.ZIndex               = 15
+guiFov.Visible              = (drawingFov == nil)
+guiFov.Parent               = gui
+
+local guiFovCorner = Instance.new("UICorner", guiFov)
+guiFovCorner.CornerRadius = UDim.new(1, 0)
+
+local guiFovStroke = Instance.new("UIStroke", guiFov)
+guiFovStroke.Color        = Color3.fromRGB(255, 220, 0)
+guiFovStroke.Thickness    = 1.5
+guiFovStroke.Transparency = 0.35
+
+-- Punto central del cursor
+local cursorDot = Instance.new("Frame")
+cursorDot.Size             = UDim2.new(0, 6, 0, 6)
+cursorDot.AnchorPoint      = Vector2.new(0.5, 0.5)
+cursorDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+cursorDot.BorderSizePixel  = 0
+cursorDot.ZIndex           = 25
+cursorDot.Parent           = gui
+Instance.new("UICorner", cursorDot).CornerRadius = UDim.new(1, 0)
+
+-- HUD de Estado en esquina
+local hud = Instance.new("Frame")
+hud.Size             = UDim2.new(0, 230, 0, 64)
+hud.Position         = UDim2.new(0, 15, 0, 15)
+hud.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
+hud.BorderSizePixel  = 0
+hud.ZIndex           = 20
+hud.Parent           = gui
+Instance.new("UICorner", hud).CornerRadius = UDim.new(0, 8)
+local hudStroke = Instance.new("UIStroke", hud)
+hudStroke.Color     = Color3.fromRGB(50, 50, 75)
+hudStroke.Thickness = 1
+
+local hudAim = Instance.new("TextLabel", hud)
+hudAim.Size              = UDim2.new(1, -16, 0, 20)
+hudAim.Position          = UDim2.new(0, 8, 0, 6)
+hudAim.BackgroundTransparency = 1
+hudAim.Font              = Enum.Font.GothamBold
+hudAim.TextSize          = 12
+hudAim.Text              = "🎯 AIM: OFF"
+hudAim.TextColor3        = Color3.fromRGB(160, 160, 180)
+hudAim.TextXAlignment    = Enum.TextXAlignment.Left
+hudAim.ZIndex            = 21
+
+local hudTeam = Instance.new("TextLabel", hud)
+hudTeam.Size             = UDim2.new(1, -16, 0, 16)
+hudTeam.Position         = UDim2.new(0, 8, 0, 26)
+hudTeam.BackgroundTransparency = 1
+hudTeam.Font             = Enum.Font.Gotham
+hudTeam.TextSize         = 11
+hudTeam.Text             = "Mi Equipo: Detectando..."
+hudTeam.TextColor3       = Color3.fromRGB(220, 220, 100)
+hudTeam.TextXAlignment   = Enum.TextXAlignment.Left
+hudTeam.ZIndex           = 21
+
+local hudTarget = Instance.new("TextLabel", hud)
+hudTarget.Size           = UDim2.new(1, -16, 0, 16)
+hudTarget.Position       = UDim2.new(0, 8, 0, 44)
+hudTarget.BackgroundTransparency = 1
+hudTarget.Font           = Enum.Font.GothamMedium
+hudTarget.TextSize       = 11
+hudTarget.Text           = "Objetivo: Ninguno"
+hudTarget.TextColor3     = Color3.fromRGB(130, 130, 150)
+hudTarget.TextXAlignment = Enum.TextXAlignment.Left
+hudTarget.ZIndex         = 21
+
+local function updateHUD(active, targetName, myTeamName)
+    if active then
+        hudAim.Text       = "🎯 AIM: ACTIVO"
+        hudAim.TextColor3 = Color3.fromRGB(80, 255, 120)
+        cursorDot.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+        if drawingFov then drawingFov.Color = Color3.fromRGB(255, 70, 70) end
+        guiFovStroke.Color = Color3.fromRGB(255, 70, 70)
+    else
+        hudAim.Text       = "🎯 AIM: OFF"
+        hudAim.TextColor3 = Color3.fromRGB(160, 160, 180)
+        cursorDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        if drawingFov then drawingFov.Color = Color3.fromRGB(255, 220, 0) end
+        guiFovStroke.Color = Color3.fromRGB(255, 220, 0)
+    end
+
+    hudTeam.Text = "Mi Equipo: " .. (myTeamName or "Ninguno / FFA")
+    if myTeamName == "Reds" then
+        hudTeam.TextColor3 = Color3.fromRGB(255, 100, 100)
+    elseif myTeamName == "Blues" then
+        hudTeam.TextColor3 = Color3.fromRGB(100, 180, 255)
+    else
+        hudTeam.TextColor3 = Color3.fromRGB(220, 220, 120)
+    end
+
+    if targetName then
+        hudTarget.Text       = "Objetivo: " .. targetName
+        hudTarget.TextColor3 = Color3.fromRGB(0, 230, 255)
+    else
+        hudTarget.Text       = "Objetivo: Ninguno"
+        hudTarget.TextColor3 = Color3.fromRGB(130, 130, 150)
+    end
+end
+
+-- ══════════════════════════════════════════════════════════════════
+-- 9 · PANEL DE AJUSTES [TECLA F]
+-- ══════════════════════════════════════════════════════════════════
+
+local panel = Instance.new("Frame")
+panel.Size             = UDim2.new(0, 310, 0, 410)
+panel.Position         = UDim2.new(0.5, -155, 0.5, -205)
+panel.BackgroundColor3 = Color3.fromRGB(14, 14, 22)
+panel.BorderSizePixel  = 0
+panel.Visible          = false
+panel.ZIndex           = 50
+panel.Parent           = gui
+Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
+local panelStroke = Instance.new("UIStroke", panel)
+panelStroke.Color     = Color3.fromRGB(70, 70, 110)
+panelStroke.Thickness = 1.5
+
+-- Título y créditos
+local pTitle = Instance.new("TextLabel", panel)
+pTitle.Size              = UDim2.new(1, -20, 0, 28)
+pTitle.Position          = UDim2.new(0, 12, 0, 8)
+pTitle.BackgroundTransparency = 1
+pTitle.Font              = Enum.Font.GothamBold
+pTitle.TextSize          = 14
+pTitle.Text              = "⚔  GUERRA DE BLOQUES · V7"
+pTitle.TextColor3        = Color3.fromRGB(255, 215, 60)
+pTitle.TextXAlignment    = Enum.TextXAlignment.Left
+pTitle.ZIndex            = 51
+
+local pSub = Instance.new("TextLabel", panel)
+pSub.Size                = UDim2.new(1, -20, 0, 16)
+pSub.Position            = UDim2.new(0, 12, 0, 36)
+pSub.BackgroundTransparency = 1
+pSub.Font                = Enum.Font.Gotham
+pSub.TextSize            = 11
+pSub.Text                = "[F] Ocultar Menú  |  [DEL] Desactivar Script"
+pSub.TextColor3          = Color3.fromRGB(120, 120, 150)
+pSub.TextXAlignment      = Enum.TextXAlignment.Left
+pSub.ZIndex              = 51
+
+local function createSep(posY)
+    local s = Instance.new("Frame", panel)
+    s.Size             = UDim2.new(1, -24, 0, 1)
+    s.Position         = UDim2.new(0, 12, 0, posY)
+    s.BackgroundColor3 = Color3.fromRGB(45, 45, 70)
+    s.BorderSizePixel  = 0
+    s.ZIndex           = 51
+end
+createSep(56)
+
+local function createNumInput(labelTxt, key, posY, isFloat)
+    local lbl = Instance.new("TextLabel", panel)
+    lbl.Size              = UDim2.new(0, 160, 0, 22)
+    lbl.Position          = UDim2.new(0, 14, 0, posY)
+    lbl.BackgroundTransparency = 1
+    lbl.Font              = Enum.Font.GothamMedium
+    lbl.TextSize          = 12
+    lbl.Text              = labelTxt
+    lbl.TextColor3        = Color3.fromRGB(210, 210, 230)
+    lbl.TextXAlignment    = Enum.TextXAlignment.Left
+    lbl.ZIndex            = 52
+
+    local box = Instance.new("TextBox", panel)
+    box.Size              = UDim2.new(0, 100, 0, 22)
+    box.Position          = UDim2.new(0, 190, 0, posY)
+    box.BackgroundColor3  = Color3.fromRGB(26, 26, 40)
+    box.BorderSizePixel   = 0
+    box.Font              = Enum.Font.Gotham
+    box.TextSize          = 12
+    box.TextColor3        = Color3.fromRGB(255, 255, 255)
+    box.Text              = tostring(CFG[key])
+    box.ClearTextOnFocus  = false
+    box.ZIndex            = 53
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+
+    box.FocusLost:Connect(function()
+        local n = tonumber(box.Text)
+        if n then
+            CFG[key] = isFloat and n or math.floor(n)
+            saveConfig()
+        else
+            box.Text = tostring(CFG[key])
+        end
+    end)
+end
+
+local function createToggle(labelTxt, key, posY)
+    local lbl = Instance.new("TextLabel", panel)
+    lbl.Size              = UDim2.new(0, 170, 0, 22)
+    lbl.Position          = UDim2.new(0, 14, 0, posY)
+    lbl.BackgroundTransparency = 1
+    lbl.Font              = Enum.Font.GothamMedium
+    lbl.TextSize          = 12
+    lbl.Text              = labelTxt
+    lbl.TextColor3        = Color3.fromRGB(210, 210, 230)
+    lbl.TextXAlignment    = Enum.TextXAlignment.Left
+    lbl.ZIndex            = 52
+
+    local btn = Instance.new("TextButton", panel)
+    btn.Size              = UDim2.new(0, 80, 0, 22)
+    btn.Position          = UDim2.new(0, 210, 0, posY)
+    btn.BackgroundColor3  = Color3.fromRGB(30, 30, 48)
+    btn.BorderSizePixel   = 0
+    btn.Font              = Enum.Font.GothamBold
+    btn.TextSize          = 11
+    btn.ZIndex            = 53
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+
+    local function updateBtn()
+        local val = CFG[key]
+        btn.Text       = val and "✓ SÍ" or "✗ NO"
+        btn.TextColor3 = val and Color3.fromRGB(70, 240, 120) or Color3.fromRGB(240, 70, 70)
+    end
+    updateBtn()
+
     btn.MouseButton1Click:Connect(function()
         CFG[key] = not CFG[key]
-        btn.Text = getTxt(CFG[key])
-        btn.TextColor3 = getColor(CFG[key])
-        if (key == "AIM_LMB" or key == "AIM_RMB") then
-            if not CFG.AIM_LMB and not CFG.AIM_RMB then aimCount = 0 end
+        updateBtn()
+        if key == "AIM_LMB" or key == "AIM_RMB" then
+            if not CFG.AIM_LMB and not CFG.AIM_RMB then
+                aimCount = 0
+            end
         end
         saveConfig()
     end)
 end
 
--- ── Sección PUNTERÍA ──────────────────────────────
-newLabel(panel, {
-    Size = UDim2.new(1,-16,0,16), Position = UDim2.new(0,12,0,66),
-    Text = "▸  PUNTERÍA", TextSize = 11, Font = Enum.Font.GothamBold,
-    TextColor3 = Color3.fromRGB(255,180,50), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 42,
-})
-panelInput("FOV  (radio px)",   "FOV",      88)
-panelInput("Velocidad aim",     "SPEED",   118)
-panelInput("Ajuste Y",          "OFF_Y",   148)
-panelInput("Dist. máx (studs)", "MAX_DIST",178)
-panelSep(208)
+-- Controles del Menú
+createNumInput("Radio del FOV (px):",   "FOV",         66, false)
+createNumInput("Velocidad de Aim:",     "SPEED",       92, true)
+createNumInput("Distancia Máxima (m):", "MAX_DIST",    118, false)
+createNumInput("Ajuste de Altura Y:",   "OFF_Y",       144, true)
+createSep(172)
 
--- ── Sección OPCIONES ──────────────────────────────
-newLabel(panel, {
-    Size = UDim2.new(1,-16,0,16), Position = UDim2.new(0,12,0,214),
-    Text = "▸  OPCIONES", TextSize = 11, Font = Enum.Font.GothamBold,
-    TextColor3 = Color3.fromRGB(160,100,255), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 42,
-})
-panelToggle("LMB activa aim",   "AIM_LMB",   236)
-panelToggle("RMB activa aim",   "AIM_RMB",   264)
-panelToggle("Chequeo de pared", "WALL_CHECK", 292)
-panelToggle("ESP visible",      "ESP_ON",     320)
-panelSep(350)
+createToggle("Apuntar con Click Izq (LMB):", "AIM_LMB",     180)
+createToggle("Apuntar con Click Der (RMB):", "AIM_RMB",     206)
+createToggle("Chequeo de Paredes:",          "WALL_CHECK",  232)
+createToggle("Activar ESP:",                 "ESP_ENABLED", 258)
+createToggle("Siluetas ESP (Highlight):",    "ESP_HIGHLIGHT", 284)
+createToggle("Mostrar Aliados en ESP:",      "ESP_ALLIES",  310)
+createSep(338)
 
--- Botón parte objetivo
-local function getPartTxt() return "Parte objetivo: "..CFG.TARGET end
-local partBtn = newButton(panel, {
-    Size = UDim2.new(1,-24,0,28),
-    Position = UDim2.new(0,12,0,358),
-    Text = getPartTxt(),
-    TextSize = 12,
-    ZIndex = 43,
-})
-corner(partBtn, 6)
+-- Selector Cabeza / Torso
+local partBtn = Instance.new("TextButton", panel)
+partBtn.Size              = UDim2.new(1, -28, 0, 26)
+partBtn.Position          = UDim2.new(0, 14, 0, 346)
+partBtn.BackgroundColor3  = Color3.fromRGB(35, 45, 75)
+partBtn.BorderSizePixel   = 0
+partBtn.Font              = Enum.Font.GothamBold
+partBtn.TextSize          = 12
+partBtn.TextColor3        = Color3.fromRGB(220, 230, 255)
+partBtn.ZIndex            = 53
+Instance.new("UICorner", partBtn).CornerRadius = UDim.new(0, 5)
+
+local function updatePartText()
+    local name = (CFG.TARGET_PART == "Head") and "CABEZA" or "TORSO (HumanoidRootPart)"
+    partBtn.Text = "🎯 Prioridad de Disparo: " .. name
+end
+updatePartText()
+
 partBtn.MouseButton1Click:Connect(function()
-    CFG.TARGET = CFG.TARGET == "Head" and "HumanoidRootPart" or "Head"
-    partBtn.Text = getPartTxt()
+    CFG.TARGET_PART = (CFG.TARGET_PART == "Head") and "HumanoidRootPart" or "Head"
+    updatePartText()
     saveConfig()
 end)
 
 -- Botón cerrar
-local closeBtn = newButton(panel, {
-    Size = UDim2.new(0,76,0,24),
-    Position = UDim2.new(1,-88,0,8),
-    Text = "✕ Cerrar",
-    BackgroundColor3 = Color3.fromRGB(140,25,25),
-    TextSize = 12,
-    ZIndex = 43,
-})
-corner(closeBtn, 5)
-closeBtn.MouseButton1Click:Connect(function() panel.Visible = false end)
+local closeBtn = Instance.new("TextButton", panel)
+closeBtn.Size              = UDim2.new(0, 75, 0, 22)
+closeBtn.Position          = UDim2.new(1, -85, 0, 10)
+closeBtn.BackgroundColor3  = Color3.fromRGB(150, 35, 35)
+closeBtn.BorderSizePixel   = 0
+closeBtn.Font              = Enum.Font.GothamBold
+closeBtn.TextSize          = 11
+closeBtn.Text              = "✕ Cerrar"
+closeBtn.TextColor3        = Color3.fromRGB(255, 255, 255)
+closeBtn.ZIndex            = 53
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 4)
+closeBtn.MouseButton1Click:Connect(function()
+    panel.Visible = false
+end)
 
--- Arrastrar panel
+-- Soporte arrastrar panel
 do
-    local drag, dragStart, startPos
+    local dragging, dragStart, startPos
     panel.InputBegan:Connect(function(inp)
         if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-            drag = true; dragStart = inp.Position; startPos = panel.Position
+            dragging  = true
+            dragStart = inp.Position
+            startPos  = panel.Position
         end
     end)
     panel.InputEnded:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1 then drag = false end
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
     end)
     panel.InputChanged:Connect(function(inp)
-        if drag and inp.UserInputType == Enum.UserInputType.MouseMovement then
-            local d = inp.Position - dragStart
+        if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = inp.Position - dragStart
             panel.Position = UDim2.new(
-                startPos.X.Scale, startPos.X.Offset + d.X,
-                startPos.Y.Scale, startPos.Y.Offset + d.Y)
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
         end
     end)
 end
 
--- ═══════════════════════════════════════════════════
--- 6 · LÓGICA DE EQUIPO
--- ═══════════════════════════════════════════════════
-
--- Detecta el equipo del personaje por sus accesorios
-local function getTeam(char)
-    if not char then return -1 end
-    for _, v in ipairs(char:GetChildren()) do
-        if v:IsA("Accessory") then
-            if v.Name == TEAM1_ACC then return 1 end
-            if v.Name == TEAM2_ACC then return 2 end
-        end
-    end
-    return 0  -- sin equipo / desconocido
-end
-
-local function isEnemy(char, myTeam)
-    if myTeam == 0 or myTeam == -1 then return false end  -- no sabemos el equipo propio → no apuntar
-    local t = getTeam(char)
-    return t ~= 0 and t ~= -1 and t ~= myTeam
-end
-
-local function isAlive(hum)
-    return hum and hum.Parent and hum.Health > 0
-end
-
-local function getTargetPart(char)
-    return char:FindFirstChild(CFG.TARGET) or char:FindFirstChild("HumanoidRootPart")
-end
-
--- ═══════════════════════════════════════════════════
--- 7 · VISIBILIDAD (raycast)
--- ═══════════════════════════════════════════════════
-
-local rayParams = RaycastParams.new()
-rayParams.FilterType = Enum.RaycastFilterType.Exclude
-
-local function canSee(targetPart, targetChar, myChar)
-    if not CFG.WALL_CHECK then return true end
-    local origin = Camera.CFrame.Position
-    local dir    = targetPart.Position - origin
-    rayParams.FilterDescendantsInstances = {myChar, targetChar}
-    local res = Workspace:Raycast(origin, dir, rayParams)
-    if not res then return true end
-    local p = res.Instance.Parent
-    return p == targetChar or (p and p.Parent == targetChar)
-end
-
--- ═══════════════════════════════════════════════════
--- 8 · ESP
--- ═══════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════════════════
+-- 10 · GESTIÓN DEL ESP (BILLBOARDS + HIGHLIGHTS)
+-- ══════════════════════════════════════════════════════════════════
 
 local function clearESP(char)
-    local e = espCache[char]
-    if not e then return end
-    if e.billboard and e.billboard.Parent then e.billboard:Destroy() end
-    espCache[char] = nil
+    local data = espCache[char]
+    if data then
+        if data.billboard and data.billboard.Parent then
+            data.billboard:Destroy()
+        end
+        if data.highlight and data.highlight.Parent then
+            data.highlight:Destroy()
+        end
+        espCache[char] = nil
+    end
 end
 
-local function updateESP(char, hum, root, myRootPos, myChar, myTeam)
-    -- Solo mostrar enemigos en ESP (rojo) o aliados (azul)
-    local dist = (root.Position - myRootPos).Magnitude
-    if dist > CFG.MAX_DIST or not CFG.ESP_ON then
+local function renderESP(target, myPos, myTeamName)
+    local char  = target.char
+    local hum   = target.hum
+    local root  = target.root
+    local dist  = (root.Position - myPos).Magnitude
+
+    if dist > CFG.MAX_DIST or not CFG.ESP_ENABLED then
         clearESP(char)
         return
     end
 
-    -- Crear billboard si no existe
+    local enemy = isEnemy(char)
+    if not enemy and not CFG.ESP_ALLIES then
+        clearESP(char)
+        return
+    end
+
+    local mainColor = enemy and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(50, 160, 255)
+    local targetTeam = getTargetTeam(char) or "Sin Equipo"
+
     if not espCache[char] then
+        local entry = {}
+
+        -- Billboard UI
         local bb = Instance.new("BillboardGui")
-        bb.Name         = "GDBESP"
+        bb.Name         = "GDB_ESP"
         bb.Adornee      = root
-        bb.Size         = UDim2.new(0,56,0,68)
-        bb.StudsOffset  = Vector3.new(0,2.8,0)
+        bb.Size         = UDim2.new(0, 80, 0, 75)
+        bb.StudsOffset  = Vector3.new(0, 3.2, 0)
         bb.AlwaysOnTop  = true
         bb.ResetOnSpawn = false
         bb.Parent       = espHolder
 
-        -- Caja (borde)
-        local boxF = Instance.new("Frame", bb)
-        boxF.Size                 = UDim2.new(1,0,1,0)
-        boxF.BackgroundTransparency = 1
-        boxF.BorderSizePixel      = 0
-        local boxS = Instance.new("UIStroke", boxF)
-        boxS.Thickness = 1.5
+        -- Cuadro delimitador
+        local box = Instance.new("Frame", bb)
+        box.Size                 = UDim2.new(1, 0, 1, 0)
+        box.BackgroundTransparency = 1
+        box.BorderSizePixel      = 0
+        local boxStroke = Instance.new("UIStroke", box)
+        boxStroke.Thickness = 1.5
 
-        -- Nombre
+        -- Etiqueta Nombre y Equipo
         local nameLbl = Instance.new("TextLabel", bb)
-        nameLbl.Size              = UDim2.new(1,0,0,14)
-        nameLbl.Position          = UDim2.new(0,0,0,-16)
+        nameLbl.Size              = UDim2.new(1, 40, 0, 14)
+        nameLbl.Position          = UDim2.new(0, -20, 0, -16)
         nameLbl.BackgroundTransparency = 1
         nameLbl.Font              = Enum.Font.GothamBold
         nameLbl.TextSize          = 11
         nameLbl.TextStrokeTransparency = 0.4
-        nameLbl.TextColor3        = Color3.new(1,1,1)
+        nameLbl.TextColor3        = mainColor
 
-        -- Distancia
+        -- Etiqueta Distancia
         local distLbl = Instance.new("TextLabel", bb)
-        distLbl.Size              = UDim2.new(1,0,0,12)
-        distLbl.Position          = UDim2.new(0,0,1,2)
+        distLbl.Size              = UDim2.new(1, 0, 0, 12)
+        distLbl.Position          = UDim2.new(0, 0, 1, 3)
         distLbl.BackgroundTransparency = 1
         distLbl.Font              = Enum.Font.Gotham
         distLbl.TextSize          = 10
         distLbl.TextStrokeTransparency = 0.4
-        distLbl.TextColor3        = Color3.fromRGB(200,200,200)
+        distLbl.TextColor3        = Color3.fromRGB(220, 220, 220)
 
-        -- Barra HP (a la derecha de la caja)
+        -- Barra de vida
         local hpBg = Instance.new("Frame", bb)
-        hpBg.Size             = UDim2.new(0,4,1,0)
-        hpBg.Position         = UDim2.new(1,3,0,0)
-        hpBg.BackgroundColor3 = Color3.fromRGB(30,30,30)
+        hpBg.Size             = UDim2.new(0, 4, 1, 0)
+        hpBg.Position         = UDim2.new(1, 4, 0, 0)
+        hpBg.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
         hpBg.BorderSizePixel  = 0
         local hpFill = Instance.new("Frame", hpBg)
-        hpFill.AnchorPoint      = Vector2.new(0,1)
-        hpFill.Position         = UDim2.new(0,0,1,0)
-        hpFill.Size             = UDim2.new(1,0,1,0)
+        hpFill.AnchorPoint      = Vector2.new(0, 1)
+        hpFill.Position         = UDim2.new(0, 0, 1, 0)
+        hpFill.Size             = UDim2.new(1, 0, 1, 0)
         hpFill.BorderSizePixel  = 0
 
-        espCache[char] = {
-            billboard = bb,
-            boxStroke = boxS,
-            nameLbl   = nameLbl,
-            distLbl   = distLbl,
-            hpFill    = hpFill,
-        }
+        entry.billboard = bb
+        entry.boxStroke = boxStroke
+        entry.nameLbl   = nameLbl
+        entry.distLbl   = distLbl
+        entry.hpFill    = hpFill
+
+        -- Highlight (Silueta a través de paredes)
+        if CFG.ESP_HIGHLIGHT then
+            pcall(function()
+                local hl = Instance.new("Highlight")
+                hl.Name                 = "GDB_Highlight"
+                hl.Adornee              = char
+                hl.FillColor            = mainColor
+                hl.FillTransparency     = 0.55
+                hl.OutlineColor         = Color3.fromRGB(255, 255, 255)
+                hl.OutlineTransparency  = 0.2
+                hl.Parent               = espHolder
+                entry.highlight         = hl
+            end)
+        end
+
+        espCache[char] = entry
     end
 
-    local e    = espCache[char]
-    local hp   = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-    local enemy = isEnemy(char, myTeam)
-    local col  = enemy and Color3.fromRGB(255,55,55) or Color3.fromRGB(55,160,255)
+    local e = espCache[char]
+    local hpPct = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
 
-    e.boxStroke.Color    = col
-    e.nameLbl.Text       = char.Name
-    e.nameLbl.TextColor3 = col
+    e.boxStroke.Color    = mainColor
+    e.nameLbl.TextColor3 = mainColor
+    e.nameLbl.Text       = string.format("%s [%s]", target.name, targetTeam)
     e.distLbl.Text       = string.format("%.0f m", dist)
-    e.hpFill.Size        = UDim2.new(1,0,hp,0)
-    e.hpFill.BackgroundColor3 = Color3.fromHSV(hp * 0.33, 0.9, 1)
+    e.hpFill.Size        = UDim2.new(1, 0, hpPct, 0)
+    e.hpFill.BackgroundColor3 = Color3.fromHSV(hpPct * 0.33, 0.95, 1)
+
+    if e.highlight then
+        e.highlight.FillColor = mainColor
+        e.highlight.Enabled   = CFG.ESP_HIGHLIGHT
+    end
 end
 
-local function refreshESP()
-    local myChar = LocalPlayer.Character
-    if not myChar then return end
-    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-    if not myRoot then return end
-    local myRootPos = myRoot.Position
-    local myTeam    = getTeam(myChar)
-
-    local liveFolder = Workspace:FindFirstChild(LIVE)
-    if not liveFolder then
-        -- Sin carpeta Live → limpiar todo
-        for c in pairs(espCache) do clearESP(c) end
-        return
+local function updateAllESP(allTargets, myPos, myTeamName)
+    local activeChars = {}
+    for _, t in ipairs(allTargets) do
+        activeChars[t.char] = true
+        renderESP(t, myPos, myTeamName)
     end
 
-    local seen = {}
-    for _, char in ipairs(liveFolder:GetChildren()) do
-        if char == myChar then continue end
-        local hum  = char:FindFirstChildOfClass("Humanoid")
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if hum and root and isAlive(hum) then
-            seen[char] = true
-            updateESP(char, hum, root, myRootPos, myChar, myTeam)
+    -- Limpiar personajes muertos o desaparecidos
+    for char in pairs(espCache) do
+        if not activeChars[char] then
+            clearESP(char)
         end
     end
-
-    -- Limpiar personajes que ya no están vivos / en carpeta
-    for c in pairs(espCache) do
-        if not seen[c] then clearESP(c) end
-    end
 end
 
--- ═══════════════════════════════════════════════════
--- 9 · SELECCIÓN DE OBJETIVO (AIM)
--- ═══════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════════════════
+-- 11 · SELECCIÓN Y PREDICCIÓN DE OBJETIVO (AIM)
+-- ══════════════════════════════════════════════════════════════════
 
-local function getMousePos()
-    local m = UIS:GetMouseLocation()
-    return Vector2.new(m.X, m.Y)
-end
+local function getBestTarget(allTargets, fovCenter, myChar)
+    local bestTarget = nil
+    local bestPart   = nil
+    local minDistance = CFG.FOV
 
-local function getBestTarget(mousePos, myChar, myTeam)
-    local liveFolder = Workspace:FindFirstChild(LIVE)
-    if not liveFolder then return nil, nil end
+    for _, t in ipairs(allTargets) do
+        local char = t.char
+        if isEnemy(char) then
+            local part = char:FindFirstChild(CFG.TARGET_PART) 
+                      or char:FindFirstChild("Head") 
+                      or char:FindFirstChild("HumanoidRootPart")
 
-    local bestChar, bestPart, bestDist
-    bestDist = CFG.FOV  -- el enemigo tiene que estar dentro del FOV
-
-    for _, char in ipairs(liveFolder:GetChildren()) do
-        if char == myChar then continue end
-        local hum  = char:FindFirstChildOfClass("Humanoid")
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not (hum and root and isAlive(hum)) then continue end
-
-        -- Solo apuntar a ENEMIGOS
-        if not isEnemy(char, myTeam) then continue end
-
-        -- Distancia en studs
-        local worldDist = (root.Position - myChar:FindFirstChild("HumanoidRootPart").Position).Magnitude
-        if worldDist > CFG.MAX_DIST then continue end
-
-        local part = getTargetPart(char)
-        if not part then continue end
-
-        -- Proyectar a pantalla
-        local sPos, onScreen = Camera:WorldToViewportPoint(part.Position)
-        if not onScreen then continue end
-
-        local d2 = (Vector2.new(sPos.X, sPos.Y) - mousePos).Magnitude
-        if d2 < bestDist then
-            if canSee(part, char, myChar) then
-                bestDist = d2
-                bestChar = char
-                bestPart = part
+            if part then
+                local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                if onScreen then
+                    local dist2D = (Vector2.new(screenPos.X, screenPos.Y) - fovCenter).Magnitude
+                    if dist2D < minDistance then
+                        if canSee(part, char, myChar) then
+                            minDistance = dist2D
+                            bestTarget  = t
+                            bestPart    = part
+                        end
+                    end
+                end
             end
         end
     end
 
-    return bestChar, bestPart
+    return bestTarget, bestPart
 end
 
--- ═══════════════════════════════════════════════════
--- 10 · CONTROLES
--- ═══════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════════════════
+-- 12 · CONTROLES DE ENTRADA (MOUSE Y TECLAS)
+-- ══════════════════════════════════════════════════════════════════
 
 conns[#conns+1] = UIS.InputBegan:Connect(function(inp, gpe)
     if gpe then return end
+
     if inp.UserInputType == Enum.UserInputType.MouseButton1 and CFG.AIM_LMB then
         aimCount = aimCount + 1
     elseif inp.UserInputType == Enum.UserInputType.MouseButton2 and CFG.AIM_RMB then
@@ -646,7 +905,9 @@ conns[#conns+1] = UIS.InputBegan:Connect(function(inp, gpe)
     elseif inp.KeyCode == Enum.KeyCode.Delete then
         task.spawn(function()
             task.wait(0.05)
-            if genv.__GDB_shutdown then genv.__GDB_shutdown() end
+            if genv.__GDB_SHUTDOWN then
+                genv.__GDB_SHUTDOWN()
+            end
         end)
     end
 end)
@@ -659,84 +920,107 @@ conns[#conns+1] = UIS.InputEnded:Connect(function(inp)
     end
 end)
 
--- ═══════════════════════════════════════════════════
--- 11 · RENDER LOOP
--- ═══════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════════════════
+-- 13 · BUCLE PRINCIPAL DE RENDER (RENDERSTEP)
+-- ══════════════════════════════════════════════════════════════════
 
 RunService:BindToRenderStep(renderName, Enum.RenderPriority.Camera.Value + 1, function()
-    -- Posición actual del mouse
-    local mouse = getMousePos()
-    local mx, my = mouse.X, mouse.Y
+    local fovCenter = getFovCenter()
+    local myChar    = LocalPlayer.Character
+    local myRoot    = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local myPos     = myRoot and myRoot.Position or Camera.CFrame.Position
+    local myTeamName = getMyTeam()
 
-    -- Mover dot y anillo al mouse
-    cursorDot.Position = UDim2.new(0, mx, 0, my)   -- AnchorPoint=0.5 ya centra
+    -- 1. Actualizar posición y tamaño del círculo FOV
     local diameter = CFG.FOV * 2
-    fovRing.Size     = UDim2.new(0, diameter, 0, diameter)
-    fovRing.Position = UDim2.new(0, mx, 0, my)      -- AnchorPoint=0.5 ya centra
+    if drawingFov then
+        drawingFov.Position = fovCenter
+        drawingFov.Radius   = CFG.FOV
+        drawingFov.Visible  = true
+        guiFov.Visible      = false
+    else
+        guiFov.Position = UDim2.new(0, fovCenter.X, 0, fovCenter.Y)
+        guiFov.Size     = UDim2.new(0, diameter, 0, diameter)
+        guiFov.Visible  = true
+    end
 
-    -- Actualizar ESP
-    refreshESP()
+    cursorDot.Position = UDim2.new(0, fovCenter.X, 0, fovCenter.Y)
 
-    -- Sin aim → reset HUD
-    if aimCount <= 0 then
-        setHUD(false, nil)
+    -- 2. Recolectar todos los personajes en el mapa
+    local allTargets = getAllTargets()
+
+    -- 3. Actualizar ESP en tiempo real
+    updateAllESP(allTargets, myPos, myTeamName)
+
+    -- 4. Comprobación del Aimbot
+    if not isAiming() or not myChar or not myRoot then
+        updateHUD(false, nil, myTeamName)
         return
     end
 
-    -- Verificar personaje local
-    local myChar = LocalPlayer.Character
-    if not myChar then setHUD(false,nil) return end
-    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-    if not myRoot then setHUD(false,nil) return end
-    local myTeam = getTeam(myChar)
+    -- 5. Seleccionar mejor enemigo dentro del FOV
+    local target, targetPart = getBestTarget(allTargets, fovCenter, myChar)
 
-    -- Sin equipo conocido → no apuntar
-    if myTeam == 0 or myTeam == -1 then
-        setHUD(false, "Sin equipo detectado")
+    if not target or not targetPart then
+        updateHUD(true, nil, myTeamName)
         return
     end
 
-    -- Buscar mejor objetivo dentro del FOV (basado en posición del mouse)
-    local bestChar, bestPart = getBestTarget(mouse, myChar, myTeam)
-
-    if not bestChar then
-        setHUD(false, nil)
-        return
-    end
-
-    -- Apuntar (lerp suave de cámara)
+    -- 6. Apuntar la cámara hacia la parte objetivo con suavizado lerp
     local camPos = Camera.CFrame.Position
-    local aimPos = bestPart.Position + Vector3.new(0, CFG.OFF_Y, 0)
-    local lookCF = CFrame.lookAt(camPos, aimPos)
-    Camera.CFrame = Camera.CFrame:Lerp(lookCF, math.clamp(CFG.SPEED, 0.01, 1))
+    local aimPos = targetPart.Position + Vector3.new(0, CFG.OFF_Y, 0)
+    local targetLook = CFrame.lookAt(camPos, aimPos)
 
-    setHUD(true, bestChar.Name)
+    Camera.CFrame = Camera.CFrame:Lerp(targetLook, math.clamp(CFG.SPEED, 0.01, 1))
+    updateHUD(true, target.name, myTeamName)
 end)
 
--- ═══════════════════════════════════════════════════
--- 12 · SHUTDOWN
--- ═══════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════════════════
+-- 14 · DESCONEXIÓN LIMPIA (SHUTDOWN)
+-- ══════════════════════════════════════════════════════════════════
 
 local function shutdown()
-    for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+    -- Desconectar eventos
+    for _, c in ipairs(conns) do
+        pcall(function() c:Disconnect() end)
+    end
     table.clear(conns)
-    pcall(function() RunService:UnbindFromRenderStep(renderName) end)
-    for c in pairs(espCache) do clearESP(c) end
+
+    -- Desvincular render
+    pcall(function()
+        RunService:UnbindFromRenderStep(renderName)
+    end)
+
+    -- Limpiar FOV Drawing
+    if drawingFov then
+        pcall(function() drawingFov:Remove() end)
+        drawingFov = nil
+    end
+
+    -- Limpiar todo el ESP
+    for char in pairs(espCache) do
+        clearESP(char)
+    end
+    table.clear(espCache)
+
+    -- Destruir interfaz gráfica
+    if gui and gui.Parent then
+        pcall(function() gui:Destroy() end)
+    end
+
     aimCount = 0
-    pcall(function() gui:Destroy() end)
-    genv.__GDB_shutdown = nil
-    print("[GDB v6] Apagado.")
+    genv.__GDB_SHUTDOWN = nil
+    print("[GDB v7] Desactivado y limpiado completamente.")
 end
 
-genv.__GDB_shutdown = shutdown
+genv.__GDB_SHUTDOWN = shutdown
 
--- ═══════════════════════════════════════════════════
--- 13 · INICIO
--- ═══════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════════════════
+-- 15 · NOTIFICACIÓN DE INICIO
+-- ══════════════════════════════════════════════════════════════════
 
-print(string.format("[GDB v6] Listo | FOV:%d | LMB:%s | RMB:%s | WALL:%s",
+print(string.format("[GDB v7] Activo | FOV: %dpx | Click Izq: %s | Click Der: %s | Presiona F para abrir el Menú",
     CFG.FOV,
     CFG.AIM_LMB and "ON" or "OFF",
-    CFG.AIM_RMB and "ON" or "OFF",
-    CFG.WALL_CHECK and "ON" or "OFF"
+    CFG.AIM_RMB and "ON" or "OFF"
 ))
