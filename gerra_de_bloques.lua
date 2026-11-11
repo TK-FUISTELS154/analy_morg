@@ -230,6 +230,16 @@ local function getMyTeamName()
         end
         if LocalPlayer.Character:FindFirstChild("Accessory (Keffiyeh_3)") then return "Reds" end
         if LocalPlayer.Character:FindFirstChild("Accessory (Afrika Balaklava)") then return "Blues" end
+
+        local shirt = LocalPlayer.Character:FindFirstChildOfClass("Shirt")
+        if shirt and shirt.ShirtTemplate then
+            local st = tostring(shirt.ShirtTemplate)
+            if st:find("118139739997303") or st:find("87118663401765") or st:find("117147235340961") then
+                return "Reds"
+            elseif st:find("105993339235675") or st:find("125606549889657") or st:find("140726468772905") then
+                return "Blues"
+            end
+        end
     end
     if LocalPlayer.TeamColor then
         local n = LocalPlayer.TeamColor.Name
@@ -274,7 +284,63 @@ local function getTargetTeamName(char)
     if char:FindFirstChild("Accessory (Keffiyeh_3)") then return "Reds" end
     if char:FindFirstChild("Accessory (Afrika Balaklava)") then return "Blues" end
 
+    local shirt = char:FindFirstChildOfClass("Shirt")
+    if shirt and shirt.ShirtTemplate then
+        local st = tostring(shirt.ShirtTemplate)
+        if st:find("118139739997303") or st:find("87118663401765") or st:find("117147235340961") then
+            return "Reds"
+        elseif st:find("105993339235675") or st:find("125606549889657") or st:find("140726468772905") then
+            return "Blues"
+        end
+    end
+
     return nil
+end
+
+local function getESPColor(char, enemy)
+    local targetTeam = getTargetTeamName(char)
+    local myTeam     = getMyTeamName()
+
+    -- 1. Si detectamos directamente el equipo del objetivo
+    if targetTeam then
+        local tLower = targetTeam:lower()
+        if tLower:find("blue") or tLower:find("azul") then
+            return Color3.fromRGB(50, 160, 255), "Blues" -- Color azul
+        elseif tLower:find("red") or tLower:find("rojo") then
+            return Color3.fromRGB(255, 55, 55), "Reds"   -- Color rojo
+        elseif tLower:find("green") or tLower:find("verde") then
+            return Color3.fromRGB(50, 230, 80), "Greens"
+        elseif tLower:find("yellow") or tLower:find("amarillo") then
+            return Color3.fromRGB(255, 220, 50), "Yellows"
+        end
+    end
+
+    -- 2. Si no se detectó el equipo del objetivo pero conocemos mi equipo (lógica del equipo contrario)
+    if myTeam then
+        local myLower = myTeam:lower()
+        if myLower:find("red") or myLower:find("rojo") then
+            -- Si yo soy Rojo: el enemigo es Azul, el aliado es Rojo
+            if enemy then
+                return Color3.fromRGB(50, 160, 255), "Blues"
+            else
+                return Color3.fromRGB(255, 55, 55), "Reds"
+            end
+        elseif myLower:find("blue") or myLower:find("azul") then
+            -- Si yo soy Azul: el enemigo es Rojo, el aliado es Azul
+            if enemy then
+                return Color3.fromRGB(255, 55, 55), "Reds"
+            else
+                return Color3.fromRGB(50, 160, 255), "Blues"
+            end
+        end
+    end
+
+    -- 3. Respaldo general si ningún equipo se conoce
+    if enemy then
+        return Color3.fromRGB(255, 55, 55), "Enemigo"
+    else
+        return Color3.fromRGB(50, 160, 255), "Aliado"
+    end
 end
 
 local function isEnemy(char)
@@ -737,8 +803,8 @@ local function renderESP(target, myPos)
         return
     end
 
-    local mainColor = enemy and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(50, 160, 255)
-    local targetTeam = getTargetTeamName(char) or "Sin Equipo"
+    local mainColor, inferredTeam = getESPColor(char, enemy)
+    local targetTeam = getTargetTeamName(char) or inferredTeam or (enemy and "Enemigo" or "Aliado")
 
     if not espCache[char] then
         local entry = {}
