@@ -1,1148 +1,916 @@
--- ==============================================================================
--- 🛡️ GUERRA DE BLOQUES - AIM PREDICTIVO + ESP TOTAL (SECURI_V4 INTEGRATED)
--- ==============================================================================
--- Versión 4.0 — Reescritura completa con:
---   • Seguridad nivel 4: bloqueo de todos los remotes de telemetría detectados
---     en la auditoría (CheatFlag, ReportClient, ReportTouch, ReportUI,
---     ReportFirst, ClockProbe, espupdate, aimassisttarget, AimShare)
---   • Aim con clic IZQUIERDO Y DERECHO (ambos activan el aimbot)
---   • ESP con colores, distancia, HP y estado visible/oculto
---   • Predicción cinemática de segundo orden + balística
---   • Protección anti-kick, anti-namecall, GUI oculta y randomizada
---   • Limpieza total de rastros al cerrar
--- ==============================================================================
+--[[
+    GUERRA DE BLOQUES — v5
+    Nivel 3: Sin hookmetamethod / hookfunction
+    Autor: TK · Refactor: Antigravity AI
+    ─────────────────────────────────────────
+    LMB / RMB  → apuntar
+    F          → panel config
+    DEL        → apagar
+]]
 
--- ============================================================
--- SECCIÓN 1: NÚCLEO SECURI_V4
--- ============================================================
-local Securi = (type(getgenv) == "function" and (getgenv().Securi or getgenv().SecuriV4)) or nil
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 1 · NÚCLEO SECURI v3 (NIVEL 3)
+-- ══════════════════════════════════════════════════════════════════
 
-if not Securi then
-    Securi = {}
-    Securi.VERSION = "4.0.0"
-    Securi.NAME    = "SecuriV4_GuerraBloques"
-
-    -- Referencias nativas capturadas antes de que cualquier hook pueda intervenir
-    local rawGame      = (typeof(workspace) == "Instance" and workspace.Parent) or game
-    local rawCloneref  = (type(cloneref)    == "function" and cloneref)         or nil
-    local rawPcall     = pcall
-    local rawTostring  = tostring
-    local rawPairs     = pairs
-    local rawIpairs    = ipairs
-    local rawType      = type
-    local rawTypeof    = typeof
-    local rawMath      = { clamp = math.clamp, max = math.max, min = math.min,
-                           floor = math.floor, random = math.random, rad = math.rad,
-                           atan2 = math.atan2, pow = math.pow, abs = math.abs,
-                           sqrt = math.sqrt }
-    local rawString    = { format = string.format, lower = string.lower,
-                           char = string.char, sub = string.sub }
-    local rawTable     = { insert = table.insert, remove = table.remove,
-                           clear = table.clear, concat = table.concat }
-    local rawSetmeta   = setmetatable
-    local rawRawget    = rawget
-    local rawRawset    = rawset
-
-    local function safeCloneref(inst)
-        if not inst or not rawCloneref then return inst end
-        local ok, c = rawPcall(rawCloneref, inst)
-        if ok and c and rawTypeof(c) == "Instance" then
-            local valid = rawPcall(function() return c.ClassName end)
-            if valid then return c end
-        end
-        return inst
+local function safeCloneref(obj)
+    if cloneref then
+        local ok, r = pcall(cloneref, obj)
+        if ok and r then return r end
     end
+    return obj
+end
 
-    -- Acceso nativo a métodos de game/instance sin pasar por __namecall
-    local NativeGet  = rawGame.GetService
-    local NativeFind = rawGame.FindFirstChildOfClass
-    local NativeWait = rawGame.WaitForChild
+local Securi = {}
+Securi._randName = tostring({}):sub(8)  -- nombre único por sesión
 
-    -- --------------------------------------------------------
-    -- 1A. Detector de capacidades del ejecutor
-    -- --------------------------------------------------------
-    Securi.Cap = {
-        canHook    = false,
-        canHUI     = false,
-        canProtect = false,
-    }
-    local function hasFn(name)
-        local env = (type(getgenv) == "function" and getgenv()) or getfenv(0)
-        return env and rawType(env[name]) == "function"
-    end
-    Securi.Cap.canHook    = hasFn("hookmetamethod") or hasFn("hookfunction")
-    Securi.Cap.canHUI     = hasFn("gethui")         or hasFn("get_hidden_gui")
-    Securi.Cap.canProtect = hasFn("protectgui")     or hasFn("protect_gui")
-
-    -- --------------------------------------------------------
-    -- 1B. Resolución segura de servicios (caché + cloneref)
-    -- --------------------------------------------------------
-    Securi.Services = rawSetmeta({}, {
-        __index = function(t, name)
-            local cached = rawRawget(t, name)
-            if cached then return cached end
-            local resolved
-            if name == "Workspace" and rawTypeof(workspace) == "Instance" then
-                resolved = workspace
-            end
-            if not resolved then
-                local ok, s = rawPcall(NativeGet, rawGame, name)
-                if ok and s then resolved = s end
-            end
-            if not resolved then
-                local ok, s = rawPcall(NativeFind, rawGame, name)
-                if ok and s then resolved = s end
-            end
-            if resolved then
-                local sec = safeCloneref(resolved)
-                rawRawset(t, name, sec)
-                return sec
-            end
-            return nil
+-- ── Servicios (cloneref + caché) ──────────────────────────────────
+do
+    local cache = {}
+    local gs    = safeCloneref(game:GetService("RunService") and game)
+    setmetatable(Securi, {
+        __index = function(_, k)
+            if cache[k] then return cache[k] end
+            local ok, svc = pcall(function() return safeCloneref(game:GetService(k)) end)
+            if ok and svc then cache[k] = svc return svc end
         end
     })
+    Securi._gs = gs
+end
 
-    function Securi:GetLocalPlayer()
-        local plrs = self.Services.Players
-        return plrs and (plrs.LocalPlayer or NativeFind(plrs, "Player"))
-    end
+function Securi:GetLocalPlayer()
+    return self.Players and self.Players.LocalPlayer
+end
 
-    -- --------------------------------------------------------
-    -- 1C. Thread seguro
-    -- --------------------------------------------------------
-    Securi.Thread = {}
-    function Securi.Thread:Spawn(fn, ...)
-        local args = {...}
-        return task.spawn(function() rawPcall(fn, table.unpack(args)) end)
-    end
-    function Securi.Thread:Safe(fn, fallback, ...)
-        local ok, res = rawPcall(fn, ...)
-        return ok and res or fallback
-    end
+-- ── Hilos seguros ─────────────────────────────────────────────────
+Securi.Thread = {}
+function Securi.Thread.Spawn(fn, ...)
+    local args = {...}
+    task.spawn(function() pcall(fn, table.unpack(args)) end)
+end
+function Securi.Thread.Safe(fn, ...)
+    return pcall(fn, ...)
+end
 
-    -- --------------------------------------------------------
-    -- 1D. Generador de nombres aleatorios
-    -- --------------------------------------------------------
-    local function randName(len)
-        len = len or rawMath.random(14, 22)
-        local t = {}
-        for i = 1, len do
-            local r = rawMath.random(1, 3)
-            t[i] = rawString.char(
-                r == 1 and rawMath.random(97,122)
-             or r == 2 and rawMath.random(65, 90)
-             or              rawMath.random(48, 57)
-            )
-        end
-        return rawTable.concat(t)
-    end
-    Securi._randName = randName
+-- ── GUI protegida ─────────────────────────────────────────────────
+Securi.GUI = {}
+function Securi.GUI:Create(name, props)
+    local sg = Instance.new("ScreenGui")
+    sg.Name            = name or Securi._randName
+    sg.ResetOnSpawn    = false
+    sg.IgnoreGuiInset  = true
+    sg.DisplayOrder    = 999
+    for k, v in pairs(props or {}) do sg[k] = v end
 
-    -- --------------------------------------------------------
-    -- 1E. GUI segura (HUI > protectgui > CoreGui > PlayerGui)
-    -- --------------------------------------------------------
-    Securi.GUI = { _names = {}, _instances = rawSetmeta({}, {__mode = "k"}) }
-
-    function Securi.GUI:SetName(inst, len)
-        if not inst then return end
-        local n = randName(len or 16)
-        inst.Name = n
-        self._names[n] = true
-        return n
-    end
-
-    function Securi.GUI:Create()
-        local name = randName(20)
-        local gethuiFn    = hasFn("gethui")       and gethui        or hasFn("get_hidden_gui") and get_hidden_gui or nil
-        local protectFn   = hasFn("protectgui")   and protectgui    or hasFn("protect_gui")    and protect_gui    or nil
-        local coreGui     = Securi.Services.CoreGui
-        local lp          = Securi:GetLocalPlayer()
-
-        local function makeGui()
-            local g = Instance.new("ScreenGui")
-            g.Name = name ; g.ResetOnSpawn = false
-            g.DisplayOrder = 2000000000 ; g.IgnoreGuiInset = true
-            g.Archivable = false
-            return g
-        end
-
-        local container
-        -- Prioridad 1: HUI (el más seguro, invisible para el juego)
-        if gethuiFn then
-            rawPcall(function()
-                local hui = gethuiFn()
-                if hui then
-                    local g = makeGui() ; g.Parent = hui
-                    if g.Parent then container = g end
-                end
-            end)
-        end
-        -- Prioridad 2: protectgui sobre CoreGui
-        if not container and protectFn and coreGui then
-            rawPcall(function()
-                local g = makeGui() ; protectFn(g) ; g.Parent = coreGui
-                if g.Parent then container = g end
-            end)
-        end
-        -- Prioridad 3: CoreGui sin protección
-        if not container and coreGui then
-            rawPcall(function()
-                local g = makeGui() ; g.Parent = coreGui
-                if g.Parent then container = g end
-            end)
-        end
-        -- Prioridad 4: PlayerGui (último recurso)
-        if not container and lp then
-            rawPcall(function()
-                local pg = lp:FindFirstChildOfClass("PlayerGui")
-                    or NativeWait(lp, "PlayerGui", 5)
-                if pg then
-                    local g = makeGui() ; g.Parent = pg
-                    if g.Parent then container = g end
-                end
-            end)
-        end
-
-        self._names[name] = true
-        if container then self._instances[container] = true end
-        return container
-    end
-
-    -- --------------------------------------------------------
-    -- 1F. Anti-Kick (hookfunction sobre Player.Kick)
-    -- --------------------------------------------------------
-    Securi.AntiKick = { installed = false }
-    function Securi.AntiKick:Install(plr)
-        if self.installed then return end
-        local p = plr or Securi:GetLocalPlayer()
-        if not p then return end
-        local hookFn        = hasFn("hookfunction")  and hookfunction        or nil
-        local checkcallerFn = hasFn("checkcaller")   and checkcaller         or function() return false end
-        local newcclosureFn = hasFn("newcclosure")   and newcclosure         or function(f) return f end
-        rawPcall(function()
-            if hookFn and rawTypeof(p.Kick) == "function" then
-                local orig
-                orig = hookFn(p.Kick, newcclosureFn(function(self2, ...)
-                    if checkcallerFn() then return orig(self2, ...) end
-                    -- Bloquear kick del servidor silenciosamente
-                end))
-            end
+    -- intentar proteger
+    if syn and syn.protect_gui then
+        pcall(syn.protect_gui, sg)
+        sg.Parent = safeCloneref(game:GetService("CoreGui"))
+    elseif gethui then
+        sg.Parent = gethui()
+    else
+        local ok = pcall(function()
+            sg.Parent = safeCloneref(game:GetService("CoreGui"))
         end)
-        self.installed = true
+        if not ok then sg.Parent = Securi:GetLocalPlayer() and Securi:GetLocalPlayer():FindFirstChildOfClass("PlayerGui") end
     end
+    return sg
+end
 
-    -- --------------------------------------------------------
-    -- 1G. Hook de namecall: bloqueo de remotes + ocultación de GUI
-    -- --------------------------------------------------------
-    Securi.Hooks = {
-        hooked         = false,
-        blockedRemotes = {},
-        -- Weak table: las instancias de GUI que queremos ocultar de GetChildren/GetDescendants
-        hiddenInst     = rawSetmeta({}, {__mode = "k"}),
-    }
-
-    function Securi.Hooks:Block(name)
-        self.blockedRemotes[rawString.lower(rawTostring(name))] = true
-        if not self.hooked and Securi.Cap.canHook then
-            self:Install()
-        end
+-- ── Almacenamiento persistente ────────────────────────────────────
+Securi.Storage = {}
+local _storeKey = "GDB_CFG_v5_" .. Securi._randName:sub(1,4)
+function Securi.Storage:Save(data)
+    if writefile then
+        pcall(writefile, _storeKey..".json", game:GetService("HttpService"):JSONEncode(data))
     end
-
-    function Securi.Hooks:HideInstance(inst)
-        if inst then self.hiddenInst[inst] = true end
-    end
-
-    function Securi.Hooks:Install()
-        if self.hooked then return end
-        local hookMMFn      = hasFn("hookmetamethod")  and hookmetamethod    or nil
-        local getncFn       = hasFn("getnamecallmethod") and getnamecallmethod
-                           or hasFn("get_namecall_method") and get_namecall_method or nil
-        local checkcallerFn = hasFn("checkcaller")     and checkcaller       or function() return false end
-        local newcclosureFn = hasFn("newcclosure")     and newcclosure       or function(f) return f end
-        if not hookMMFn or not getncFn then return end
-
-        local blockedRemotes = self.blockedRemotes
-        local hiddenInst     = self.hiddenInst
-
-        rawPcall(function()
-            local oldNC
-            oldNC = hookMMFn(rawGame, "__namecall", newcclosureFn(function(obj, ...)
-                local method     = getncFn()
-                local isExploit  = checkcallerFn()
-
-                -- Bloquear remotes de telemetría / detección
-                if method == "FireServer" or method == "fireServer"
-                or method == "InvokeServer" or method == "invokeServer" then
-                    local n = rawString.lower(rawTostring(obj.Name or ""))
-                    if blockedRemotes[n] then return nil end
-                end
-
-                -- Ocultar instancias del GUI a GetChildren/GetDescendants del juego
-                if not isExploit then
-                    if method == "GetDescendants" or method == "GetChildren" then
-                        local ok, res = rawPcall(oldNC, obj, ...)
-                        if ok and rawType(res) == "table" then
-                            local clean = {}
-                            for _, v in rawIpairs(res) do
-                                if not hiddenInst[v] then
-                                    rawTable.insert(clean, v)
-                                end
-                            end
-                            return clean
-                        end
-                        return ok and res or {}
-                    end
-                    -- Proteger FindFirstChild de que devuelva nuestra GUI
-                    if method == "FindFirstChild" or method == "FindFirstChildOfClass" then
-                        local ok, res = rawPcall(oldNC, obj, ...)
-                        if ok and res and hiddenInst[res] then return nil end
-                        return ok and res
-                    end
-                end
-
-                return oldNC(obj, ...)
-            end))
-            self.hooked = true
-        end)
-    end
-
-    -- --------------------------------------------------------
-    -- 1H. Almacenamiento persistente
-    -- --------------------------------------------------------
-    Securi.Storage = { folder = "SecuriV4Data" }
-    function Securi.Storage:Save(file, data)
-        local wf  = hasFn("writefile")  and writefile  or nil
-        local mkf = hasFn("makefolder") and makefolder or nil
-        local isf = hasFn("isfolder")   and isfolder   or nil
-        local http= Securi.Services.HttpService
-        if wf and http then
-            rawPcall(function()
-                if mkf and isf and not isf(self.folder) then mkf(self.folder) end
-                wf(self.folder .. "/" .. file .. ".json", http:JSONEncode(data))
+end
+function Securi.Storage:Load()
+    if readfile and isfile and isfile(_storeKey..".json") then
+        local ok, raw = pcall(readfile, _storeKey..".json")
+        if ok and raw and raw ~= "" then
+            local ok2, t = pcall(function()
+                return game:GetService("HttpService"):JSONDecode(raw)
             end)
-            return true
+            if ok2 and type(t) == "table" then return t end
         end
-        return false
     end
-    function Securi.Storage:Load(file)
-        local rf  = hasFn("readfile") and readfile or nil
-        local isf = hasFn("isfile")   and isfile   or nil
-        local http= Securi.Services.HttpService
-        if rf and http then
-            local path = self.folder .. "/" .. file .. ".json"
-            if isf and isf(path) then
-                local ok, content = rawPcall(rf, path)
-                if ok and content then
-                    local ok2, data = rawPcall(function() return http:JSONDecode(content) end)
-                    if ok2 and rawType(data) == "table" then return data end
-                end
-            end
-        end
-        return nil
-    end
-
-    -- Registrar en genv para reutilizar entre ejecuciones
-    local genv2 = (type(getgenv) == "function" and getgenv()) or nil
-    if genv2 then
-        genv2.Securi  = Securi
-        genv2.SecuriV4 = Securi
-    end
+    return nil
 end
 
--- ============================================================
--- SECCIÓN 2: SERVICIOS Y BOOTSTRAP DE PROTECCIONES
--- ============================================================
-local Players          = Securi.Services.Players
-local RunService       = Securi.Services.RunService
-local UserInputService = Securi.Services.UserInputService
-local Workspace        = Securi.Services.Workspace
-local Stats            = Securi.Services.Stats
-local LocalPlayer      = Securi:GetLocalPlayer()
+-- Registrar en genv
+local genv = getgenv and getgenv() or _G
+genv.__GDB_v5 = Securi
 
--- Anti-kick inmediato
-Securi.AntiKick:Install(LocalPlayer)
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 2 · SERVICIOS + CONFIG
+-- ══════════════════════════════════════════════════════════════════
 
--- Bloquear TODOS los remotes de telemetría identificados en el dump:
--- CheatFlag, ReportClient, ReportTouch, ReportUI, ReportFirst (confirmados en auditoría)
--- ClockProbe: sonda de timing para detectar manipulación de velocidad
--- espupdate: el juego trackea posiciones para su propio ESP interno
--- aimassisttarget: reporta a quién apuntas al servidor
--- AimShare: comparte aim con el servidor (UnreliableRemoteEvent)
--- Gunship2: evitar telemetría de combate aéreo
-local BLOCKED_REMOTES = {
-    "cheatflag", "reportclient", "reporttouch", "reportui", "reportfirst",
-    "clockprobe", "espupdate", "aimassisttarget", "aimshare",
-    "gunship2",
-}
-for _, name in ipairs(BLOCKED_REMOTES) do
-    Securi.Hooks:Block(name)
-end
+local Players        = safeCloneref(game:GetService("Players"))
+local RunService     = safeCloneref(game:GetService("RunService"))
+local UserInputService = safeCloneref(game:GetService("UserInputService"))
+local Workspace      = safeCloneref(game:GetService("Workspace"))
+local LocalPlayer    = Players.LocalPlayer
+local Camera         = Workspace.CurrentCamera
 
--- ============================================================
--- SECCIÓN 3: CONFIGURACIÓN PERSISTENTE
--- ============================================================
-local CFG_FILE = "GuerraBloques_v4"
-
-local DEFAULT = {
-    FOV_RADIUS        = 200,     -- Radio del FOV en px (20–1200)
-    OFFSET_X          = 0,       -- Desplazamiento horizontal del puntero
-    OFFSET_Y          = 0,       -- Desplazamiento vertical del puntero
-    AIM_SPEED         = 0.38,    -- Suavizado: 0.01 = muy suave, 1 = instantáneo
-    TARGET_PART       = "Head",  -- "Head" | "UpperTorso"
-    PREDICTION_FACTOR = 1.2,     -- Multiplicador de predicción (0 = off)
-    BULLET_SPEED      = 1600,    -- Velocidad de bala en studs/s
-    GRAVITY_COMP      = 0.12,    -- Compensación de gravedad (0–2)
-    WALL_CHECK        = true,    -- Verificar línea de visión antes de apuntar
-    FOLLOW_MOUSE      = true,    -- FOV sigue al mouse (true) o al centro de cámara (false)
-    MIN_ENEMY_HEALTH  = 1,       -- Descartar enemigos con HP <= este valor
-    -- NUEVO: control de qué botones activan el aimbot
-    AIM_ON_LMB        = true,    -- Clic IZQUIERDO activa aim
-    AIM_ON_RMB        = true,    -- Clic DERECHO activa aim
-    -- NUEVO: ESP de equipo propio (amigos)
-    SHOW_FRIENDLY_ESP = false,
-    -- NUEVO: Límite de distancia para ESP (studs, 0 = sin límite)
-    ESP_MAX_DISTANCE  = 0,
-}
-
-local Config = {}
-local loaded = Securi.Storage:Load(CFG_FILE)
-for k, v in pairs(DEFAULT) do
-    Config[k] = (loaded and loaded[k] ~= nil) and loaded[k] or v
-end
-
-local genv = (type(getgenv) == "function" and getgenv()) or _G
-if type(genv.__GBConfig) == "table" and not loaded then
-    for k, v in pairs(genv.__GBConfig) do
-        if Config[k] ~= nil then Config[k] = v end
-    end
-end
-
-local function SaveConfig()
-    genv.__GBConfig = Config
-    Securi.Storage:Save(CFG_FILE, Config)
-end
-
--- ============================================================
--- SECCIÓN 4: ESTADO GLOBAL DEL AIM
--- ============================================================
--- Número de botones actualmente presionados que activan el aim
-local aimPressCount = 0
-local isActive      = true
-local conns         = {}     -- Tabla de RBXSignalConnection para limpiar al cerrar
-local espCache      = {}     -- [character] = { Highlight, Billboard, Label, conns={} }
-local kinematics    = {}     -- [character] = { lastPos, vel, acc, lastTime }
-
--- Accessory de equipo (identificadores de equipo en este juego)
+-- Constantes de equipo
 local TEAM1_ACC = "Accessory (Keffiyeh_3)"
 local TEAM2_ACC = "Accessory (Afrika Balaklava)"
+local LIVE_FOLDER_NAME = "Live"
 
--- ============================================================
--- SECCIÓN 5: GUI PROTEGIDA
--- ============================================================
-local gui = Securi.GUI:Create()
-if not gui then
-    -- Fallback mínimo si no se pudo crear la GUI
-    gui = Instance.new("ScreenGui")
-    gui.Name = Securi._randName(20)
-    gui.ResetOnSpawn = false
-    gui.DisplayOrder = 2e9
-    gui.IgnoreGuiInset = true
-    gui.Archivable = false
-    local lp2 = Securi:GetLocalPlayer()
-    if lp2 then
-        local pg = lp2:FindFirstChildOfClass("PlayerGui")
-        if pg then gui.Parent = pg end
+-- Config por defecto
+local DEFAULT = {
+    FOV           = 120,
+    SPEED         = 0.18,       -- lerp aim
+    PREDICT       = true,
+    BULLET_SPEED  = 390,
+    GRAVITY       = 196,
+    OFF_X         = 0,
+    OFF_Y         = -0.15,
+    MAX_DIST      = 500,
+    AIM_LMB       = true,
+    AIM_RMB       = true,
+    WALL_CHECK    = true,
+    TARGET_PART   = "Head",     -- "Head" | "HumanoidRootPart"
+}
+
+-- Cargar/fusionar config guardada
+local saved = Securi.Storage:Load()
+if type(saved) == "table" then
+    for k, v in pairs(saved) do
+        if DEFAULT[k] ~= nil and type(v) == type(DEFAULT[k]) then
+            DEFAULT[k] = v
+        end
     end
 end
--- Ocultar la GUI completa del hook de namecall del juego
-Securi.Hooks:HideInstance(gui)
+local CFG = DEFAULT
 
--- Carpeta para highlights/billboards ESP
+local function SaveConfig()
+    Securi.Storage:Save(CFG)
+end
+
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 3 · ESTADO GLOBAL
+-- ══════════════════════════════════════════════════════════════════
+
+local aimPressCount = 0
+local conns         = {}
+local espCache      = {}   -- [char] = { box, nameLabel, distLabel, bar }
+local kinematics    = {}   -- [char] = { vel, lastPos, lastT }
+local renderName    = "GDB_Render_" .. Securi._randName
+
+local function isAiming()
+    return aimPressCount > 0
+end
+
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 4 · GUI PROTEGIDA
+-- ══════════════════════════════════════════════════════════════════
+
+local gui = Securi.GUI:Create("GDB_UI")
+
+-- Carpeta ESP
 local espFolder = Instance.new("Folder")
-Securi.GUI:SetName(espFolder, 16)
-espFolder.Archivable = false
+espFolder.Name   = "ESPFolder"
 espFolder.Parent = gui
 
--- Punto central (sigue al aim reference point)
-local centerDot = Instance.new("Frame")
-Securi.GUI:SetName(centerDot, 14)
-centerDot.AnchorPoint    = Vector2.new(0.5, 0.5)
-centerDot.Size           = UDim2.new(0, 6, 0, 6)
-centerDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-centerDot.BorderSizePixel  = 0
-centerDot.ZIndex           = 10
-centerDot.Parent           = gui
-Instance.new("UICorner", centerDot).CornerRadius = UDim.new(1, 0)
+-- ── Helper: crear label limpio ────────────────────────────────────
+local function mkLabel(parent, props)
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.TextColor3  = Color3.new(1,1,1)
+    lbl.Font        = Enum.Font.GothamBold
+    lbl.TextSize    = 14
+    lbl.Text        = ""
+    lbl.ZIndex      = 10
+    for k,v in pairs(props or {}) do lbl[k] = v end
+    lbl.Parent = parent
+    return lbl
+end
 
--- Punto de predicción (punto futuro proyectado)
+local function mkFrame(parent, props)
+    local f = Instance.new("Frame")
+    f.BackgroundColor3 = Color3.fromRGB(15,15,20)
+    f.BorderSizePixel  = 0
+    f.ZIndex           = 5
+    for k,v in pairs(props or {}) do f[k] = v end
+    f.Parent = parent
+    return f
+end
+
+local function mkButton(parent, props)
+    local b = Instance.new("TextButton")
+    b.BackgroundColor3 = Color3.fromRGB(40,40,50)
+    b.BorderSizePixel  = 0
+    b.TextColor3       = Color3.new(1,1,1)
+    b.Font             = Enum.Font.GothamBold
+    b.TextSize         = 13
+    b.AutoButtonColor  = false
+    b.ZIndex           = 11
+    for k,v in pairs(props or {}) do b[k] = v end
+    b.Parent = parent
+    return b
+end
+
+local function mkSeparator(parent, yPos)
+    local sep = mkLabel(parent, {
+        Size = UDim2.new(1,-16,0,12),
+        Position = UDim2.new(0,8,0,yPos),
+        Text = "──────────────────────────",
+        TextColor3 = Color3.fromRGB(60,60,80),
+        TextSize = 11,
+        Font = Enum.Font.Gotham,
+    })
+    return sep
+end
+
+-- ── Punto central (blanco / rojo activo) ──────────────────────────
+local centerDot = Instance.new("Frame")
+centerDot.Size              = UDim2.new(0,6,0,6)
+centerDot.AnchorPoint       = Vector2.new(0.5,0.5)
+centerDot.BackgroundColor3  = Color3.new(1,1,1)
+centerDot.BorderSizePixel   = 0
+centerDot.ZIndex            = 20
+centerDot.Parent            = gui
+Instance.new("UICorner", centerDot).CornerRadius = UDim.new(1,0)
+
+-- ── Punto de predicción (cian) ────────────────────────────────────
 local predDot = Instance.new("Frame")
-Securi.GUI:SetName(predDot, 14)
-predDot.AnchorPoint    = Vector2.new(0.5, 0.5)
-predDot.Size           = UDim2.new(0, 5, 0, 5)
-predDot.BackgroundColor3 = Color3.fromRGB(0, 255, 180)
+predDot.Size             = UDim2.new(0,5,0,5)
+predDot.AnchorPoint      = Vector2.new(0.5,0.5)
+predDot.BackgroundColor3 = Color3.fromRGB(0,220,255)
 predDot.BorderSizePixel  = 0
 predDot.Visible          = false
-predDot.ZIndex           = 10
+predDot.ZIndex           = 20
 predDot.Parent           = gui
-Instance.new("UICorner", predDot).CornerRadius = UDim.new(1, 0)
+Instance.new("UICorner", predDot).CornerRadius = UDim.new(1,0)
 
--- Círculo de FOV
+-- ── Círculo FOV ───────────────────────────────────────────────────
 local fovFrame = Instance.new("Frame")
-Securi.GUI:SetName(fovFrame, 14)
-fovFrame.AnchorPoint    = Vector2.new(0.5, 0.5)
-fovFrame.Size           = UDim2.new(0, Config.FOV_RADIUS*2, 0, Config.FOV_RADIUS*2)
+fovFrame.Size              = UDim2.new(0,0,0,0)
+fovFrame.AnchorPoint       = Vector2.new(0.5,0.5)
 fovFrame.BackgroundTransparency = 1
-fovFrame.ZIndex         = 5
-fovFrame.Parent         = gui
-Instance.new("UICorner", fovFrame).CornerRadius = UDim.new(1, 0)
-local fovStroke = Instance.new("UIStroke", fovFrame)
-fovStroke.Color       = Color3.fromRGB(255, 255, 255)
-fovStroke.Thickness   = 1.5
-fovStroke.Transparency = 0.5
+fovFrame.ZIndex            = 15
+fovFrame.Parent            = gui
+local fovStroke = Instance.new("UICorner", fovFrame)
+fovStroke.CornerRadius = UDim.new(1,0)
+local fovOutline = Instance.new("UIStroke", fovFrame)
+fovOutline.Color     = Color3.fromRGB(255,220,0)
+fovOutline.Thickness = 1.2
+fovOutline.Transparency = 0.35
 
--- Indicador de estado: LMB/RMB activo
-local stateLabel = Instance.new("TextLabel")
-Securi.GUI:SetName(stateLabel, 14)
-stateLabel.Size            = UDim2.new(0, 180, 0, 20)
-stateLabel.Position        = UDim2.new(0, 8, 0, 8)
-stateLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-stateLabel.BackgroundTransparency = 0.55
-stateLabel.TextColor3      = Color3.fromRGB(0, 220, 120)
-stateLabel.Font            = Enum.Font.GothamBold
-stateLabel.TextSize        = 11
-stateLabel.Text            = "🎯 AIM: OFF"
-stateLabel.ZIndex          = 20
-stateLabel.Parent          = gui
-Instance.new("UICorner", stateLabel).CornerRadius = UDim.new(0, 4)
+-- ── Etiqueta de estado (arriba-izquierda) ─────────────────────────
+local stateLabel = mkLabel(gui, {
+    Size     = UDim2.new(0,180,0,28),
+    Position = UDim2.new(0,10,0,10),
+    Text     = "🎯 AIM: OFF",
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextColor3 = Color3.fromRGB(160,160,180),
+    TextSize = 13,
+    ZIndex = 20,
+})
 
--- ============================================================
--- SECCIÓN 6: PANEL DE CONFIGURACIÓN (TECLA F)
--- ============================================================
-local cfgPanel = Instance.new("Frame")
-Securi.GUI:SetName(cfgPanel, 16)
-cfgPanel.Size           = UDim2.new(0, 300, 0, 530)
-cfgPanel.Position       = UDim2.new(0.5, -150, 0.5, -265)
-cfgPanel.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
-cfgPanel.BorderSizePixel  = 0
-cfgPanel.Visible          = false
-cfgPanel.Active           = true
-cfgPanel.Draggable        = true
-cfgPanel.ZIndex           = 50
-cfgPanel.Parent           = gui
-Instance.new("UICorner", cfgPanel).CornerRadius = UDim.new(0, 8)
-local cfgStroke = Instance.new("UIStroke", cfgPanel)
-cfgStroke.Color = Color3.fromRGB(50, 110, 255) ; cfgStroke.Thickness = 1.2 ; cfgStroke.Transparency = 0.35
+local targetLabel = mkLabel(gui, {
+    Size     = UDim2.new(0,220,0,22),
+    Position = UDim2.new(0,10,0,36),
+    Text     = "",
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextColor3 = Color3.fromRGB(0,200,255),
+    TextSize = 12,
+    ZIndex = 20,
+})
 
-local cfgTitle = Instance.new("TextLabel", cfgPanel)
-cfgTitle.Size = UDim2.new(1,0,0,36) ; cfgTitle.BackgroundTransparency = 1
-cfgTitle.Text = "🛡️ GUERRA DE BLOQUES v4 — AIM + ESP"
-cfgTitle.TextColor3 = Color3.fromRGB(255,255,255) ; cfgTitle.Font = Enum.Font.GothamBold
-cfgTitle.TextSize = 12 ; cfgTitle.ZIndex = 51
+local function updateStateLabel(active, name)
+    if active then
+        stateLabel.Text      = "🎯 AIM: ACTIVO"
+        stateLabel.TextColor3 = Color3.fromRGB(80,255,120)
+        centerDot.BackgroundColor3 = Color3.fromRGB(255,60,60)
+    else
+        stateLabel.Text      = "🎯 AIM: OFF"
+        stateLabel.TextColor3 = Color3.fromRGB(160,160,180)
+        centerDot.BackgroundColor3 = Color3.new(1,1,1)
+    end
+    targetLabel.Text = name and ("▶ "..name) or ""
+end
 
-local function mkInput(label, posY, default)
-    local lbl = Instance.new("TextLabel", cfgPanel)
-    lbl.Size = UDim2.new(0,170,0,26) ; lbl.Position = UDim2.new(0,10,0,posY)
-    lbl.BackgroundTransparency = 1 ; lbl.Text = label
-    lbl.TextColor3 = Color3.fromRGB(200,200,215) ; lbl.Font = Enum.Font.GothamMedium
-    lbl.TextSize = 11 ; lbl.TextXAlignment = Enum.TextXAlignment.Left ; lbl.ZIndex = 51
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 4b · PANEL DE CONFIGURACIÓN
+-- ══════════════════════════════════════════════════════════════════
 
-    local box = Instance.new("TextBox", cfgPanel)
-    box.Size = UDim2.new(0,100,0,22) ; box.Position = UDim2.new(0,185,0,posY+2)
-    box.BackgroundColor3 = Color3.fromRGB(28,28,38)
-    box.TextColor3 = Color3.fromRGB(255,255,255)
-    box.Text = tostring(default) ; box.Font = Enum.Font.GothamSemibold
-    box.TextSize = 11 ; box.ClearTextOnFocus = false ; box.ZIndex = 51
-    Instance.new("UICorner", box).CornerRadius = UDim.new(0,4)
+local PANEL_W, PANEL_H = 300, 510
+local cfgPanel = mkFrame(gui, {
+    Size     = UDim2.new(0,PANEL_W,0,PANEL_H),
+    Position = UDim2.new(0.5,-PANEL_W/2, 0.5,-PANEL_H/2),
+    BackgroundColor3 = Color3.fromRGB(12,12,18),
+    Visible  = false,
+    ZIndex   = 30,
+})
+local panelCorner = Instance.new("UICorner", cfgPanel)
+panelCorner.CornerRadius = UDim.new(0,10)
+local panelStroke = Instance.new("UIStroke", cfgPanel)
+panelStroke.Color     = Color3.fromRGB(60,60,100)
+panelStroke.Thickness = 1.5
+
+-- Título
+mkLabel(cfgPanel, {
+    Size = UDim2.new(1,-16,0,32),
+    Position = UDim2.new(0,8,0,8),
+    Text = "⚔  GUERRA DE BLOQUES",
+    TextSize = 15,
+    Font = Enum.Font.GothamBold,
+    TextColor3 = Color3.fromRGB(255,220,60),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 32,
+})
+mkLabel(cfgPanel, {
+    Size = UDim2.new(1,-16,0,18),
+    Position = UDim2.new(0,8,0,38),
+    Text = "v5  ·  Nivel 3  ·  [F] cerrar  [DEL] apagar",
+    TextSize = 11,
+    Font = Enum.Font.Gotham,
+    TextColor3 = Color3.fromRGB(90,90,120),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 32,
+})
+mkSeparator(cfgPanel, 60)
+
+-- ── Creador de fila input ──────────────────────────────────────────
+local inputRows = {}
+local function addInputRow(label, cfgKey, yPos, isNum)
+    mkLabel(cfgPanel, {
+        Size = UDim2.new(0,130,0,22),
+        Position = UDim2.new(0,12, 0, yPos),
+        Text = label,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextSize = 12,
+        ZIndex = 32,
+    })
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(0,110,0,22)
+    box.Position = UDim2.new(0, 170, 0, yPos)
+    box.BackgroundColor3 = Color3.fromRGB(25,25,38)
+    box.BorderSizePixel = 0
+    box.TextColor3 = Color3.fromRGB(220,220,255)
+    box.Font = Enum.Font.Gotham
+    box.TextSize = 12
+    box.Text = tostring(CFG[cfgKey])
+    box.PlaceholderText = tostring(DEFAULT[cfgKey])
+    box.ClearTextOnFocus = false
+    box.ZIndex = 33
+    box.Parent = cfgPanel
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0,5)
+    inputRows[cfgKey] = box
     return box
 end
 
-local function mkToggleBtn(label, posY, initialOn, colorOn, colorOff)
-    local btn = Instance.new("TextButton", cfgPanel)
-    btn.Size = UDim2.new(0,278,0,28) ; btn.Position = UDim2.new(0,11,0,posY)
-    btn.BackgroundColor3 = initialOn and colorOn or colorOff
-    btn.TextColor3 = Color3.fromRGB(255,255,255) ; btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 11 ; btn.Text = label ; btn.ZIndex = 51
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
+-- ── Creador de toggle ──────────────────────────────────────────────
+local toggleRows = {}
+local function addToggleRow(label, cfgKey, yPos)
+    mkLabel(cfgPanel, {
+        Size = UDim2.new(0,160,0,22),
+        Position = UDim2.new(0,12, 0, yPos),
+        Text = label,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextSize = 12,
+        ZIndex = 32,
+    })
+    local btn = mkButton(cfgPanel, {
+        Size = UDim2.new(0,80,0,22),
+        Position = UDim2.new(0,200, 0, yPos),
+        Text = CFG[cfgKey] and "✓ SÍ" or "✗ NO",
+        TextColor3 = CFG[cfgKey] and Color3.fromRGB(80,255,120) or Color3.fromRGB(255,80,80),
+        ZIndex = 33,
+    })
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,5)
+    toggleRows[cfgKey] = btn
     return btn
 end
 
-local iF           = mkInput("FOV Radio (px):",          44, Config.FOV_RADIUS)
-local iSpeed       = mkInput("Suavizado Aim (0.01-1):",  74, Config.AIM_SPEED)
-local iPred        = mkInput("Factor Predicción (0-5):", 104, Config.PREDICTION_FACTOR)
-local iBullet      = mkInput("Vel. Bala (studs/s):",    134, Config.BULLET_SPEED)
-local iGrav        = mkInput("Comp. Gravedad (0-2):",   164, Config.GRAVITY_COMP)
-local iOffX        = mkInput("Offset X (px):",          194, Config.OFFSET_X)
-local iOffY        = mkInput("Offset Y (px):",          224, Config.OFFSET_Y)
-local iMaxDist     = mkInput("ESP Distancia Max (0=∞):", 254, Config.ESP_MAX_DISTANCE)
+-- Filas numéricas
+mkLabel(cfgPanel, {
+    Size=UDim2.new(1,-16,0,16), Position=UDim2.new(0,8,0,74),
+    Text="PUNTERÍA", TextSize=11, Font=Enum.Font.GothamBold,
+    TextColor3=Color3.fromRGB(255,180,60), TextXAlignment=Enum.TextXAlignment.Left, ZIndex=32,
+})
+addInputRow("FOV  (px)",          "FOV",         94,  true)
+addInputRow("Velocidad lerp",     "SPEED",       120, true)
+addInputRow("Desplaz. X",         "OFF_X",       146, true)
+addInputRow("Desplaz. Y",         "OFF_Y",       172, true)
+addInputRow("Dist. máxima (m)",   "MAX_DIST",    198, true)
+mkSeparator(cfgPanel, 224)
 
-local btnTarget    = mkToggleBtn(
-    Config.TARGET_PART == "Head" and "Prioridad: CABEZA 💀" or "Prioridad: CUERPO 🫁",
-    290, Config.TARGET_PART == "Head",
-    Color3.fromRGB(50,115,245), Color3.fromRGB(240,140,45)
-)
-local btnLMB       = mkToggleBtn(
-    Config.AIM_ON_LMB and "🖱️ LMB: ACTIVADO" or "🖱️ LMB: DESACTIVADO",
-    326, Config.AIM_ON_LMB,
-    Color3.fromRGB(40,160,100), Color3.fromRGB(80,80,100)
-)
-local btnRMB       = mkToggleBtn(
-    Config.AIM_ON_RMB and "🖱️ RMB: ACTIVADO" or "🖱️ RMB: DESACTIVADO",
-    362, Config.AIM_ON_RMB,
-    Color3.fromRGB(40,160,100), Color3.fromRGB(80,80,100)
-)
-local btnWallCheck = mkToggleBtn(
-    Config.WALL_CHECK and "✅ Wall Check: ON" or "❌ Wall Check: OFF",
-    398, Config.WALL_CHECK,
-    Color3.fromRGB(0,140,220), Color3.fromRGB(80,80,100)
-)
-local btnClose     = mkToggleBtn(
-    "🛑 APAGAR Y LIMPIAR RASTROS", 460,
-    false, Color3.fromRGB(210,40,50), Color3.fromRGB(210,40,50)
-)
+mkLabel(cfgPanel, {
+    Size=UDim2.new(1,-16,0,16), Position=UDim2.new(0,8,0,238),
+    Text="PROYECTIL", TextSize=11, Font=Enum.Font.GothamBold,
+    TextColor3=Color3.fromRGB(100,180,255), TextXAlignment=Enum.TextXAlignment.Left, ZIndex=32,
+})
+addInputRow("Veloc. bala (u/s)",  "BULLET_SPEED", 258, true)
+addInputRow("Gravedad (u/s²)",    "GRAVITY",      284, true)
+mkSeparator(cfgPanel, 312)
 
--- ============================================================
--- SECCIÓN 7: EVENTOS DE CONFIGURACIÓN
--- ============================================================
-local function bindInput(box, cfgKey, minV, maxV, isFloat, onChanged)
-    table.insert(conns, box.FocusLost:Connect(function()
-        local val = tonumber(box.Text)
-        if val then
-            if minV and maxV then val = math.clamp(val, minV, maxV) end
-            if not isFloat then val = math.floor(val) end
-            Config[cfgKey] = val
-            box.Text = tostring(val)
-            SaveConfig()
-            if onChanged then onChanged(val) end
-        else
-            box.Text = tostring(Config[cfgKey])
+mkLabel(cfgPanel, {
+    Size=UDim2.new(1,-16,0,16), Position=UDim2.new(0,8,0,326),
+    Text="OPCIONES", TextSize=11, Font=Enum.Font.GothamBold,
+    TextColor3=Color3.fromRGB(180,100,255), TextXAlignment=Enum.TextXAlignment.Left, ZIndex=32,
+})
+addToggleRow("LMB activa aim",    "AIM_LMB",    348)
+addToggleRow("RMB activa aim",    "AIM_RMB",    374)
+addToggleRow("Chequeo de pared",  "WALL_CHECK", 400)
+addToggleRow("Predicción",        "PREDICT",    426)
+mkSeparator(cfgPanel, 452)
+
+-- Botón parte objetivo
+local partBtn = mkButton(cfgPanel, {
+    Size = UDim2.new(1,-24,0,26),
+    Position = UDim2.new(0,12, 0, 468),
+    Text = "Parte: "..CFG.TARGET_PART,
+    TextSize = 12,
+    ZIndex = 33,
+})
+Instance.new("UICorner", partBtn).CornerRadius = UDim.new(0,5)
+partBtn.MouseButton1Click:Connect(function()
+    CFG.TARGET_PART = CFG.TARGET_PART == "Head" and "HumanoidRootPart" or "Head"
+    partBtn.Text = "Parte: "..CFG.TARGET_PART
+    SaveConfig()
+end)
+
+-- Botón cerrar
+local closeBtn = mkButton(cfgPanel, {
+    Size = UDim2.new(0,80,0,26),
+    Position = UDim2.new(1,-92, 1,-36),
+    Text = "✕ Cerrar",
+    BackgroundColor3 = Color3.fromRGB(160,30,30),
+    TextSize = 12,
+    ZIndex = 34,
+})
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,5)
+closeBtn.MouseButton1Click:Connect(function()
+    cfgPanel.Visible = false
+end)
+
+-- Arrastrar panel
+do
+    local dragging, dragStart, startPos
+    cfgPanel.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging  = true
+            dragStart = inp.Position
+            startPos  = cfgPanel.Position
         end
-    end))
+    end)
+    cfgPanel.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+    cfgPanel.InputChanged:Connect(function(inp)
+        if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = inp.Position - dragStart
+            cfgPanel.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
 end
 
-bindInput(iF,       "FOV_RADIUS",        20, 1200, false, function(v)
-    fovFrame.Size = UDim2.new(0, v*2, 0, v*2)
-end)
-bindInput(iSpeed,   "AIM_SPEED",         0.01, 1,  true)
-bindInput(iPred,    "PREDICTION_FACTOR", 0,    5,  true)
-bindInput(iBullet,  "BULLET_SPEED",      100,  10000, false)
-bindInput(iGrav,    "GRAVITY_COMP",      0,    2,  true)
-bindInput(iOffX,    "OFFSET_X",          nil,  nil, true)
-bindInput(iOffY,    "OFFSET_Y",          nil,  nil, true)
-bindInput(iMaxDist, "ESP_MAX_DISTANCE",  0,    10000, false)
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 5 · LÓGICA DE EQUIPOS + ESTADO
+-- ══════════════════════════════════════════════════════════════════
 
-table.insert(conns, btnTarget.MouseButton1Click:Connect(function()
-    Config.TARGET_PART = Config.TARGET_PART == "Head" and "UpperTorso" or "Head"
-    local isHead = Config.TARGET_PART == "Head"
-    btnTarget.Text = isHead and "Prioridad: CABEZA 💀" or "Prioridad: CUERPO 🫁"
-    btnTarget.BackgroundColor3 = isHead and Color3.fromRGB(50,115,245) or Color3.fromRGB(240,140,45)
-    SaveConfig()
-end))
-
-table.insert(conns, btnLMB.MouseButton1Click:Connect(function()
-    Config.AIM_ON_LMB = not Config.AIM_ON_LMB
-    btnLMB.Text = Config.AIM_ON_LMB and "🖱️ LMB: ACTIVADO" or "🖱️ LMB: DESACTIVADO"
-    btnLMB.BackgroundColor3 = Config.AIM_ON_LMB and Color3.fromRGB(40,160,100) or Color3.fromRGB(80,80,100)
-    SaveConfig()
-end))
-
-table.insert(conns, btnRMB.MouseButton1Click:Connect(function()
-    Config.AIM_ON_RMB = not Config.AIM_ON_RMB
-    btnRMB.Text = Config.AIM_ON_RMB and "🖱️ RMB: ACTIVADO" or "🖱️ RMB: DESACTIVADO"
-    btnRMB.BackgroundColor3 = Config.AIM_ON_RMB and Color3.fromRGB(40,160,100) or Color3.fromRGB(80,80,100)
-    SaveConfig()
-end))
-
-table.insert(conns, btnWallCheck.MouseButton1Click:Connect(function()
-    Config.WALL_CHECK = not Config.WALL_CHECK
-    btnWallCheck.Text = Config.WALL_CHECK and "✅ Wall Check: ON" or "❌ Wall Check: OFF"
-    btnWallCheck.BackgroundColor3 = Config.WALL_CHECK and Color3.fromRGB(0,140,220) or Color3.fromRGB(80,80,100)
-    SaveConfig()
-end))
-
--- ============================================================
--- SECCIÓN 8: FUNCIONES AUXILIARES DE LÓGICA DE JUEGO
--- ============================================================
 local function getTeam(char)
     if not char then return nil end
-    if char:FindFirstChild(TEAM1_ACC) then return 1 end
-    if char:FindFirstChild(TEAM2_ACC) then return 2 end
-    local attr = char:GetAttribute("Team") or char:GetAttribute("Side")
-    if attr ~= nil then return attr end
-    local plr = Players:GetPlayerFromCharacter(char)
-    if plr and plr.Team then return plr.Team.Name end
-    return nil
+    for _, acc in ipairs(char:GetChildren()) do
+        if acc:IsA("Accessory") then
+            if acc.Name == TEAM1_ACC then return 1 end
+            if acc.Name == TEAM2_ACC then return 2 end
+        end
+    end
+    return 0
 end
 
 local function isAlive(char, hum, root)
     if not char or not hum or not root then return false end
-    if not char.Parent then return false end
-    if hum.Health <= 0 or hum.Health < Config.MIN_ENEMY_HEALTH then return false end
-    local state = hum:GetState()
-    if state == Enum.HumanoidStateType.Dead
-    or state == Enum.HumanoidStateType.Physics then return false end
-    if hum.PlatformStand then return false end
-    if char:GetAttribute("Downed") or char:GetAttribute("Knocked")
-    or char:GetAttribute("IsDead") then return false end
-    if char:FindFirstChild("Downed") or char:FindFirstChild("RevivePrompt") then
-        return false
-    end
+    if not hum.Parent then return false end
+    if hum.Health <= 0 then return false end
     return true
 end
 
 local function getTargetPart(char)
     if not char then return nil end
-    local p = char:FindFirstChild(Config.TARGET_PART)
-    if p and p:IsA("BasePart") then return p end
-    if Config.TARGET_PART == "UpperTorso" then
-        return char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+    local part = char:FindFirstChild(CFG.TARGET_PART)
+    if not part and CFG.TARGET_PART == "Head" then
+        part = char:FindFirstChild("HumanoidRootPart")
     end
-    return char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+    return part
 end
 
--- RaycastParams reutilizables (evita garbage)
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 6 · VISIBILIDAD
+-- ══════════════════════════════════════════════════════════════════
+
 local rayP = RaycastParams.new()
-rayP.FilterType  = Enum.RaycastFilterType.Exclude
-rayP.IgnoreWater = true
+rayP.FilterType = Enum.RaycastFilterType.Exclude
 
-local function isVisible(targetPart, targetChar)
-    local cam = Workspace.CurrentCamera
-    if not cam or not targetPart then return false end
-    local origin = cam.CFrame.Position
-    local dir    = targetPart.Position - origin
-    rayP.FilterDescendantsInstances = {
-        LocalPlayer and LocalPlayer.Character, targetChar, cam
-    }
-    local hit = Workspace:Raycast(origin, dir, rayP)
-    return hit == nil
+local function isVisible(targetPart, targetChar, myChar)
+    if not CFG.WALL_CHECK then return true end
+    if not targetPart or not myChar then return false end
+    local origin = Camera.CFrame.Position
+    local direction = targetPart.Position - origin
+    rayP.FilterDescendantsInstances = {myChar, targetChar}
+    local result = Workspace:Raycast(origin, direction, rayP)
+    if not result then return true end
+    -- hit algo que pertenece al targetChar → visible
+    local hit = result.Instance
+    local parent = hit.Parent
+    return parent == targetChar or (parent and parent.Parent == targetChar)
 end
 
--- ============================================================
--- SECCIÓN 9: PREDICCIÓN CINEMÁTICA DE SEGUNDO ORDEN
--- ============================================================
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 7 · PREDICCIÓN CINEMÁTICA
+-- ══════════════════════════════════════════════════════════════════
+
 local function getPingS()
-    local ok, v = pcall(function()
-        if LocalPlayer and type(LocalPlayer.GetNetworkPing) == "function" then
-            return LocalPlayer:GetNetworkPing()
-        end
-        return Stats.Network.ServerStatsItem["Data Ping"]:GetValue() / 1000
-    end)
-    return (ok and type(v) == "number") and math.clamp(v, 0, 0.35) or 0.065
+    local ok, v = pcall(function() return LocalPlayer:GetNetworkPing() end)
+    return (ok and type(v) == "number") and v or 0.065
 end
 
 local function updateKinematics(char, root)
-    local now  = os.clock()
-    local pos  = root.Position
-    local rawV = root.AssemblyLinearVelocity or Vector3.zero
-    local d    = kinematics[char]
-    if not d then
-        kinematics[char] = { pos=pos, vel=rawV, acc=Vector3.zero, t=now }
-        return rawV, Vector3.zero
+    local now = tick()
+    local k = kinematics[char]
+    if not k then
+        kinematics[char] = { vel = Vector3.zero, lastPos = root.Position, lastT = now }
+        return
     end
-    local dt = math.max(now - d.t, 1/240)
-    if dt > 0.3 then
-        kinematics[char] = { pos=pos, vel=rawV, acc=Vector3.zero, t=now }
-        return rawV, Vector3.zero
+    local dt = now - k.lastT
+    if dt > 0.001 then
+        k.vel     = (root.Position - k.lastPos) / dt
+        k.lastPos = root.Position
+        k.lastT   = now
     end
-    local dv    = (pos - d.pos) / dt
-    local mVel  = rawV.Magnitude > 0.5 and (rawV*0.6 + dv*0.4) or dv
-    local aV    = math.clamp(dt * 18, 0.15, 0.85)
-    local nVel  = d.vel:Lerp(mVel, aV)
-    local rawA  = (nVel - d.vel) / dt
-    rawA = Vector3.new(
-        math.clamp(rawA.X, -200, 200),
-        math.clamp(rawA.Y, -80,   80),
-        math.clamp(rawA.Z, -200, 200)
-    )
-    local aA    = math.clamp(dt * 10, 0.1, 0.5)
-    local nAcc  = d.acc:Lerp(rawA, aA)
-    kinematics[char] = { pos=pos, vel=nVel, acc=nAcc, t=now }
-    return nVel, nAcc
 end
 
-local function predictPos(char, targetPart, root)
-    local cam = Workspace.CurrentCamera
-    if not cam or not targetPart or not root then
-        return targetPart and targetPart.Position or Vector3.zero
+local function predictPos(char, targetPart, root, camPos)
+    if not CFG.PREDICT then return targetPart.Position end
+    local k = kinematics[char]
+    local vel = k and k.vel or Vector3.zero
+    local ping = getPingS()
+    local dist = (targetPart.Position - camPos).Magnitude
+    local tFlight = dist / math.max(CFG.BULLET_SPEED, 1)
+    -- iterar para convergencia
+    for _ = 1, 3 do
+        local predictedPos = targetPart.Position + vel * (ping + tFlight)
+        local newDist = (predictedPos - camPos).Magnitude
+        tFlight = newDist / math.max(CFG.BULLET_SPEED, 1)
     end
-    local base = targetPart.Position
-    if Config.PREDICTION_FACTOR <= 0 then return base end
-    local vel, acc = updateKinematics(char, root)
-    if vel.Magnitude < 0.5 then return base end
-    local camPos = cam.CFrame.Position
-    local dist   = (base - camPos).Magnitude
-    local bs     = math.max(Config.BULLET_SPEED, 100)
-    -- Tiempo de vuelo con iteración (más preciso)
-    local tFlight = dist / bs
-    local mid     = base + vel * tFlight
-    tFlight       = (mid - camPos).Magnitude / bs
-    local ping    = getPingS()
-    local T       = math.clamp((tFlight + ping * 0.5) * Config.PREDICTION_FACTOR, 0, 0.7)
-    local disp    = vel * T + acc * (0.5 * T * T)
-    local drop    = Vector3.new(0, 0.5 * Workspace.Gravity * Config.GRAVITY_COMP * tFlight^2, 0)
-    local predicted = base + disp + drop
-    -- Clamp al suelo si baja demasiado
-    if disp.Y < 0 then
-        rayP.FilterDescendantsInstances = { LocalPlayer and LocalPlayer.Character, char, cam }
-        local fh = Workspace:Raycast(base, Vector3.new(0, disp.Y - 2, 0), rayP)
-        if fh then
-            predicted = Vector3.new(predicted.X, math.max(predicted.Y, fh.Position.Y + 1.5), predicted.Z)
-        end
-    end
-    return predicted
+    local predicted = targetPart.Position + vel * (ping + tFlight)
+    -- compensación de gravedad
+    local dropY = 0.5 * CFG.GRAVITY * tFlight * tFlight
+    return predicted + Vector3.new(CFG.OFF_X, dropY + CFG.OFF_Y, 0)
 end
 
--- ============================================================
--- SECCIÓN 10: SISTEMA ESP
--- ============================================================
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 8 · ESP
+-- ══════════════════════════════════════════════════════════════════
+
 local function clearESP(char)
     local e = espCache[char]
     if e then
-        for _, c in ipairs(e.conns or {}) do pcall(function() c:Disconnect() end) end
-        if e.Highlight  then pcall(function() e.Highlight:Destroy()  end) end
-        if e.Billboard  then pcall(function() e.Billboard:Destroy()  end) end
+        for _, inst in pairs(e) do
+            if typeof(inst) == "Instance" and inst.Parent then
+                inst:Destroy()
+            end
+        end
         espCache[char] = nil
     end
     kinematics[char] = nil
 end
 
-local function makeESP(char, hum, root, myRootPos)
-    local e = espCache[char]
+local function makeOrUpdateESP(char, hum, root, myRootPos, myChar)
+    if char == myChar then return end
 
-    -- ---- Crear si no existe ----
-    if not e then
-        e = { conns = {} }
-
-        -- Highlight (siempre visible a través de paredes)
-        local hl = Instance.new("Highlight")
-        Securi.GUI:SetName(hl, 14)
-        hl.Adornee           = char
-        hl.FillColor         = Color3.fromRGB(255,35,35)
-        hl.FillTransparency  = 0.45
-        hl.OutlineColor      = Color3.fromRGB(255,255,255)
-        hl.OutlineTransparency = 0.1
-        hl.DepthMode         = Enum.HighlightDepthMode.AlwaysOnTop
-        hl.Archivable        = false
-        hl.Parent            = espFolder
-        e.Highlight          = hl
-
-        -- Billboard con nombre + HP + distancia
-        local bb = Instance.new("BillboardGui")
-        Securi.GUI:SetName(bb, 14)
-        bb.Adornee    = root
-        bb.Size       = UDim2.new(0,130,0,42)
-        bb.StudsOffset = Vector3.new(0, 3.8, 0)
-        bb.AlwaysOnTop = true
-        bb.Archivable  = false
-        bb.Parent      = espFolder
-        e.Billboard    = bb
-
-        local lbl = Instance.new("TextLabel", bb)
-        lbl.Size = UDim2.new(1,0,1,0) ; lbl.BackgroundTransparency = 1
-        lbl.TextColor3 = Color3.fromRGB(255,100,100)
-        lbl.TextStrokeTransparency = 0
-        lbl.Font = Enum.Font.GothamBold ; lbl.TextSize = 12
-        e.Label = lbl
-
-        -- Auto-limpieza reactiva
-        local function autoClear() clearESP(char) end
-        table.insert(e.conns, hum.HealthChanged:Connect(function(hp)
-            if hp <= 0 or hp < Config.MIN_ENEMY_HEALTH then autoClear() end
-        end))
-        table.insert(e.conns, hum.Died:Connect(autoClear))
-        table.insert(e.conns, char.AncestryChanged:Connect(function(_, p)
-            if not p then autoClear() end
-        end))
-
-        espCache[char] = e
-    end
-
-    -- ---- Actualizar datos ----
-    local dist = (myRootPos - root.Position).Magnitude
-    -- Si hay límite de distancia, ocultar los que estén lejos
-    if Config.ESP_MAX_DISTANCE > 0 and dist > Config.ESP_MAX_DISTANCE then
-        e.Billboard.Enabled  = false
-        e.Highlight.Enabled  = false
+    local dist = (root.Position - myRootPos).Magnitude
+    if dist > CFG.MAX_DIST then
+        clearESP(char)
         return
     end
-    e.Billboard.Enabled = true
-    e.Highlight.Enabled = true
 
-    local tPart   = getTargetPart(char)
-    local visible = tPart and isVisible(tPart, char)
+    -- Crear entry si no existe
+    if not espCache[char] then
+        local entry = {}
 
-    -- Colores: verde = visible, rojo = detrás de pared
-    if visible then
-        e.Label.TextColor3       = Color3.fromRGB(55,255,85)
-        e.Highlight.FillColor    = Color3.fromRGB(40,220,80)
-        e.Highlight.FillTransparency = 0.55
-    else
-        e.Label.TextColor3       = Color3.fromRGB(255,90,90)
-        e.Highlight.FillColor    = Color3.fromRGB(255,35,35)
-        e.Highlight.FillTransparency = 0.45
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name           = "GDB_ESP_"..char.Name
+        billboard.Adornee        = root
+        billboard.Size           = UDim2.new(0,60,0,70)
+        billboard.StudsOffset    = Vector3.new(0,2.5,0)
+        billboard.AlwaysOnTop    = true
+        billboard.ResetOnSpawn   = false
+        billboard.Parent         = espFolder
+
+        local box = Instance.new("Frame", billboard)
+        box.Size                 = UDim2.new(1,0,1,0)
+        box.BackgroundTransparency = 1
+        box.BorderSizePixel      = 0
+        local boxStroke = Instance.new("UIStroke", box)
+        boxStroke.Thickness = 1.5
+
+        local nameLabel = Instance.new("TextLabel", billboard)
+        nameLabel.Size              = UDim2.new(1,0,0,16)
+        nameLabel.Position          = UDim2.new(0,0,0,-18)
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Font              = Enum.Font.GothamBold
+        nameLabel.TextSize          = 11
+        nameLabel.TextStrokeTransparency = 0.5
+
+        local distLabel = Instance.new("TextLabel", billboard)
+        distLabel.Size              = UDim2.new(1,0,0,14)
+        distLabel.Position          = UDim2.new(0,0,1,2)
+        distLabel.BackgroundTransparency = 1
+        distLabel.Font              = Enum.Font.Gotham
+        distLabel.TextSize          = 10
+        distLabel.TextStrokeTransparency = 0.5
+
+        local hpBar = Instance.new("Frame", billboard)
+        hpBar.Size               = UDim2.new(0,4,1,0)
+        hpBar.Position           = UDim2.new(1,3,0,0)
+        hpBar.BackgroundColor3   = Color3.fromRGB(40,40,40)
+        hpBar.BorderSizePixel    = 0
+        local hpFill = Instance.new("Frame", hpBar)
+        hpFill.Size              = UDim2.new(1,0,1,0)
+        hpFill.AnchorPoint       = Vector2.new(0,1)
+        hpFill.Position          = UDim2.new(0,0,1,0)
+        hpFill.BackgroundColor3  = Color3.fromRGB(80,255,100)
+        hpFill.BorderSizePixel   = 0
+
+        entry.billboard = billboard
+        entry.boxStroke = boxStroke
+        entry.nameLabel = nameLabel
+        entry.distLabel = distLabel
+        entry.hpFill    = hpFill
+        espCache[char]  = entry
     end
 
-    -- Obtener nombre real del jugador para el label
-    local plr  = Players:GetPlayerFromCharacter(char)
-    local name = plr and plr.DisplayName or char.Name
-    e.Label.Text = string.format(
-        "%s\n[%d HP] [%dm]",
-        name, math.floor(hum.Health), math.floor(dist)
-    )
+    local e = espCache[char]
+    local hp    = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+    local isEnemy = getTeam(char) ~= getTeam(myChar)
+    local color = isEnemy and Color3.fromRGB(255,60,60) or Color3.fromRGB(60,180,255)
+
+    e.boxStroke.Color    = color
+    e.nameLabel.Text     = char.Name
+    e.nameLabel.TextColor3 = color
+    e.distLabel.Text     = string.format("%.0fm", dist)
+    e.distLabel.TextColor3 = Color3.fromRGB(200,200,200)
+    e.hpFill.Size        = UDim2.new(1,0, hp, 0)
+    e.hpFill.BackgroundColor3 = Color3.fromHSV(hp*0.33, 1, 1)
 end
 
--- ============================================================
--- SECCIÓN 11: BUCLE DE ESP + CINEMÁTICA
--- ============================================================
-local function updateESP(dt)
-    local myChar = LocalPlayer and LocalPlayer.Character
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 9 · BUCLE ESP
+-- ══════════════════════════════════════════════════════════════════
+
+local function updateAllESP()
+    local myChar = LocalPlayer.Character
     if not myChar then return end
     local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-    local myTeam = getTeam(myChar)
-    if not myRoot or not myTeam then return end
+    if not myRoot then return end
+    local myRootPos = myRoot.Position
 
-    local live = Workspace:FindFirstChild("Live")
-    if not live then return end
+    local liveFolder = Workspace:FindFirstChild(LIVE_FOLDER_NAME)
+    if not liveFolder then return end
 
-    local activeSet = {}
-
-    for _, char in ipairs(live:GetChildren()) do
-        if char ~= myChar then
-            local eTeam = getTeam(char)
-            -- Solo enemigos (distintos equipos)
-            if eTeam and eTeam ~= myTeam then
-                local hum  = char:FindFirstChildOfClass("Humanoid")
-                local root = char:FindFirstChild("HumanoidRootPart")
-                if isAlive(char, hum, root) then
-                    activeSet[char] = true
-                    updateKinematics(char, root)
-                    makeESP(char, hum, root, myRoot.Position)
-                else
-                    clearESP(char)
-                end
-            else
-                -- Limpiar amigos de la caché (no mostrar ESP de aliados por defecto)
-                clearESP(char)
-            end
+    local seen = {}
+    for _, char in ipairs(liveFolder:GetChildren()) do
+        local hum  = char:FindFirstChildOfClass("Humanoid")
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if hum and root and isAlive(char, hum, root) then
+            seen[char] = true
+            updateKinematics(char, root)
+            makeOrUpdateESP(char, hum, root, myRootPos, myChar)
         end
     end
 
-    -- Limpiar personajes que ya no están en Live
-    for c in pairs(espCache) do
-        if not activeSet[c] then clearESP(c) end
+    -- Limpiar obsoletos
+    for char in pairs(espCache) do
+        if not seen[char] then clearESP(char) end
     end
 end
 
--- ============================================================
--- SECCIÓN 12: SELECCIÓN DE OBJETIVO
--- ============================================================
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 10 · SELECCIÓN DE OBJETIVO
+-- ══════════════════════════════════════════════════════════════════
+
 local function getAimRef()
-    local cam = Workspace.CurrentCamera
-    if Config.FOLLOW_MOUSE then
-        local mp = UserInputService:GetMouseLocation()
-        return Vector2.new(mp.X + Config.OFFSET_X, mp.Y + Config.OFFSET_Y)
-    end
-    local vp = cam and cam.ViewportSize or Vector2.new(1920, 1080)
-    return Vector2.new(vp.X*0.5 + Config.OFFSET_X, vp.Y*0.5 + Config.OFFSET_Y)
+    return Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
 end
 
-local function getBestTarget(aimCenter)
-    local cam    = Workspace.CurrentCamera
-    local myChar = LocalPlayer and LocalPlayer.Character
-    if not cam or not myChar then return nil, nil, nil end
-    local myTeam = getTeam(myChar)
-    if not myTeam then return nil, nil, nil end
-    local live = Workspace:FindFirstChild("Live")
-    if not live then return nil, nil, nil end
+local function getBestTarget(aimCenter, myChar, myTeam, cam)
+    local liveFolder = Workspace:FindFirstChild(LIVE_FOLDER_NAME)
+    if not liveFolder then return nil end
 
-    local bestChar, bestPart, bestRoot
-    local bestDist = Config.FOV_RADIUS   -- Sólo buscar dentro del FOV
+    local bestChar, bestPart, bestRoot, bestFOV
+    bestFOV = CFG.FOV
 
-    for _, char in ipairs(live:GetChildren()) do
-        if char ~= myChar then
-            local eTeam = getTeam(char)
-            if eTeam and eTeam ~= myTeam then
-                local hum  = char:FindFirstChildOfClass("Humanoid")
-                local root = char:FindFirstChild("HumanoidRootPart")
-                local tp   = getTargetPart(char)
-                if tp and isAlive(char, hum, root) then
-                    if not Config.WALL_CHECK or isVisible(tp, char) then
-                        local sp, onScreen = cam:WorldToViewportPoint(tp.Position)
-                        if onScreen and sp.Z > 0 then
-                            local d2 = (Vector2.new(sp.X, sp.Y) - aimCenter).Magnitude
-                            if d2 < bestDist then
-                                bestDist  = d2
-                                bestChar  = char
-                                bestPart  = tp
-                                bestRoot  = root
-                            end
-                        end
-                    end
-                end
+    for _, char in ipairs(liveFolder:GetChildren()) do
+        if char == myChar then continue end
+        local hum  = char:FindFirstChildOfClass("Humanoid")
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not (hum and root and isAlive(char, hum, root)) then continue end
+        if getTeam(char) == myTeam then continue end
+
+        local part = getTargetPart(char)
+        if not part then continue end
+
+        local screenPos, onScreen = cam:WorldToViewportPoint(part.Position)
+        if not onScreen then continue end
+
+        local dist2D = Vector2.new(screenPos.X, screenPos.Y) - aimCenter
+        local dist   = dist2D.Magnitude
+
+        if dist < bestFOV then
+            if isVisible(part, char, myChar) then
+                bestFOV  = dist
+                bestChar = char
+                bestPart = part
+                bestRoot = root
             end
         end
     end
+
     return bestChar, bestPart, bestRoot
 end
 
--- ============================================================
--- SECCIÓN 13: CONTROLES (LMB + RMB + TECLA F)
--- ============================================================
-local function isAiming()
-    return aimPressCount > 0
-end
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 11 · CONTROLES
+-- ══════════════════════════════════════════════════════════════════
 
-local function updateStateLabel()
-    if isAiming() then
-        stateLabel.Text = "🎯 AIM: ACTIVO"
-        stateLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
-        fovStroke.Color = Color3.fromRGB(255, 45, 45)
-        centerDot.BackgroundColor3 = Color3.fromRGB(255, 45, 45)
-    else
-        stateLabel.Text = "🎯 AIM: OFF"
-        stateLabel.TextColor3 = Color3.fromRGB(0, 220, 120)
-        fovStroke.Color = Color3.fromRGB(255, 255, 255)
-        centerDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-        predDot.Visible = false
-    end
-end
-
-table.insert(conns, UserInputService.InputBegan:Connect(function(input, gp)
-    if not isActive then return end
-
-    -- LMB (MouseButton1)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 and Config.AIM_ON_LMB then
+conns[#conns+1] = UserInputService.InputBegan:Connect(function(inp, gpe)
+    if gpe then return end
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 and CFG.AIM_LMB then
         aimPressCount = aimPressCount + 1
-        updateStateLabel()
-    end
-    -- RMB (MouseButton2)
-    if input.UserInputType == Enum.UserInputType.MouseButton2 and Config.AIM_ON_RMB then
+    elseif inp.UserInputType == Enum.UserInputType.MouseButton2 and CFG.AIM_RMB then
         aimPressCount = aimPressCount + 1
-        updateStateLabel()
-    end
-    -- Tecla F: abrir/cerrar panel de config (solo si el juego no consume la tecla)
-    if not gp and input.KeyCode == Enum.KeyCode.F then
+    elseif inp.KeyCode == Enum.KeyCode.F then
         cfgPanel.Visible = not cfgPanel.Visible
+    elseif inp.KeyCode == Enum.KeyCode.Delete then
+        -- shutdown llamado abajo
+        Securi.Thread.Spawn(function()
+            task.wait(0.05)
+            if genv.__GDB_v5_shutdown then genv.__GDB_v5_shutdown() end
+        end)
     end
-    -- Tecla Delete: destruir / limpiar todo
-    if not gp and input.KeyCode == Enum.KeyCode.Delete then
-        isActive = false
-    end
-end))
+end)
 
-table.insert(conns, UserInputService.InputEnded:Connect(function(input)
-    if not isActive then return end
-
-    if input.UserInputType == Enum.UserInputType.MouseButton1 and Config.AIM_ON_LMB then
+conns[#conns+1] = UserInputService.InputEnded:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 and CFG.AIM_LMB then
         aimPressCount = math.max(0, aimPressCount - 1)
-        updateStateLabel()
-    end
-    if input.UserInputType == Enum.UserInputType.MouseButton2 and Config.AIM_ON_RMB then
+    elseif inp.UserInputType == Enum.UserInputType.MouseButton2 and CFG.AIM_RMB then
         aimPressCount = math.max(0, aimPressCount - 1)
-        updateStateLabel()
     end
-end))
+end)
 
--- ============================================================
--- SECCIÓN 14: BUCLE DE RENDER (CAMERA + AIM + ESP)
--- ============================================================
-local renderName = Securi._randName(20)
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 12 · EVENTOS DEL PANEL CONFIG
+-- ══════════════════════════════════════════════════════════════════
 
-local function onRender(dt)
-    if not isActive then return end
-
-    -- Pcall global para que un error interno no mate el bucle
-    local ok, err = pcall(function()
-        local aimRef  = getAimRef()
-        local aimUDim = UDim2.fromOffset(aimRef.X, aimRef.Y)
-        centerDot.Position = aimUDim
-        fovFrame.Position  = aimUDim
-
-        -- Actualizar ESP en cada frame (60fps, ligero)
-        updateESP(dt)
-
-        -- Aim activo: buscar objetivo y mover cámara
-        if isAiming() then
-            local cam = Workspace.CurrentCamera
-            local tChar, tPart, tRoot = getBestTarget(aimRef)
-
-            if cam and tChar and tPart and tRoot then
-                local predicted = predictPos(tChar, tPart, tRoot)
-
-                -- Mostrar punto de predicción en pantalla
-                local ps, onScr = cam:WorldToViewportPoint(predicted)
-                if onScr and ps.Z > 0 then
-                    predDot.Position = UDim2.fromOffset(ps.X, ps.Y)
-                    predDot.Visible  = true
-                else
-                    predDot.Visible = false
-                end
-
-                -- Calcular CFrame destino apuntando al punto predicho
-                local targetCF = CFrame.lookAt(cam.CFrame.Position, predicted)
-
-                -- Si FOLLOW_MOUSE está activo, compensar el offset del mouse
-                if Config.FOLLOW_MOUSE then
-                    local vp        = cam.ViewportSize * 0.5
-                    local delta     = aimRef - vp
-                    if delta.Magnitude > 2 then
-                        local fovY = math.rad(cam.FieldOfView)
-                        local half = (cam.ViewportSize.Y * 0.5) / math.tan(fovY * 0.5)
-                        local pitch = math.atan2(delta.Y, half)
-                        local yaw   = math.atan2(delta.X, half)
-                        targetCF = targetCF * CFrame.Angles(pitch, yaw, 0)
-                    end
-                end
-
-                -- Aplicar movimiento de cámara (suavizado frame-rate independiente)
-                if Config.AIM_SPEED >= 1 then
-                    cam.CFrame = targetCF
-                else
-                    local alpha = 1 - math.pow(
-                        1 - Config.AIM_SPEED,
-                        math.clamp((dt or 1/60) * 60, 0.5, 3)
-                    )
-                    cam.CFrame = cam.CFrame:Lerp(targetCF, math.clamp(alpha, 0.01, 1))
-                end
-            else
-                predDot.Visible = false
-            end
+local function bindNumInput(key)
+    local box = inputRows[key]
+    if not box then return end
+    box.FocusLost:Connect(function()
+        local n = tonumber(box.Text)
+        if n then
+            CFG[key] = n
+            SaveConfig()
+        else
+            box.Text = tostring(CFG[key])
         end
     end)
-    -- Si hay error interno, simplemente lo silenciamos (nunca reventar el render loop)
 end
 
-RunService:BindToRenderStep(renderName, Enum.RenderPriority.Camera.Value + 1, onRender)
+local function bindToggle(key)
+    local btn = toggleRows[key]
+    if not btn then return end
+    btn.MouseButton1Click:Connect(function()
+        CFG[key] = not CFG[key]
+        btn.Text = CFG[key] and "✓ SÍ" or "✗ NO"
+        btn.TextColor3 = CFG[key] and Color3.fromRGB(80,255,120) or Color3.fromRGB(255,80,80)
+        -- si desactivan ambos botones, resetear contador
+        if key == "AIM_LMB" or key == "AIM_RMB" then
+            if not CFG.AIM_LMB and not CFG.AIM_RMB then
+                aimPressCount = 0
+            end
+        end
+        SaveConfig()
+    end)
+end
 
--- ============================================================
--- SECCIÓN 15: BOTÓN CERRAR — LIMPIEZA TOTAL DE RASTROS
--- ============================================================
+for _, key in ipairs({"FOV","SPEED","OFF_X","OFF_Y","MAX_DIST","BULLET_SPEED","GRAVITY"}) do
+    bindNumInput(key)
+end
+for _, key in ipairs({"AIM_LMB","AIM_RMB","WALL_CHECK","PREDICT"}) do
+    bindToggle(key)
+end
+
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 13 · RENDER LOOP
+-- ══════════════════════════════════════════════════════════════════
+
+RunService:BindToRenderStep(renderName, Enum.RenderPriority.Camera.Value + 1, function(dt)
+    -- Mover dot central y FOV
+    local vpSize  = Camera.ViewportSize
+    local cx, cy  = vpSize.X/2, vpSize.Y/2
+    centerDot.Position = UDim2.new(0, cx-3, 0, cy-3)
+
+    local fovPx = CFG.FOV * 2
+    fovFrame.Size     = UDim2.new(0, fovPx, 0, fovPx)
+    fovFrame.Position = UDim2.new(0, cx - fovPx/2, 0, cy - fovPx/2)
+
+    -- ESP
+    updateAllESP()
+
+    -- Aim
+    if not isAiming() then
+        updateStateLabel(false, nil)
+        predDot.Visible = false
+        return
+    end
+
+    local myChar = LocalPlayer.Character
+    if not myChar then
+        updateStateLabel(false, nil)
+        return
+    end
+    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+    local myTeam = getTeam(myChar)
+
+    local aimCenter = getAimRef()
+    local bestChar, bestPart, bestRoot = getBestTarget(aimCenter, myChar, myTeam, Camera)
+
+    if not bestChar then
+        updateStateLabel(false, nil)
+        predDot.Visible = false
+        return
+    end
+
+    -- Predicción
+    local camPos    = Camera.CFrame.Position
+    local predicted = predictPos(bestChar, bestPart, bestRoot, camPos)
+
+    -- Mover cámara (lerp suave)
+    local targetCF = CFrame.lookAt(camPos, predicted)
+    Camera.CFrame  = Camera.CFrame:Lerp(targetCF, math.clamp(CFG.SPEED, 0.01, 1))
+
+    -- Punto de predicción en pantalla
+    local predScreen, predOnScreen = Camera:WorldToViewportPoint(predicted)
+    predDot.Visible = predOnScreen
+    if predOnScreen then
+        predDot.Position = UDim2.new(0, predScreen.X - 2, 0, predScreen.Y - 2)
+    end
+
+    updateStateLabel(true, bestChar.Name)
+end)
+
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 14 · SHUTDOWN
+-- ══════════════════════════════════════════════════════════════════
+
 local function shutdown()
-    isActive      = false
-    aimPressCount = 0
-
-    -- Desconectar render loop
-    pcall(function() RunService:UnbindFromRenderStep(renderName) end)
-
-    -- Desconectar todas las conexiones
+    -- Desconectar todo
     for _, c in ipairs(conns) do
         pcall(function() c:Disconnect() end)
     end
     table.clear(conns)
 
-    -- Eliminar todo el ESP
+    -- Unbind render
+    pcall(function() RunService:UnbindFromRenderStep(renderName) end)
+
+    -- Limpiar ESP
     for char in pairs(espCache) do clearESP(char) end
-    table.clear(espCache)
     table.clear(kinematics)
 
-    -- Destruir la GUI completa (elimina highlight, billboard, panel, etc.)
+    -- Resetear estado
+    aimPressCount = 0
+
+    -- Destruir GUI
     pcall(function() gui:Destroy() end)
 
-    -- Limpiar genv para que no queden rastros
-    local genv2 = (type(getgenv) == "function" and getgenv()) or nil
-    if genv2 then
-        genv2.__GBConfig = nil
-        -- NO borramos Securi: puede ser reutilizado por otros scripts
+    -- Limpiar genv
+    if genv then
+        genv.__GDB_v5           = nil
+        genv.__GDB_v5_shutdown  = nil
     end
+
+    print("[GDB v5] Apagado correctamente.")
 end
 
-table.insert(conns, btnClose.MouseButton1Click:Connect(shutdown))
+genv.__GDB_v5_shutdown = shutdown
+
+-- ══════════════════════════════════════════════════════════════════
+-- SECCIÓN 15 · INICIO
+-- ══════════════════════════════════════════════════════════════════
+
+print(string.format("[GDB v5] Iniciado | FOV:%d | LMB:%s | RMB:%s",
+    CFG.FOV,
+    CFG.AIM_LMB and "ON" or "OFF",
+    CFG.AIM_RMB and "ON" or "OFF"
+))
